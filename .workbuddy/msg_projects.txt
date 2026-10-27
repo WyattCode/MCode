@@ -1,0 +1,26 @@
+MCode Remote: the project list, managed from the page it lives on
+
+The desktop has no projects page because its side column IS the project list -
+each folder with its conversations folded under it. The phone had a
+`projectFilter` that nothing ever set, so the closest thing it had to a project
+was a directory string in a row's subtitle. This is the page: every folder the
+app treats as a project, named (projectNames), counted (N 个会话) and ordered
+the way `projectsByRecency` orders them - the later of the project's newest
+conversation and its last pick first, the stored list breaking ties.
+
+Picking one filters the list to it, under a chip that says which project and
+carries its own clear. The row's menu is the desktop's own words: 重命名项目,
+and 移除, the danger row - off the list, conversations kept.
+
+Two ways in, both the desktop's: 添加文件夹 (project.add; the desktop reaches
+for a system picker, a tablet types the path, which is the trade the connect
+screen already makes) and 新建空白项目. The latter is not one call:
+`project.createBlank` only makes the folder, and the desktop's home opens the
+first conversation in it - which is what puts the project on the list. The
+first cut stopped after the folder and the list never learned of it; it now
+makes the folder, adds it, and opens the conversation, as the desktop does.
+
+Verified on the pad against the live gateway: the six real projects with their
+names and counts, SAEE filtering the list to its one conversation, the rename
+landing in projectNames, the removal landing in config, and the blank project
+arriving as a new conversation in a new folder.

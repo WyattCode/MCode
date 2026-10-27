@@ -1,0 +1,36 @@
+android: the run summary counts like the desktop does
+
+A run of calls folds into one line - 「已读取 2 个文件 · 已运行 1 条命令」 - and
+that line had drifted from the desktop in four separate ways at once:
+
+  - `glob` and `grep` counted as reads. A run of two searches and one read said
+    「读取了 3 个文件」 when one file had been opened and two patterns looked for.
+  - The desktop splits reads, edits, commands, searches and everything else into
+    five buckets (bucketOf in lib/tool-meta.ts) and words each from
+    buildWorkDisplay.* in lib/i18n.ts. This assembled its own wording, so the
+    read bucket came out 「读取了」 against the desktop's 「已读取」.
+  - Reads and edits counted calls, not files: the desktop collects each call's
+    path into a set and counts its size (groupSummary in lib/step-rows.ts), so
+    one file opened twice is one file. This said two.
+  - Edits were folded into a generic 「已使用 N 个工具」, and a failure count was
+    appended to the line - a second, differently-worded signal for something the
+    desktop marks with an icon.
+
+Rewritten to the desktop's rules: five buckets in first-appearance order, joined
+with 「 · 」, paths deduplicated for read and edit, no failure note in the text.
+
+Verified on the pad against a live turn - two globs then one read - which now
+reads 「已搜索 2 次」 then 「已读取 resources/skills/visualizer/SKILL.md」. Under the
+old code the first line said 「读取了 2 个文件」.
+
+Ten tests hold it (RunSummaryTest). They needed a real org.json: the JVM test
+classpath stubs it out, and `returnDefaultValues = true` would have made every
+assertion pass against the stub rather than against parsed JSON, so the
+reference implementation is on the test classpath instead.
+
+Also corrects a "known defect" this file carried for a round. I had recorded that
+a 105-message thread rendered a single row. It renders all 105: `session.get`
+returns them, and replaying that payload through the row rules gives 138 visible
+elements. The drawer held two conversations with the same title from consecutive
+days, and I mapped the row I meant onto the wrong y and opened the one-message
+sibling. PORT-STATUS now says so.

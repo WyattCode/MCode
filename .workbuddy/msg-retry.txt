@@ -1,0 +1,16 @@
+MCode Remote: 正在重新连接, with its attempt and reason
+
+`RetryRow.vue`: while the provider request is being tried again the transcript
+says so - a reconnect mark, the attempt count, and the failure's own words
+after a middot - rather than sitting on a silent, frozen turn. The phone had
+nothing here, so a retry looked exactly like the app having hung.
+
+`retry` rides only on the copy published with `message.updated` and is never
+written to disk, which decides two things: the field is assigned rather than
+merged (a stale attempt would otherwise outlive the retry it described), and a
+message whose only content is that retry still has to become a row - otherwise
+the update that says "trying again" draws nothing at all.
+
+The row itself is unverified on the pad: it needs a provider that fails and
+retries, which this machine's key does not produce on demand. The shape it
+reads is confirmed against `src/shared/protocol.ts`.

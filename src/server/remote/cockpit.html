@@ -374,7 +374,10 @@ function sendInput() {
   $("input").value = "";
 }
 $("stop").onclick = () => { if (state.current) request({ type: "session.abort", sessionID: state.current }); };
-$("new").onclick = () => request({ type: "session.create", title: "来自手机" });
+// No title: the first prompt names the conversation, from its own first line
+// and then from a model. Naming it here would make every session created from
+// the cockpit identically titled, and the picker a list of duplicates.
+$("new").onclick = () => request({ type: "session.create" });
 
 (function boot() {
   const cfg = loadCfg();

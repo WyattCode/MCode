@@ -1,0 +1,15 @@
+MCode Remote: every question, and checkbox questions behave like checkboxes
+
+The question tool sends a list - a model may put three things to the reader at
+once - and the card rendered `questions[0]` and dropped the rest. A request for
+two answers could only ever be given one, and the server waited for an answer
+that never came. `multiple` was ignored for the same reason: a checkbox
+question behaved like a radio one, so a reader could pick a single item from a
+list that allowed several.
+
+All questions are drawn now, in order, and a `multiple` question accumulates
+while a single-answer one replaces the choice. The answers are gathered in
+question order on 发送; with one question and one answer the tap still replies
+immediately, which is the common case and should stay one tap.
+
+Build: gradle assembleDebug, installed on the pad (M367FC).

@@ -1,0 +1,24 @@
+MCode Remote: no drag handle between the panes
+
+The split had a draggable handle: a 32dp grab target with a 4dp bar inside it,
+sitting in the seam between the list and the transcript. It came from Claude's
+Code screen, which genuinely has one - that screen trades width between a device
+list and a session. Its chat screen does not: the panes share the page colour
+and nothing is drawn in the seam.
+
+Two things followed from it. The chrome had one element that looked like a
+control in a page that otherwise has no edges - visible at any glance as a small
+bar floating between two columns. And because `draggable` claims the hit test,
+it sat in the middle of the seam waiting to swallow a gesture.
+
+`ColumnDivider` is deleted rather than left unused: its whole body was the
+handle, and a dead composable that draws this is exactly what a later pass would
+call back into.
+
+Left alone, and worth writing down because it looks related: a 7dp band of
+horizontal stripes at x=960..982, y=1039..1113. It is not this handle - the
+handle is a solid rounded bar, 4 x 48 - and it is not a Composited scrollbar,
+which LazyColumn does not draw. Its colours (185 on 249) appear nowhere in the
+source. It sits in the seam at the exact x where the drawer's content is
+clipped, which points at the ModalNavigationDrawer shell rather than at
+anything this file draws. Unresolved.

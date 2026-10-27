@@ -1,0 +1,21 @@
+MCode Remote: the conversation's own record, as a card
+
+`InfoPanel.vue` and `InfoSection.vue`: a card that says what the conversation
+produced and what it read, so "which files did this touch" no longer means
+scrolling the whole transcript.
+
+Two sections are drawn, not four. 产物 and 来源 answer from the transcript
+itself - what the tools wrote and what present_files handed over, less
+everything produced, which is the desktop's rule that a file that came out of
+a turn is not also a source for it. 环境信息 needs `git.summary` and a commit
+flow the phone has no screen for, and 任务清单 needs a task registry the
+gateway does not publish; a section that always read "0" would be worse than
+no section, so they are left out rather than faked.
+
+One thing measured and fixed while checking it: 来源 first listed 「交接」 and
+「*(HANDOVER,handover,HANDOFF,ha...」 as files. Those are a grep call's
+`pattern`, and taking a pattern for a path is nonsense. Only `read` and `list`
+name a file, so only those count now - 51 entries became 41 real ones.
+
+Verified on the pad: the card opens from the header's overflow (the wide
+layout keeps its actions there), 产物 lists 3, 来源 lists 41, and both fold.

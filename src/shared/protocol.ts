@@ -2374,6 +2374,20 @@ export type Request =
    * explicitly rather than making every desktop preview pay for them.
    */
   | { type: "file.read"; root: string; rel: string; preview?: boolean; withBytes?: boolean }
+  /**
+   * An Office document as a self-contained HTML page.
+   *
+   * The desktop draws docx, xlsx and pptx with libraries that need a browser -
+   * `docx-preview`, SheetJS, a pptx renderer - and its files tab is a renderer.
+   * A reader on the far side of the gateway is a WebView, so the document is
+   * turned into HTML where the libraries live and handed over as one page: the
+   * writer's paragraphs, the sheet's cells, the slide's text, with the document's
+   * own images inlined as data URLs so the page needs nothing else.
+   *
+   * It is not a pixel copy of Word. It is the document's content in the order it
+   * was written, styled close enough to read - which is what a phone can show.
+   */
+  | { type: "office.render"; root: string; rel: string }
   /* A text file saved from the right panel's files tab: `rel` inside `root`, which has to be a folder the app works in. */
   | { type: "file.write"; root: string; rel: string; content: string }
   /*
@@ -2616,6 +2630,15 @@ export interface ResponseMap {
     video?: boolean
   }
   "file.write": { path: string }
+  "office.render": {
+    path: string
+    /** docx / xlsx / pptx, so the page can name what it is showing. */
+    kind: string
+    /** The whole document as one HTML page, images inlined. */
+    html: string
+    /** Why there is no html, when there is none. */
+    error?: string
+  }
   "shell.open": { shellID: string; cwd: string }
   "shell.input": Record<string, never>
   "shell.resize": Record<string, never>

@@ -1,0 +1,27 @@
+MCode Remote: the turn rail, and delivered files under the reply
+
+The rail is `SessionSpine.vue`: a tick per question down the left edge, 9px
+away from the pointer and swelling to 24 within three on a Gaussian falloff,
+so it reads as one arrow rather than as a bar chart. Ticks in view are drawn
+in the strong ink and the rest in the weak one, which is what makes the rail
+say where the reader is. A tap anywhere on a tick's row goes to that turn -
+a 9px hairline is a hopeless target, so the whole column listens, as the
+desktop's full-height rail does.
+
+The desktop waits for three exchanges before showing it; one or two ticks say
+nothing a scroll would not. Verified on the pad against a conversation with
+many turns: the rail paints, and a tap moves the transcript to that turn and
+repaints the strong ticks around it.
+
+Delivered files had the same fault the edited card had. `DeliveredCards` was
+painted inside the tool row behind an `onOpenDelivered` argument that only the
+bare `is Item.Tool ->` branch passed - and a call almost never reaches that
+branch, because `rowsOf` folds neighbours into a `ToolRun` and `stepsOf` folds
+those into the `Step` above. A reply that presented a document showed
+「展示文件」 and no card. They are now gathered per turn and drawn under the
+edited card, which is the desktop's order, and a web address among them gets
+its own web card and goes to the browser.
+
+`deliveredOf` also only looked for `metadata` at the top level of the part. A
+live part carries it there and a replayed one under `state`, so a conversation
+opened from history showed nothing; it asks both now.

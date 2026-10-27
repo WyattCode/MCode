@@ -1,6 +1,7 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
+import { renderOffice } from "./office/html"
 import { kindFor, mimeFor } from "./media"
 import type {
   AppPath,
@@ -447,6 +448,20 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         title: request.title,
       })
       return { session } satisfies Handled<"session.create">
+    }
+
+    case "office.render": {
+      /*
+       * An Office document as one HTML page, built here because the libraries
+       * that read these formats live here and the reader is a WebView. The path
+       * is resolved the same way `file.read` resolves one, so the same rules
+       * about which folders the app will open apply.
+       */
+      // The same gate `file.read` passes through: a document outside the
+      // folders the app works in is refused here exactly as it is there.
+      const entry = await readableFile(request.root, request.rel)
+      const rendered = await renderOffice(entry, request.rel)
+      return { path: entry, ...rendered } satisfies Handled<"office.render">
     }
 
     case "project.createBlank": {
@@ -1795,7 +1810,20 @@ export async function readPreview(resolved: string, options: { withBytes?: boole
    * read of the whole file, so it goes on applying to pictures, sound, video
    * and the Office byte channel.
    */
-  if (kind === "pdf") return { ...empty, kind, mime: mimeFor(resolved) }
+  if (kind === "pdf") {
+    /*
+     * `withBytes` works for a PDF the same way it does for a video: the desktop
+     * streams it through the local preview server for the ranges pdf.js asks
+     * for, so it needs no bytes here, but a reader across the gateway has no
+     * server to ask - it takes the whole file and draws it with its own renderer.
+     * Under the same ceiling as every other media read.
+     */
+    const mime = mimeFor(resolved)
+    if (!options.withBytes) return { ...empty, kind, mime }
+    if ((await oversized()) > MEDIA_LIMIT) return { ...empty, kind, mime, tooBig: true }
+    const bytes = await fs.readFile(resolved)
+    return { ...empty, kind, mime, data: bytes.toString("base64") }
+  }
   if (kind === "image" || kind === "audio") {
     // Measured here as well as on the read of the bytes: this is the answer the tab draws from.
     if ((await oversized()) > MEDIA_LIMIT) return { ...empty, kind, mime: mimeFor(resolved), tooBig: true }

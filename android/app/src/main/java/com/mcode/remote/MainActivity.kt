@@ -23,6 +23,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -58,6 +59,9 @@ import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.automirrored.outlined.Article
 import androidx.compose.material.icons.automirrored.outlined.CallSplit
 import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.IosShare
+import androidx.compose.material.icons.outlined.ThumbUpAlt
+import androidx.compose.material.icons.outlined.ThumbDownAlt
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.ArrowDownward
@@ -85,6 +89,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
@@ -92,6 +97,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
@@ -111,6 +117,8 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.selection.LocalTextSelectionColors
+import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -128,6 +136,12 @@ import java.util.concurrent.TimeUnit
 private val Cream = Color(0xFFF9F9F7)
 private val CreamSurface = Color(0xFFFEFEFE)
 private val CreamPill = Color(0xFFF0EFEC)
+
+/* The search field's hairline. Claude's is #CECECE: sampled off its own list
+ * at 2.5 px per dp, the border runs one pixel deep at 108.8 and reads clearly
+ * against the white fill, where this app used the pill colour (#F0EFEC) and
+ * drew a field with no visible edge at all. */
+private val FieldLine = Color(0xFFCECECE)
 private val CreamLine = Color(0xFFE4E1D8)
 private val Ink = Color(0xFF1F1E1C)
 private val InkMuted = Color(0xFF6B6862)
@@ -259,8 +273,8 @@ private val DarkPill = Color(0xFF313131)
 private val DarkField = Color(0xFF1A1A19)
 private val DarkFieldLine = Color(0xFF484847)
 private val DarkLine = Color(0xFF232323)
-private val DarkText = Color(0xFFF5F4EF)
-private val DarkMuted = Color(0xFF888681)
+private val DarkText = Color(0xFFF9F9F7)
+private val DarkMuted = Color(0xFF8A8A8A)
 
 val LocalBg = staticCompositionLocalOf { Cream }
 val LocalSurface = staticCompositionLocalOf { CreamSurface }
@@ -274,7 +288,28 @@ val LocalBubbleText = staticCompositionLocalOf { Ink }
 val LocalLine = staticCompositionLocalOf { CreamLine }
 /** The search field's fill and hairline: white on cream, #1A1A19 on #151515. */
 val LocalField = staticCompositionLocalOf { CreamSurface }
-val LocalFieldLine = staticCompositionLocalOf { CreamPill }
+val LocalFieldLine = staticCompositionLocalOf { FieldLine }
+/*
+ * A conversation's card in the sidebar.
+ *
+ * Measured off the pad at 400 dpi: the fill is #F9F9F7 against the page's
+ * #F7F7F5 and the hairline #E1E1DF - four levels apart in each channel, which
+ * is why a downscaled capture shows no card at all. The open conversation shares
+ * the fill and only the border marks it, which is what the reference does.
+ */
+val LocalCard = staticCompositionLocalOf { Color(0xFFF9F9F7) }
+val LocalCardOpen = staticCompositionLocalOf { Color(0xFFF9F9F7) }
+val LocalCardLine = staticCompositionLocalOf { Color(0xFFE1E1DF) }
+
+/**
+ * The conversation card's edge, which the reference draws one step off the page.
+ *
+ * Kept apart from [LocalCardLine] because the two are not the same colour: the
+ * card's is (248,248,246), the 添加设备 capsule's is (225,225,223). Sharing one
+ * token made the capsule lose its outline the moment the card's was corrected.
+ */
+val LocalCardHairline = staticCompositionLocalOf { Color(0xFFF8F8F6) }
+val LocalCardTile = staticCompositionLocalOf { Color(0xFFF5F5F3) }
 
 /* ------------------------------------------------------------------ */
 /* Model                                                               */
@@ -457,6 +492,23 @@ sealed class Item {
         val finish: String = "",
         /** Characters of thinking the turn produced, which the phone does not draw. */
         val thought: Int = 0,
+        /**
+         * The turn's file changes were taken back with the card's 撤销. The
+         * words stay; only the files moved, so the card says so in place of its
+         * counts (`EditedFilesCard.vue`'s `reverted`).
+         */
+        val reverted: Boolean = false,
+        /**
+         * Set while the provider request is being tried again - MiMo's
+         * 「正在重新连接」 with an attempt count and the reason.
+         *
+         * The gateway publishes this only on `message.updated` and never writes
+         * it to disk, so it is blank in every message read back from history
+         * and set only while a retry is in flight, which is exactly the row's
+         * lifetime.
+         */
+        val retryAttempt: Int = 0,
+        val retryReason: String = "",
     ) : Item() { override val key = "msg.$id" }
 
     /**
@@ -471,7 +523,30 @@ sealed class Item {
      * says where the call is, and what it was about (`title`). The phone used
      * to print `· read completed`, which told the reader nothing.
      */
-    data class Tool(val uid: String, val name: String, val status: String, val output: String, val title: String = "") : Item() { override val key = "tool.$uid" }
+    data class Tool(
+        val uid: String,
+        val name: String,
+        val status: String,
+        val output: String,
+        val title: String = "",
+        /**
+         * What a `present_files` call handed over: its `metadata.files`, as
+         * `{path, name, size}` entries.
+         *
+         * The desktop draws these as cards under the reply
+         * (`DeliveredFilesCard.vue`); without them the phone showed the phrase
+         * 「展示文件」 and nothing else, so a model that wrote a document and
+         * presented it left the reader with no way to open what it wrote.
+         */
+        val delivered: List<DeliveredFile> = emptyList(),
+        /**
+         * The part this row was built from, kept because two cards need to read
+         * it again: the file it wrote (`editedOf`) and what it presented. The
+         * row already carries the words it shows; this is for the details a row
+         * does not have room for.
+         */
+        val raw: JSONObject = JSONObject(),
+    ) : Item() { override val key = "tool.$uid" }
     /*
      * A permission request, carried whole: the card decides what to show from
      * the request itself (its command or subject, whether it carries a diff,
@@ -491,10 +566,45 @@ sealed class Item {
      * app on open whenever a conversation held the same error twice. A counter
      * keeps `session.error` (which has no message of its own) unique as well.
      */
-    data class Err(val text: String, val uid: String = "e${nextErrId()}") : Item() {
+    data class Err(
+        val text: String,
+        val uid: String = "e${nextErrId()}",
+        /**
+         * The error came from a message's own `error` field, so the turn may
+         * still carry on past it. A later message in the same turn turns this
+         * card into an inline 「错误：…」 row where it happened; one that ends
+         * the turn stays a card. `session.error` has no message and never
+         * converts, which is why the flag is explicit rather than inferred
+         * from the uid's shape.
+         */
+        val fromMessage: Boolean = false,
+    ) : Item() {
         override val key = "err.$uid"
     }
+    /**
+     * A quiet line inside the steps - MiMo's `ErrorStep.vue` and
+     * `NoticeRow.vue`, which are the same row with a different mark.
+     *
+     * `error` is a failure the turn carried on past, drawn where it happened:
+     * a length refusal answered by compacting and asking again. The phone used
+     * to draw every failure as a card at the end of the turn, so a turn that
+     * recovered still ended on a red card, which read as though it had broken.
+     * `notice` is the app's own remark about the step above it - today, that a
+     * command wanting input was not run.
+     *
+     * A failure that ends the turn keeps its card (`Item.Err`).
+     */
+    data class Note(
+        val kind: NoteKind,
+        val text: String,
+        val uid: String = "n${nextErrId()}",
+    ) : Item() {
+        override val key = "note.$uid"
+    }
 }
+
+/** `!` in the icon column for an error, `i` for a notice. */
+enum class NoteKind { Error, Notice }
 
 /**
  * 追求目標: the goal a conversation is being judged against, as `session.goal`
@@ -524,6 +634,8 @@ data class SessionRow(
     val goal: GoalInfo? = null,
     /** Where the model will reach for files: ask / auto / full, as `session.access` names them. */
     val access: String = "full",
+    /** Filed away: off the list, still readable, recoverable from 已归档对话. */
+    val archived: Boolean = false,
 )
 
 /**
@@ -601,6 +713,7 @@ private fun rowOf(s: JSONObject, running: Boolean): SessionRow {
         goalMode = s.optBoolean("goalMode", false),
         goal = goal,
         access = s.optString("access", ""),
+        archived = s.optBoolean("archived", false),
     )
 }
 
@@ -848,10 +961,152 @@ fun MCodeTheme(content: @Composable () -> Unit) {
         LocalBubbleText provides (if (dark) DarkText else Ink),
         LocalLine provides line,
         LocalField provides (if (dark) DarkField else CreamSurface),
-        LocalFieldLine provides (if (dark) DarkFieldLine else CreamPill),
+        LocalFieldLine provides (if (dark) DarkFieldLine else FieldLine),
+        /*
+         * The sidebar's cards, which had no dark values at all.
+         *
+         * The card colours were added with defaults and never provided by the
+         * theme, so on a dark screen every conversation row stayed a white slab
+         * on a #151515 page - the single most broken thing in that theme, and
+         * found only by switching the device to night mode.
+         *
+         * Measured off Claude's own dark screen: the page is #151515 and a card
+         * sits one step above it at #20201F with a #232323 hairline, which keeps
+         * the same "barely lighter than the page" relationship the light theme
+         * has. The tile is #2A2A29.
+         */
+        LocalCard provides (if (dark) Color(0xFF20201F) else Color(0xFFF9F9F7)),
+        LocalCardOpen provides (if (dark) Color(0xFF262625) else Color(0xFFF9F9F7)),
+        /*
+         * Two different hairlines, and they are not interchangeable.
+         *
+         * The conversation card's edge reads (248,248,246) on a (249,249,247)
+         * page - one step, which is why the reference's cards look like soft
+         * panels rather than outlined boxes. The 添加设备 capsule's edge reads
+         * (225,225,223), twenty-four steps down, a line you can actually see.
+         *
+         * An earlier pass changed this one value to #F8F8F6 for the card's
+         * sake and erased the capsule's outline along with it. The card now
+         * uses LocalCardHairline; this stays for anything that really is drawn.
+         */
+        LocalCardLine provides (if (dark) Color(0xFF232323) else Color(0xFFE1E1DF)),
+        /*
+         * The card's near-invisible edge. See LocalCardLine above.
+         */
+        LocalCardHairline provides (if (dark) Color(0xFF2B2B2B) else Color(0xFFF8F8F6)),
+        LocalCardTile provides (if (dark) Color(0xFF2A2A29) else Color(0xFFF5F5F3)),
+        /*
+         * The selection tint, which this app had never set.
+         *
+         * A long press on a reply showed Compose's default - a saturated blue
+         * drawn as a bare span behind the glyphs, with square ends. Read off the
+         * reference's own selection on the pad at 400 dpi: the tint is a warm
+         * #ECDFE6 behind dark ink, its block is 29.6 tall over glyphs 12 tall,
+         * and its corners are rounded by about 4 dp - a highlighter stroke, not
+         * a text marker. The tint here matches it; the corner needs the drawn
+         * highlight `SelectionTint` below, since a span cannot be rounded.
+         *
+         * Dark keeps the same warm family rather than inverting to blue: on a
+         * #151515 page a blue wash reads as a system artefact, and the
+         * reference's own dark theme tints rather than inverts.
+         */
+        /*
+         * The selection tint, which this app had never set at all.
+         *
+         * Nothing here was inside a `SelectionContainer`, so a long press on a
+         * reply produced no selection whatsoever. Read off the reference's own
+         * selection on the pad at 400 dpi: a warm #ECDFE6 behind dark ink, its
+         * block 29.6 tall over glyphs 12 tall, corners rounded by about 4 dp.
+         *
+         * Compose 1.7 (BOM 2024.05) cannot round it: `SelectionContainer`
+         * paints `backgroundColor` as one rectangle per line, hard against the
+         * glyphs, and the registrar that would let a line draw its own is
+         * `@InternalFoundationApi`. So the colour is the reference's, and the
+         * corner stays square until that API is public - a transparent tint
+         * would have removed the highlight rather than shaped it.
+         */
+        /*
+         * The selection tint, at the reference's own colour.
+         *
+         * Compose paints this as one rectangle per line, hard against the
+         * glyphs, with square ends, and nothing on `SelectionContainer` reaches
+         * inside it. Rounding it needs either the selectable hook or the
+         * controlled container - and on foundation 1.7.3 both are `internal` in
+         * Kotlin even though their JVM members are public:
+         *
+         *   e: Cannot access 'interface SelectionRegistrar': it is internal
+         *   e: Cannot access 'val LocalSelectionRegistrar': it is internal
+         *   e: Cannot access 'data class Selection': it is internal
+         *
+         * Compiling with `-Xfriend-paths` or reflection would reach past that,
+         * and both are the kind of thing that breaks silently on the next
+         * upgrade. So the tint is the reference's colour and the corner stays
+         * square: the honest half of the fix rather than a fragile whole.
+         */
+        LocalTextSelectionColors provides TextSelectionColors(
+            /*
+             * The reference's own handle, sampled on the pad: #B96747 on the
+             * light page, a lighter #D08A6B on dark. The earlier #B4705A was a
+             * guess from a screenshot of this app rather than of the reference,
+             * which is how the wash and the handles both ended up the wrong
+             * colour for several rounds.
+             */
+            handleColor = if (dark) Color(0xFFD08A6B) else Color(0xFFB96747),
+            /*
+             * Transparent on purpose: `MarkdownBody` paints the wash itself, and
+             * Compose's own fill is one square band per line with no way in.
+             */
+            backgroundColor = Color.Transparent,
+        ),
     ) {
-        MaterialTheme(colorScheme = scheme, content = content)
+        /*
+         * No ripple.
+         *
+         * Compose's default indication draws an unbounded rectangle from the
+         * touch point, so a control that lives inside a rounded capsule shipped
+         * a square wash spilling past its own corners - the one thing the eye
+         * reads as "not finished" the moment a thumb lands on it. 88 of this
+         * app's 119 click targets had no clip in front of their `clickable`, so
+         * most of them did exactly that.
+         *
+         * The reference does not ripple at all: its controls change background
+         * while held (`:active`) and keep their own shape. `LocalIndication` is
+         * null here for that reason, and the surfaces that need a pressed state
+         * draw it themselves inside their own clip.
+         */
+        androidx.compose.runtime.CompositionLocalProvider(
+            androidx.compose.foundation.LocalIndication provides NoIndication,
+        ) {
+            MaterialTheme(colorScheme = scheme, content = content)
+        }
     }
+}
+
+/**
+ * An indication that draws nothing.
+ *
+ * `LocalIndication` is non-null, so silence is an `Indication` rather than an
+ * absent one. On Compose 1.7 that means an `IndicationNodeFactory` returning a
+ * `DelegatableNode` that adds no drawing: the `IndicationInstance` /
+ * `rememberUpdatedInstance` pair this used to implement is deprecated in this
+ * release, and the compiler now refuses it outright.
+ */
+private object NoIndication : androidx.compose.foundation.IndicationNodeFactory {
+    /*
+     * A node with nothing to draw. `Modifier.Node` is the concrete base that
+     * supplies `node`; `DelegatableNode` alone is the interface and cannot be
+     * instantiated. No `DrawModifierNode` is implemented, so the node never
+     * enters the draw phase at all - which is the point.
+     */
+    private class Plain : androidx.compose.ui.Modifier.Node()
+
+    override fun create(interactionSource: androidx.compose.foundation.interaction.InteractionSource): androidx.compose.ui.node.DelegatableNode = Plain()
+
+    // The factory is keyed on by `clickable`'s remember: one shared instance,
+    // so identity is all that matters and one object is enough.
+    override fun hashCode(): Int = 0x4E4F494E
+
+    override fun equals(other: Any?): Boolean = other === this
 }
 
 /* MCode's own mark, straight from the desktop build. */
@@ -875,20 +1130,27 @@ fun SparkMark(modifier: Modifier = Modifier, tint: Color = Ember) {
         val cy = size.height / 2f
         val outer = size.minDimension / 2f
         /*
-         * Fitted, not eyeballed: sweeping stroke width and inner radius against
-         * the real mark's ink coverage (42% of the 112 px box) lands on 0.16 of
-         * the radius and a start at the centre. A 0.05 start left a hole in the
-         * middle that the original does not have.
+         * 12 spokes, uneven lengths, around a small solid core.
+         *
+         * A ray sweep around the reference's asterisk reports a peak every 15
+         * degrees, which reads as 24 - but that count is the round caps on 12
+         * spokes, each producing two shoulders. Drawing 24 on a 15-degree step
+         * filled the middle into a solid disc, which is plainly not the mark.
+         *
+         * What the reference actually shows: 12 spokes at 30 degrees, of two
+         * lengths (the short ones about 0.72 of the long), radiating from a
+         * core roughly a fifth of the mark, with clear paper between them.
          */
-        val stroke = outer * 0.16f
+        val stroke = outer * 0.155f
+        // The core, so the spokes read as one burst rather than as a wheel.
+        drawCircle(tint, radius = outer * 0.30f, center = androidx.compose.ui.geometry.Offset(cx, cy))
         for (i in 0 until 12) {
-            // The first spoke sits a little off vertical in the original.
-            val angle = Math.toRadians((i * 30.0) + 12.0)
-            val r0 = 0f
-            val r1 = outer
+            // Off vertical by 11 degrees, as the original's spokes sit.
+            val angle = Math.toRadians((i * 30.0) + 11.0)
+            val r1 = if (i % 3 == 0) outer else outer * 0.80f
             drawLine(
                 tint,
-                androidx.compose.ui.geometry.Offset(cx + (Math.cos(angle) * r0).toFloat(), cy + (Math.sin(angle) * r0).toFloat()),
+                androidx.compose.ui.geometry.Offset(cx, cy),
                 androidx.compose.ui.geometry.Offset(cx + (Math.cos(angle) * r1).toFloat(), cy + (Math.sin(angle) * r1).toFloat()),
                 strokeWidth = stroke,
                 cap = androidx.compose.ui.graphics.StrokeCap.Round,
@@ -999,14 +1261,29 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * real 24dp handle between the panes the difference showed as the list
      * being a millimetre narrow and the conversation starting early.
      */
-    var leftFraction by remember { mutableStateOf(0.2714f) }
+    var leftFraction by remember { mutableStateOf(0.2641f) }
     /** The window's width in pixels, which is what a drag's fraction divides by. */
     var paneWidthPx by remember { mutableStateOf(0) }
     /**
      * What the left column is showing, as Claude's pane switches between them:
      * the conversation list, the projects, and the scheduled tasks.
      */
-    var leftMode by remember { mutableStateOf(LeftMode.Sessions) }
+    /*
+     * Recent, not Sessions.
+     *
+     * Opened fresh, Claude lands on 最近记录 - a flat list of conversations -
+     * and Code is a separate destination reached from the drawer. This used to
+     * start on Sessions, which is the Code page, so the first thing the app
+     * showed was a column headed 设备 with cards under it.
+     */
+    var leftMode by remember { mutableStateOf(LeftMode.Recent) }
+    /*
+     * Both list pages share the column's chrome - the drawer button, the header
+     * bar, the search field, the foot capsule. Only the list's own skin and the
+     * device block above it differ: 最近记录 is flat rows, Code is cards under a
+     * 设备 panel.
+     */
+    val isListPage = leftMode == LeftMode.Recent || leftMode == LeftMode.Sessions
     var projectAdding by remember { mutableStateOf(false) }
     /** Bumped to re-read the project list after one is added. */
     var refreshCommandsTick by remember { mutableStateOf(0) }
@@ -1040,6 +1317,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     var refreshArtifacts by remember { mutableStateOf(0) }
     var runningOnly by remember { mutableStateOf(false) }
     var privacy by remember { mutableStateOf(false) }
+    /**
+     * The conversation's own record (`InfoPanel.vue`), as a card over the
+     * transcript rather than a column beside it: the desktop draws it inline
+     * only when the pane is wide enough for both, and floats it otherwise
+     * (`infoFloating`), which on this pad - where the transcript already runs
+     * to the edges - is the way it behaves.
+     */
+    var infoOpen by remember { mutableStateOf(false) }
     var projectFilter by remember { mutableStateOf<String?>(null) }
     /**
      * 技能与插件: the desktop's plugins page, which lists the folder's skills
@@ -1122,6 +1407,56 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     var voiceText by remember { mutableStateOf<String?>(null) }
     /** The turn whose long-press sheet is open (复制 / 从此处分支). */
     var messageTarget by remember { mutableStateOf<Item.Msg?>(null) }
+    /*
+     * Each reply's selection, by message id.
+     *
+     * The sheet's 选择文本 has to arm a state that the reply's `MarkdownBody`
+     * already holds, and the two are not in the same composable - the sheet is
+     * hoisted to the screen. Sharing one map keeps a single source of truth per
+     * message, so arming from the sheet and picking a word in the transcript
+     * address the same object.
+     */
+    val selectionByMessage = remember { mutableMapOf<String, SelectionState>() }
+    /** The reply currently lit, so picking another can put the first out. */
+    var litMessage by remember { mutableStateOf<String?>(null) }
+    /*
+     * Anything that moves the transcript out from under a selection clears it.
+     *
+     * The wash is drawn inside the reply and the 复制 pill lives in a window of
+     * its own, anchored to a root coordinate captured when the words were lit.
+     * Open the drawer and the reply slides sideways while the pill stays put - a
+     * pill floating over the sidebar, attached to nothing. Measured on the pad:
+     * dragging right far enough to extend a selection opened the drawer, and the
+     * pill was left behind with no selection under it at all.
+     *
+     * So opening the drawer clears every reply's wash. It is called from the
+     * drawer's own open path rather than watched, because a modal drawer sliding
+     * is a gesture the transcript should simply give way to.
+     */
+    val clearSelections = {
+        selectionByMessage.values.forEach { it.clear() }
+        litMessage = null
+    }
+    /*
+     * Watched rather than called from `openDrawer`, because the drawer can also
+     * be opened by its own edge swipe - which is exactly how this was found: a
+     * handle dragged far enough to the right became an edge swipe, the drawer
+     * opened, and the pill stayed behind over the sidebar.
+     */
+    LaunchedEffect(drawerState.isOpen) {
+        if (drawerState.isOpen) clearSelections()
+    }
+    /*
+     * The message sheet moves the transcript too, and covers it.
+     *
+     * Its backdrop dims the reply while the pill - being a window of its own -
+     * stays bright and floating above it, which on the pad read as a stray
+     * control sitting on the sheet's own header. The sheet is about the reply as
+     * a whole, not about the words that happen to be lit, so the wash goes.
+     */
+    LaunchedEffect(messageTarget) {
+        if (messageTarget != null) clearSelections()
+    }
     /** The question being rewritten in 编辑并重发. */
     var editTarget by remember { mutableStateOf<Item.Msg?>(null) }
     var modelPicker by remember { mutableStateOf(false) }
@@ -1166,6 +1501,17 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * way, so they arrive base64 and land in the cache before playing.
      */
     var videoPreview by remember { mutableStateOf<Pair<String, java.io.File>?>(null) }
+    /**
+     * A PDF opened from the artifacts page: its name and the local copy.
+     *
+     * The desktop streams a PDF through its local preview server for the ranges
+     * pdf.js asks for; across the gateway there is no such server, so the file
+     * arrives whole and is drawn with Android's own `PdfRenderer`. Same shape as
+     * the video above - bytes on the wire, a temp file here.
+     */
+    var pdfPreview by remember { mutableStateOf<Pair<String, java.io.File>?>(null) }
+    /** An Office document, already turned into one HTML page by the gateway. */
+    var officePreview by remember { mutableStateOf<Triple<String, String, String>?>(null) }
     /**
      * The changes rail: which files a turn touched, and the patch for the one
      * being read. The desktop keeps this beside the conversation all the time;
@@ -1686,14 +2032,83 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         }
     }
 
+    /**
+     * Turns the card left by a message the turn stepped past into an inline row.
+     *
+     * The desktop decides this by looking back at the previous message while
+     * walking the turn (`MessageStream.vue`: "an earlier step of this turn
+     * failed and the turn went on past it"). The phone feeds messages through
+     * one at a time in order, so the same question is answered the other way
+     * round: when an assistant message arrives after one that left an error
+     * card, that card belonged to a step the turn recovered from.
+     *
+     * Two things it also has to do, both found by measuring rather than by
+     * reading: the failed message left a wordless row of its own carrying its
+     * `finish`, which draws 「回复已达长度上限，内容被截断」 - a sentence that is
+     * wrong once the turn did not end there - so that finish is cleared; and the
+     * row is not the last one in the list, so the search walks the whole list
+     * rather than testing `last()`.
+     */
+    fun settleSteppedPastError() {
+        val at = items.indexOfLast { it is Item.Err && it.fromMessage }
+        if (at < 0) return
+        val card = items[at] as Item.Err
+        // The step's own row: nothing said, only the reason it stopped.
+        for (i in items.indices) {
+            val row = items[i]
+            if (row is Item.Msg && row.role != "user" && row.text.isBlank() &&
+                row.finish.isNotBlank() && row.images.isEmpty() && row.files.isEmpty()
+            ) {
+                items[i] = row.copy(finish = "")
+            }
+        }
+        items[at] = Item.Note(NoteKind.Error, card.text, card.uid)
+    }
+
     fun upsertMessage(sessionID: String, message: JSONObject) {
         if (sessionID != currentSession) return
         val id = message.optString("id")
         val role = message.optString("role", "assistant")
+        /*
+         * A message that failed but whose turn went on past it is a step, not
+         * an ending.
+         *
+         * The desktop settles this by looking back at the previous message
+         * while walking the turn (`MessageStream.vue`: "an earlier step of this
+         * turn failed and the turn went on past it"). The phone feeds messages
+         * through here one at a time in order, so the same question is settled
+         * the other way round: an assistant message arriving after one that
+         * left an error card means that card belonged to a step the turn
+         * recovered from, and it becomes an inline 「错误：…」 row where it
+         * happened.
+         *
+         * It has to run before this message adds rows of its own, and it looks
+         * past the trailing rows rather than at only the last one: a failed
+         * message with no words still gets an empty message row of its own, so
+         * the card is the second-to-last, not the last. Measured on the pad -
+         * the tail read `[Msg, Err, Msg]` and a `lastOrNull` test found the
+         * plain Msg and converted nothing.
+         */
+        if (role == "assistant") settleSteppedPastError()
         val parts = message.optJSONArray("parts")
-        // Stored transcripts carry the text flat on the message; live events
-        // carry it in parts. Accept both.
-        val text = StringBuilder(message.optString("text", ""))
+        /*
+         * A stored message carries its words one way or the other, never both:
+         * flat on `text` for a reader's own turn, in `text` parts for a reply.
+         * Measured across the conversations on this machine - `text: true,
+         * textparts: 0` for every user message, the reverse for every assistant
+         * one.
+         *
+         * Appending both printed the question twice on the pad
+         * (「错误行验证错误行验证」), because a message that has the flat copy
+         * and has had its parts filled in as well went through this loop once
+         * with each. The parts win when they are there: they are the same words
+         * with their own ids, which the live rebuild needs.
+         */
+        val flat = message.optString("text", "")
+        val hasTextParts = parts != null && (0 until parts.length()).any {
+            parts.optJSONObject(it)?.optString("type") == "text"
+        }
+        val text = StringBuilder(if (hasTextParts) "" else flat)
         if (parts != null) {
             for (i in 0 until parts.length()) {
                 val part = parts.optJSONObject(i) ?: continue
@@ -1791,6 +2206,16 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     // A whole-message update can arrive before the reasoning
                     // part was counted; taking the larger keeps what is known.
                     thought = maxOf(existing.thought, reasoningSeen[id] ?: 0),
+                    reverted = message.optBoolean("reverted", existing.reverted),
+                    /*
+                     * The retry rides only on the published copy: the next
+                     * update for the message comes without it, which is how the
+                     * row goes away once the stream resumes. So it is assigned,
+                     * never merged - a stale attempt would otherwise outlive
+                     * the retry it described.
+                     */
+                    retryAttempt = message.optJSONObject("retry")?.optInt("attempt") ?: 0,
+                    retryReason = message.optJSONObject("retry")?.optString("message").orEmpty(),
                 )
             }
         } else {
@@ -1804,6 +2229,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
              * attempts at this fix appeared to do nothing at all.
              */
             val worthARow = body.isNotEmpty() || role == "user" || images.isNotEmpty() ||
+                message.optJSONObject("retry") != null ||
                 (role == "assistant" && (message.optString("finish").let { it.isNotBlank() && it != "end_turn" } || (reasoningSeen[id] ?: 0) > 0))
             if (worthARow) {
                 /*
@@ -1842,6 +2268,9 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         message.optBoolean("steered"), sentFiles,
                         finish = message.optString("finish"),
                         thought = reasoningSeen[id] ?: 0,
+                        reverted = message.optBoolean("reverted"),
+                        retryAttempt = message.optJSONObject("retry")?.optInt("attempt") ?: 0,
+                        retryReason = message.optJSONObject("retry")?.optString("message").orEmpty(),
                     ),
                 )
                 messageIndex[id] = items.size - 1
@@ -1858,16 +2287,24 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 val uid = if (callID.isNotBlank()) callID else java.util.UUID.randomUUID().toString()
                 val status = part.optJSONObject("state")?.optString("status", "")?.ifEmpty { null } ?: part.optString("status", "")
                 val output = part.optString("output").ifEmpty { part.optJSONObject("state")?.optString("output", "") ?: "" }
-                val row = Item.Tool(uid, part.optString("name", "tool"), status, output.replace(Regex("<[^>]+>"), "").lineSequence().firstOrNull()?.take(90) ?: "", toolTitleOf(part))
+                val row = Item.Tool(
+                    uid,
+                    part.optString("name", "tool"),
+                    status,
+                    output.replace(Regex("<[^>]+>"), "").lineSequence().firstOrNull()?.take(90) ?: "",
+                    toolTitleOf(part),
+                    deliveredOf(part),
+                    part,
+                )
                 val at = items.indexOfFirst { it is Item.Tool && it.uid == uid }
                 if (at >= 0) items[at] = row else items.add(row)
+                items.noteInteractive(part, uid)
             }
         }
         /*
-         * A turn that broke has no text at all, so it used to arrive as an
-         * empty message and be dropped: the question stayed on screen with
-         * nothing after it and no sign that anything had gone wrong. The
-         * desktop draws an error card for exactly this.
+         * The failure this message carries, if any. Whether it ends the turn or
+         * was stepped past is decided by the *next* message (see the top of this
+         * function), so it always lands as a card for now.
          */
         val failure = message.optString("error").ifEmpty {
             if (message.optString("finish") == "error" || message.optString("finish") == "max_tokens") "这次回复没有完成" else ""
@@ -1875,7 +2312,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         if (failure.isNotBlank()) {
             val key = "err.$id"
             val place = items.indexOfFirst { it.key == key }
-            if (place >= 0) items[place] = Item.Err(failure, id) else items.add(Item.Err(failure, id))
+            val card = Item.Err(failure, id, fromMessage = role == "assistant")
+            if (place >= 0) items[place] = card else items.add(card)
         }
     }
 
@@ -1946,9 +2384,18 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 val uid = if (callID.isNotBlank()) callID else java.util.UUID.randomUUID().toString()
                 val status = part.optJSONObject("state")?.optString("status", "")?.ifEmpty { null } ?: part.optString("status", "")
                 val output = part.optString("output").ifEmpty { part.optJSONObject("state")?.optString("output", "") ?: "" }
-                val row = Item.Tool(uid, part.optString("name", "tool"), status, output.replace(Regex("<[^>]+>"), "").lineSequence().firstOrNull()?.take(90) ?: "", toolTitleOf(part))
+                val row = Item.Tool(
+                    uid,
+                    part.optString("name", "tool"),
+                    status,
+                    output.replace(Regex("<[^>]+>"), "").lineSequence().firstOrNull()?.take(90) ?: "",
+                    toolTitleOf(part),
+                    deliveredOf(part),
+                    part,
+                )
                 val at = items.indexOfFirst { it is Item.Tool && it.uid == uid }
                 if (at >= 0) items[at] = row else items.add(row)
+                items.noteInteractive(part, uid)
             }
         }
     }
@@ -2045,12 +2492,59 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     fun newSession(directory: String = "") {
         scope.launch {
             try {
-                val ask = JSONObject().put("type", "session.create").put("title", "来自手机")
-                if (directory.isNotBlank()) ask.put("directory", directory)
+                /*
+                 * In the folder the reader is looking at, not the app's default.
+                 *
+                 * Left blank, `session.create` uses the app's own `directory` -
+                 * which on this install is D:\Apps\MCode, the install folder,
+                 * while the drawer was showing a different project. So a new
+                 * conversation was created somewhere the list was not showing,
+                 * and the button read as broken: three sessions existed on disk
+                 * and none of them appeared. The open conversation's own folder
+                 * is the one the reader means, which is also what the drawer's
+                 * project filter is keyed on.
+                 */
+                val folder = directory.ifBlank {
+                    currentSession?.let { sid -> sessions.find { it.id == sid }?.directory }.orEmpty()
+                }
+                /*
+                 * No title, on purpose.
+                 *
+                 * This used to send "来自手机", and because the server only names
+                 * a conversation it has no title for, that name stuck forever -
+                 * every conversation started on the pad was called the same
+                 * thing, and the drawer became a list of identical rows that
+                 * could not be told apart or searched. The desktop sends no
+                 * title here either; the first prompt names the conversation,
+                 * immediately from its own first line and then properly from a
+                 * model in the background. Left out, the pad gets both.
+                 */
+                val ask = JSONObject().put("type", "session.create")
+                if (folder.isNotBlank()) ask.put("directory", folder)
                 val reply = rpc(ask)
-                val sid = reply.optJSONObject("data")?.optJSONObject("session")?.optString("id").orEmpty()
-                if (sid.isNotBlank()) select(sid)
-                else Toast.makeText(context, "新建会话失败", Toast.LENGTH_LONG).show()
+                val created = reply.optJSONObject("data")?.optJSONObject("session")
+                val sid = created?.optString("id").orEmpty()
+                if (sid.isNotBlank() && created != null) {
+                    /*
+                     * Put the new conversation in the drawer at once.
+                     *
+                     * `select` does add a row when `session.get` comes back with
+                     * one, but that is a round trip later and carries whatever
+                     * title the server has by then - empty, in practice, so the
+                     * row either appeared late or not at all. On the pad a new
+                     * conversation was simply not in the drawer afterwards:
+                     * the transcript was open and the list still showed the old
+                     * ones, which reads as the button having made nothing.
+                     *
+                     * The create reply already holds the whole session, so the
+                     * row is built from it here and the later refresh simply
+                     * updates the same row by id.
+                     */
+                    val existing = sessions.indexOfFirst { it.id == sid }
+                    val row = rowOf(created, running = false)
+                    if (existing >= 0) sessions[existing] = row else sessions.add(0, row)
+                    select(sid)
+                } else Toast.makeText(context, "新建会话失败", Toast.LENGTH_LONG).show()
             } catch (e: Exception) {
                 // A new conversation that does not appear looks like a dead
                 // button; the reason has to be said out loud.
@@ -2430,6 +2924,34 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             } else {
                 JSONObject().put("type", "file.read").put("root", root).put("rel", rel)
             }
+            /*
+             * An Office document is not read here at all: the gateway turns it
+             * into one HTML page, because the libraries that understand docx,
+             * xlsx and pptx live there and a WebView here can only render what
+             * it is given. `badgeOf` has given these files a badge for months
+             * while opening one answered with an empty sheet.
+             */
+            val officeExt = rel.substringAfterLast('.', "").lowercase()
+            if (officeExt in setOf("docx", "xlsx", "pptx")) {
+                val name = rel.substringAfterLast('/').substringAfterLast('\\')
+                val reply = runCatching {
+                    rpc(
+                        JSONObject().put("type", "office.render").put("root", root).put("rel", rel),
+                        60_000,
+                    )
+                }.getOrNull()?.optJSONObject("data")
+                val html = reply?.optString("html").orEmpty()
+                if (html.isNotBlank()) {
+                    officePreview = Triple(name, reply?.optString("kind").orEmpty().ifBlank { officeExt }, html)
+                } else {
+                    Toast.makeText(
+                        context,
+                        reply?.optString("error").orEmpty().ifBlank { "打不开这个文档" },
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+                return@launch
+            }
             ask.put("preview", true)
             // The desktop plays a video from its own disk and asks for no bytes;
             // this reader has no disk on the far side of the gateway, so it asks.
@@ -2453,17 +2975,76 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 }
                 return@launch
             }
+            /*
+             * A PDF carries its bytes when asked, so it lands here the same way
+             * a video does - except that it is drawn rather than played, and a
+             * document's own renderer is the only thing that can do it.
+             */
+            if (payload?.optString("kind") == "pdf") {
+                val name = rel.substringAfterLast('/').substringAfterLast('\\')
+                val b64 = payload.optString("data")
+                if (b64.isBlank()) {
+                    Toast.makeText(context, "PDF 超过 25 MB，无法预览", Toast.LENGTH_SHORT).show()
+                } else {
+                    runCatching {
+                        val dir = java.io.File(context.cacheDir, "pdf-preview").apply { mkdirs() }
+                        val out = java.io.File(dir, name.replace(Regex("[^\\w.\\- ()]"), "_"))
+                        out.outputStream().use { it.write(android.util.Base64.decode(b64, android.util.Base64.DEFAULT)) }
+                        pdfPreview = name to out
+                    }.onFailure { Toast.makeText(context, "PDF 没有取回来", Toast.LENGTH_SHORT).show() }
+                }
+                return@launch
+            }
             val body = payload?.optString("content").orEmpty()
             if (body.isNotBlank()) filePreview = rel.substringAfterLast('/').substringAfterLast('\\') to body
         }
     }
 
     /*
-     * 产物中心 is a page of its own, not a pane: the desktop renders it in place
-     * of the whole workspace (`App.vue` swaps `view` to "artifacts"), with the
-     * conversation list and the transcript both gone. Built that way here too,
-     * which is also why it needs no column-mode of its own.
+     * 撤销 on an edited-files card: take the turn's changes back out of the
+     * files, then reload the conversation so both the files and the card's own
+     * reverted form come from the server rather than from a guess here.
+     *
+     * The server refuses this while a turn is running or when the turn is no
+     * longer in the conversation, and answers with what it could and could not
+     * move - so the sentence is built from its counts, the way the desktop's
+     * `revert()` words it.
      */
+    fun revertTurn(messageIDs: List<String>) {
+        val sid = currentSession ?: return
+        scope.launch {
+            val reply = runCatching {
+                rpc(JSONObject().put("type", "session.revertTurn").put("sessionID", sid).put("messageIDs", org.json.JSONArray(messageIDs)), 120_000)
+            }.getOrNull()
+            val data = reply?.optJSONObject("data")
+            if (data == null) {
+                Toast.makeText(context, lastError ?: "撤销失败", Toast.LENGTH_LONG).show()
+                return@launch
+            }
+            val restored = data.optInt("restored")
+            val removed = data.optInt("removed")
+            val failed = data.optInt("failed")
+            val outside = data.optInt("outside")
+            val done = restored + removed
+            val said = when {
+                done == 0 && outside > 0 -> "有 $outside 个文件在项目外，撤销未处理"
+                done == 0 && failed > 0 -> "撤销失败：$failed 个文件未能撤销"
+                done == 0 -> "撤销失败"
+                else -> buildString {
+                    append("已撤销 $done 个文件")
+                    val extra = listOfNotNull(
+                        if (failed > 0) "$failed 个文件未能撤销" else null,
+                        if (outside > 0) "$outside 个文件在项目外" else null,
+                    )
+                    if (extra.isNotEmpty()) append("；").append(extra.joinToString("，"))
+                }
+            }
+            Toast.makeText(context, said, Toast.LENGTH_LONG).show()
+            // Both the files and the card's own reverted form come from the
+            // server, so the conversation is read again rather than patched here.
+            if (done > 0) select(sid)
+        }
+    }
     /*
      * The plugins page reads both lists together: `mcp.list` for the servers
      * and `skill.list` for the folder's skills. Neither is fatal on its own -
@@ -2521,14 +3102,72 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         )
     }
 
-    if (leftMode == LeftMode.Projects) {
+    var usageSummary by remember { mutableStateOf<JSONObject?>(null) }
+    LaunchedEffect(leftMode) {
+        if (leftMode != LeftMode.Settings || usageSummary != null) return@LaunchedEffect
+        usageSummary = runCatching {
+            rpc(JSONObject().put("type", "usage.summary").put("days", 30), 30_000)
+        }.getOrNull()?.optJSONObject("data")
+    }
+    if (leftMode == LeftMode.Settings) {
+        SettingsScreen(
+            config = appConfig,
+            archived = sessions.filter { it.archived },
+            usage = usageSummary,
+            providers = providers,
+            servers = pluginServers.toList(),
+            onPatch = { patch ->
+                scope.launch {
+                    runCatching { rpc(JSONObject().put("type", "config.set").put("patch", patch)) }
+                    appConfig = runCatching { rpc(JSONObject().put("type", "config.get")) }
+                        .getOrNull()?.optJSONObject("data")?.optJSONObject("config")
+                    refreshCommandsTick++
+                }
+            },
+            onReopen = { id ->
+                scope.launch {
+                    runCatching {
+                        rpc(JSONObject().put("type", "session.archive").put("sessionID", id).put("archived", false))
+                    }
+                    leftMode = LeftMode.Recent
+                    select(id)
+                }
+            },
+            onClose = { leftMode = LeftMode.Recent },
+        )
+        /*
+         * Always return, wide or narrow.
+         *
+         * This was `if (widthSize < Expanded) return`, which reads as "narrow
+         * screens stop here, wide ones carry on to the split layout below" - and
+         * that is what happened: on the pad the settings page was drawn and then
+         * the wide branch painted the two-pane conversation straight over it.
+         * Tapping 设置 in the drawer looked like a dead control for weeks. The
+         * other pages stop unconditionally because the wide branch draws them
+         * inside the left column; settings is full-screen in both layouts.
+         */
+        return
+    }
+
+    /*
+     * 项目 is drawn twice on the pad: here, and again inside the split layout's
+     * left column. This branch had no width guard, so on the pad it painted a
+     * full-screen copy - with its own status-bar spacer, which pushed the header
+     * 32.8 down - and then the wide branch painted the real one over the top.
+     * The visible result was a header showing its burger and nothing else, and
+     * card rows starting at y 152 where the reference starts them at 282.
+     *
+     * Guarded the way 设置 is below: this runs only when the wide branch will not
+     * draw the page itself.
+     */
+    if (leftMode == LeftMode.Projects && widthSize == WindowWidthSizeClass.Compact) {
         ProjectsScreen(
             rows = projectRows,
             onOpen = {
                 projectFilter = it
-                leftMode = LeftMode.Sessions
+                leftMode = LeftMode.Recent
             },
-            onClose = { leftMode = LeftMode.Sessions },
+            onClose = { leftMode = LeftMode.Recent },
             onCreateBlank = { name ->
                 scope.launch {
                     /*
@@ -2610,7 +3249,47 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 }
             },
         )
+        /*
+         * Always return, wide or narrow.
+         *
+         * This used to be `if (widthSize < Expanded) return`, which reads as
+         * "narrow screens stop here, wide ones carry on to the split layout
+         * below" - and that is what happened: on the pad the settings page was
+         * drawn and then the wide branch painted the two-pane conversation
+         * straight over it, so tapping 设置 in the drawer looked like a dead
+         * control. The other pages stop unconditionally because the wide branch
+         * draws them inside the left column; settings is full-screen in both
+         * layouts, so it has to stop in both.
+         */
         return
+    }
+
+    if (leftMode == LeftMode.Scheduled) {
+        /*
+         * 定时任务 - the page the drawer's fourth row has always named.
+         *
+         * That row and the rail's third mark were both labelled 定时任务 and both
+         * opened 插件: the server has pushed `automation.tasks` for a while and
+         * this screen collected them into `automations`, but nothing ever drew
+         * them, so a scheduled task was a thing the phone received and then
+         * silently dropped. The reference has this page as its own, with a
+         * clock, a line, and 新建任务 at the foot.
+         *
+         * Measured off the reference at 400dpi: 暂无定时任务 runs x 135.6..224.4
+         * at y 493.6..514.8, the sentence under it 85.6..274.4 at 522.8..544.0,
+         * and 新建任务's capsule sits at the column's right at 844.8.
+         */
+        ScheduledScreen(
+            tasks = automations.toList(),
+            onNew = { newSession(); leftMode = LeftMode.Recent },
+            onClose = { leftMode = LeftMode.Recent },
+        )
+        /*
+         * Narrow screens keep the page full-screen; a wide one draws it inside
+         * the left column instead, so the conversation stays beside it - which
+         * is how the reference lays all four of these pages out.
+         */
+        if (widthSize < WindowWidthSizeClass.Expanded) return
     }
 
     if (leftMode == LeftMode.Plugins) {
@@ -2642,9 +3321,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     refreshPlugins++
                 }
             },
-            onClose = { leftMode = LeftMode.Sessions },
+            onClose = { leftMode = LeftMode.Recent },
         )
-        return
+        /*
+         * Narrow screens keep the page full-screen; a wide one draws it inside
+         * the left column instead, so the conversation stays beside it - which
+         * is how the reference lays all four of these pages out.
+         */
+        if (widthSize < WindowWidthSizeClass.Expanded) return
     }
 
     if (leftMode == LeftMode.Artifacts) {
@@ -2659,9 +3343,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             onCategory = { artCategory = it },
             onRefresh = { refreshArtifacts++ },
             onOpen = { root, rel -> openArtifact(root, rel) },
-            onClose = { leftMode = LeftMode.Sessions },
+            onClose = { leftMode = LeftMode.Recent },
         )
-        return
+        /*
+         * Narrow screens keep the page full-screen; a wide one draws it inside
+         * the left column instead, so the conversation stays beside it - which
+         * is how the reference lays all four of these pages out.
+         */
+        if (widthSize < WindowWidthSizeClass.Expanded) return
     }
 
     // Claude keeps the single-pane layout in portrait even on the big inner
@@ -2792,6 +3481,16 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     val inputBar: @Composable () -> Unit = {
         InputCapsule(
             enabled = currentSession != null,
+            /*
+             * Whether the conversation has anything in it, for the placeholder.
+             *
+             * Claude says 与 Claude 对话… on the empty page it opens 新建会话
+             * onto, and 回复 Claude… once the thread has words in it. This was
+             * `currentSession != null`, but a new conversation is given an id
+             * the moment it is created - so every fresh page said 回复, which is
+             * the wrong one of the two. The transcript is what decides.
+             */
+            hasSession = items.isNotEmpty(),
             modelLabel = currentModelLabel,
             contextUsed = contextUsed,
             contextLimit = if (contextWindow > 0) contextWindow else contextLimit,
@@ -2981,7 +3680,11 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     onNewTask = { newSession(); closeDrawer() },
                     onArtifacts = { leftMode = LeftMode.Artifacts; closeDrawer() },
                     onPlugins = { leftMode = LeftMode.Plugins; closeDrawer() },
+                    onScheduled = { leftMode = LeftMode.Scheduled; closeDrawer() },
                     onProjects = { leftMode = LeftMode.Projects; closeDrawer() },
+                    onRecent = { leftMode = LeftMode.Recent; closeDrawer() },
+                    onSessions = { leftMode = LeftMode.Sessions; closeDrawer() },
+                    onSettings = { leftMode = LeftMode.Settings; closeDrawer() },
                     currentPage = leftMode,
                     onLongPress = { sheetTarget = it },
                     unseen = unseen.toList(),
@@ -3010,13 +3713,111 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                  * and no rule runs between them; only the composer's white card
                  * marks where the conversation begins.
                  */
-                Column(Modifier.weight(leftFraction).fillMaxHeight().fillMaxWidth()) {
+                Column(Modifier.weight(leftFraction).fillMaxHeight()) {
                     Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
                     // The wide layout's own header, so both notices have to be
                     // hung here as well as under `AppTopBar`.
                     if (!connected) OfflineStrip()
                     lastError?.let { msg -> ErrorStrip(msg) { lastError = null } }
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    /*
+                     * 63.2 dp of bar, so its marks hang from 57.6.
+                     *
+                     * Measured off Claude's list header at 2.5 px per dp: the
+                     * burger's ink is y 57.6..71.6, the title's 57.2..72.0 and
+                     * the two trailing glyphs' 57.6..71.6 - one line, 14.4
+                     * tall, whose centre is 64.6. The status bar above ends at
+                     * 32.8, so a 63.2 row centres its own 44dp targets on 64.4.
+                     *
+                     * Two earlier readings were wrong in opposite directions:
+                     * 52 tall (a 4dp-padded row with no height) centred the
+                     * line on 58.8, five dp high; 74.4 centred it on 70, five
+                     * low and pushed the search field's top 22 dp down. The
+                     * field compensates with its own top padding - see
+                     * `searchTop`, which is 24.4 minus whatever this row grew
+                     * past 52.
+                     */
+                    /*
+                     * The list's own header, only when the list is what the
+                     * column shows.
+                     *
+                     * A sub-page draws its own header inside this column, so
+                     * leaving this one up stacked two bars - 「最近记录」 over
+                     * 「项目」 - which read as one page with two titles.
+                     */
+                    if (isListPage) Box(Modifier.fillMaxWidth().height(63.2.dp)) {
+                        /*
+                         * The title goes in first, on the full column width;
+                         * the marks row goes over it afterwards. Centring the
+                         * title inside the padded row put it 6.0 right, since
+                         * that row's 1.6/14.2 padding is asymmetric to place
+                         * the marks, not the word.
+                         */
+                        Text(
+                            /*
+                             * "Code", not 「最近记录」.
+                             *
+                             * The reference's own header reads Code, centred,
+                             * over a list of conversations - the name of what
+                             * this pane is for, not a tally of what is in it.
+                             * 「最近记录」 made the header read as a section
+                             * heading inside a page that already had one.
+                             */
+                            /*
+                             * The header names the page.
+                             *
+                             * Claude's two list pages carry different words:
+                             * 最近记录 over the flat list, Code over the device
+                             * panel. This said Code for both, because both were
+                             * one mode.
+                             */
+                            (
+                                if (leftMode == LeftMode.Recent) "最近记录"
+                                else if (leftMode == LeftMode.Artifacts) "产物中心"
+                                else "Code"
+                            ) as String,
+                            /*
+                             * 16.6, measured. The word runs 70.8 wide at 18sp
+                             * where the reference's runs 65.2 - the same four
+                             * characters, so the size is 18 x 65.2/70.8.
+                             */
+                            fontSize = 16.6.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = LocalText.current,
+                            maxLines = 1,
+                            softWrap = false,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            /*
+                             * Centred, then nudged 5.2 left.
+                             *
+                             * `fillMaxWidth` inside this Box centres on the
+                             * Box, and the Box measures 370.4 wide inside a
+                             * 360 column - 5.2 of it on each side, from the
+                             * parent's own padding. The word therefore landed
+                             * at 185.2 against Claude's 180.0; a 5.2 offset
+                             * puts the ink back on the column's centre rather
+                             * than fighting the padding above.
+                             */
+                            /*
+                             * A height, not `fillMaxSize().wrapContentHeight()`.
+                             *
+                             * Those two fight: fillMaxSize claims the Box's whole
+                             * 63.2 and wrapContentHeight then asks the text for
+                             * its own, which in a Box this size resolved to no
+                             * height at all - the header drew nothing while the
+                             * burger beside it drew fine. The bar's height is
+                             * known, so it is stated.
+                             */
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(63.2.dp)
+                                .align(Alignment.Center)
+                                .wrapContentHeight(Alignment.CenterVertically)
+                                .offset(x = (-0.8).dp),
+                        )
+                        Row(
+                            Modifier.fillMaxWidth().height(63.2.dp).padding(start = 1.6.dp, end = 14.2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
                         /*
                          * Claude's list header: menu at the far left, the title
                          * centred, the two glyphs at the right. They are plain
@@ -3030,29 +3831,78 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                          * what Claude's own header puts at that corner once a
                          * page has been opened.
                          */
+                        /*
+                         * Claude's burger is three unequal lines, not three equal
+                         * ones and not Material's Menu: measured on its own bar
+                         * the top rule runs the full 16.4 dp, the middle one the
+                         * same, and the bottom rule only 8.0 - the reference's
+                         * own mark, which Material's glyph cannot draw.
+                         */
                         Box(
-                            Modifier.size(44.dp).clickable {
-                                if (leftMode == LeftMode.Sessions) openDrawer() else leftMode = LeftMode.Sessions
-                            },
+                            Modifier
+                                .size(44.dp)
+                                /*
+                                 * No ripple plate.
+                                 *
+                                 * A clickable Box with no surface behind it
+                                 * renders the ripple as a flat grey rectangle
+                                 * the size of the whole 44 dp target - sampled
+                                 * at (224,224,222) across the full box, where
+                                 * the reference's corner is the page's own
+                                 * (249,249,247). The header's marks are drawn,
+                                 * not plated.
+                                 */
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                ) {
+                                    if (isListPage) openDrawer() else leftMode = LeftMode.Recent
+                                },
                             contentAlignment = Alignment.Center,
                         ) {
-                            Icon(
-                                if (leftMode == LeftMode.Sessions) Icons.Outlined.Menu else Icons.AutoMirrored.Outlined.ArrowBack,
-                                contentDescription = if (leftMode == LeftMode.Sessions) "菜单" else "返回列表",
-                                tint = LocalText.current,
-                                modifier = Modifier.size(20.dp),
-                            )
+                            if (isListPage) {
+                                MiIcon(
+                                    /*
+                                     * The path fills the 24 grid, because a
+                                     * canvas scales the *grid*, not the ink:
+                                     * `M4 7h16` inside a 24 viewBox drew 10.9 dp
+                                     * of rule in a 16.4 dp box, which is why the
+                                     * mark came out a third smaller than
+                                     * Claude's 16.4 x 14.0.
+                                     *
+                                     * Claude's own proportions: three rules
+                                     * 1.9 thick, 5 apart, the first two full
+                                     * width and the last half.
+                                     */
+                                    "M0.95 2.6h22.1M0.95 12h22.1M0.95 21.4h11.05",
+                                    contentDescription = "菜单",
+                                    modifier = Modifier.size(16.4.dp),
+                                    viewBox = 24f,
+                                    strokeWidth = 2.1f,
+                                    tint = LocalText.current,
+                                )
+                            } else {
+                                Icon(
+                                    Icons.AutoMirrored.Outlined.ArrowBack,
+                                    contentDescription = "返回列表",
+                                    tint = LocalText.current,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
                         }
-                        Text(
-                            if (leftMode == LeftMode.Artifacts) "产物中心" else "最近记录",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = LocalText.current,
-                            maxLines = 1,
-                            softWrap = false,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                            modifier = Modifier.weight(1f),
-                        )
+                        /*
+                         * The title is centred on the 360dp column, not on what
+                         * is left between the marks.
+                         *
+                         * Claude's "最近记录" runs x=147.6..212.4, whose centre is
+                         * exactly 180.0 - half of 360. `weight(1f)` centres it
+                         * in the space between a 44dp box and two 40dp ones,
+                         * which put the word's centre at 167.2: 12.8 left, on a
+                         * header where the eye reads the word as the page's
+                         * name. A Box laid over the whole bar with the marks
+                         * drawn on top centres the word on the column instead.
+                         */
+                        Spacer(Modifier.weight(1f))
                         /*
                          * Claude's header ends with a magnifier and a filter,
                          * and the search field is not on the page until it is
@@ -3061,47 +3911,498 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                          * magnifier opens it; the field then sits above the list
                          * with a close glyph that puts it away.
                          */
-                        Box(Modifier.size(38.dp).clickable { searching = !searching; if (!searching) search = "" }, contentAlignment = Alignment.Center) {
-                            Icon(
-                                if (searching) Icons.Filled.Close else Icons.Outlined.Search,
-                                contentDescription = if (searching) "关闭搜索" else "搜索",
-                                tint = LocalText.current,
-                                modifier = Modifier.size(19.dp),
-                            )
-                        }
-                        Box(Modifier.size(38.dp).clickable { runningOnly = !runningOnly }, contentAlignment = Alignment.Center) {
-                            Icon(Icons.Outlined.Tune, contentDescription = "筛选", tint = if (runningOnly) MaterialTheme.colorScheme.primary else LocalText.current, modifier = Modifier.size(18.dp))
+                        /*
+                         * Two marks, and both are the reference's own shapes
+                         * rather than Material approximations of them.
+                         *
+                         * The first is three vertical sliders - a knob on the
+                         * outer two high up, one on the middle one low down,
+                         * each with its stem running the icon's whole height.
+                         * Its ink is 15.6 x 14.0 at x 288.0 and y 57.6. The
+                         * second is three checkmarks each followed by a rule:
+                         * ink 16.8 square at x 327.2, y 56.4. The Tune and
+                         * Checklist glyphs this carried are close in meaning
+                         * and plainly not the same drawing - the sliders read
+                         * vertical where Material's are horizontal, and the
+                         * checks are heavier and set in three rows, not in a
+                         * circle.
+                         */
+                        /*
+                         * One clock, because that is what the reference has.
+                         *
+                         * Its list header ends with a single circular clock at
+                         * x 830..861 in the panel - no sliders and no checklist.
+                         * The two marks that stood here (筛选 and 定时任务) were
+                         * read off a different capture and never re-checked
+                         * against this one; kept, they made the header three
+                         * glyphs wide where the reference has one, which is the
+                         * most visible difference left in the whole sidebar.
+                         *
+                         * The clock keeps its 定时任务 home rather than becoming a
+                         * decoration: the page has to stay reachable, and this is
+                         * the one corner the reference leaves free for it.
+                         */
+                        /*
+                         * The trailing corner carries what the page needs.
+                         *
+                         * Photographed: 最近记录 puts a filter and a list there -
+                         * glyphs at x 280.0..295.6 and 327.2..344.0, 31.6 apart -
+                         * and Code puts a clock on its own. This drew the clock
+                         * on both, so the home list offered 定时任务 where the
+                         * reference offers a way to narrow and re-order the list
+                         * in front of you.
+                         */
+                        if (leftMode == LeftMode.Recent) {
+                            Box(
+                                Modifier.size(40.dp).clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                ) { runningOnly = !runningOnly },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                /*
+                                 * Three verticals with a ring on each - not a
+                                 * funnel.
+                                 *
+                                 * Enlarged from the reference's own bar: the mark
+                                 * is three 2 dp rules running the full height,
+                                 * each carrying a hollow ring, the rings stepping
+                                 * high, low, middle left to right. A funnel reads
+                                 * as "narrow this down"; this reads as sliders,
+                                 * which is what the mark actually is.
+                                 */
+                                /*
+                                 * Rings, not beads on a string.
+                                 *
+                                 * Enlarged to 5x, the reference's rings are open
+                                 * circles with the rule stopping at each rim - the
+                                 * axis does not run through them. Drawing one rule
+                                 * and an arc over it made a figure-eight at every
+                                 * ring. The rules are split around the circles now,
+                                 * the circles are the reference's 4.4 dp across, and
+                                 * the ink is the reference's own #383835 rather
+                                 * than the muted grey this inherited from the
+                                 * clock it replaced - the mark reads a step faint
+                                 * beside the title.
+                                 *
+                                 * Measured: 16.0 x 13.6 of ink, x 280.0..295.6, and
+                                 * the rings step high (3.4), low (6.6), middle (5.0).
+                                 */
+                                MiIcon(
+                                    // left rule, split by its ring at 7.4
+                                    "M5 1.6V5.2M5 9.6v12.8" +
+                                        // middle rule, split by its ring at 14.2
+                                        "M12 1.6v10.2M12 18.2v4.2" +
+                                        // right rule, split by its ring at 10.8
+                                        "M19 1.6v6.8M19 14.8v7.6" +
+                                        // the three rings
+                                        "M5 5.2a2.2 2.2 0 1 0 0.01 0" +
+                                        "M12 14.2a2.2 2.2 0 1 0 0.01 0" +
+                                        "M19 10.8a2.2 2.2 0 1 0 0.01 0",
+                                    contentDescription = "筛选会话",
+                                    modifier = Modifier.size(16.dp),
+                                    viewBox = 24f,
+                                    strokeWidth = 1.9f,
+                                    tint = Color(0xFF383835),
+                                )
+                            }
+                            Box(
+                                Modifier.size(40.dp).clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                ) { },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                /*
+                                 * Checks beside rules - a checklist, not bullets.
+                                 *
+                                 * Enlarged, the reference's rows open with a tick
+                                 * (three strokes meeting at a point) rather than a
+                                 * dot, which makes the mark read as "rows of a
+                                 * list" instead of "items selected".
+                                 */
+                                MiIcon(
+                                    "M2.8 5.4l1.9 1.9 3-3.6M11 5.6h10.2" +
+                                        "M2.8 12.2l1.9 1.9 3-3.6M11 12.4h10.2" +
+                                        "M2.8 19l1.9 1.9 3-3.6M11 19.2h10.2",
+                                    contentDescription = "列表视图",
+                                    modifier = Modifier.size(16.8.dp),
+                                    viewBox = 24f,
+                                    strokeWidth = 1.9f,
+                                    tint = Color(0xFF383835),
+                                )
+                            }
+                        } else {
+                            Box(
+                                Modifier.size(40.dp).clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                ) { leftMode = LeftMode.Scheduled },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                MiIcon(
+                                    /*
+                                     * A ring with two hands, on the 24 grid: the
+                                     * circle is drawn as an arc of 350 degrees so
+                                     * it closes without a seam, and the hands meet
+                                     * at the centre - 12 to 3, the reference's pose.
+                                     */
+                                    "M12 0.9a11.1 11.1 0 1 0 0.01 0M12 6.2v6.2l4 2.5",
+                                    contentDescription = "定时任务",
+                                    modifier = Modifier.size(18.4.dp),
+                                    viewBox = 24f,
+                                    strokeWidth = 1.6f,
+                                    tint = LocalMuted.current,
+                                )
+                            }
                         }
                     }
+                }
                     /*
                      * The field appears only while searching, and takes the
                      * focus as it does - a magnifier that opened a box the
                      * reader then had to tap again would be two gestures for one
                      * intent.
                      */
-                    if (searching) {
-                        val focus = remember { androidx.compose.ui.focus.FocusRequester() }
-                        LaunchedEffect(searching) {
-                            if (searching) withContext(kotlinx.coroutines.Dispatchers.Main) { runCatching { focus.requestFocus() } }
+                    /*
+                     * Always on, as Claude's is: its field sits under the title
+                     * on every visit, and the magnifier the phone used instead
+                     * was a second step to reach the same box. Nothing takes
+                     * the focus until it is tapped, so the keyboard does not
+                     * open on every visit to the list.
+                     */
+                    run {
+                        /*
+                         * A hand-built pill, not Material's field.
+                         *
+                         * `OutlinedTextField` carries a 56dp minimum height of
+                         * its own, and `heightIn(min = 38.dp)` cannot bring it
+                         * under that: the box measured 51.6dp on the pad against
+                         * Claude's 37.6, so it stood 14dp - a third - too tall
+                         * and pushed the whole list down with it. Its inner
+                         * padding is the same story on the horizontal: the box
+                         * ran 277dp wide where Claude's is 332.8.
+                         *
+                         * Claude's field is a white capsule with a #CECECE
+                         * hairline, a magnifier 15dp in and its placeholder
+                         * after it. That is a row and a rounded background, and
+                         * nothing an OutlinedTextField is needed for.
+                         *
+                         * Measured at 2.5 px per dp: 332.8 x 37.6, 13.6dp in
+                         * from the list's edge, capsule corners.
+                         */
+                        /*
+                         * The list's search field belongs to the list.
+                         *
+                         * A sub-page carries its own filter (项目 has the two
+                         * marks in its header, Artifacts has its own field), so
+                         * leaving this one in place put a 「搜索」 box above a
+                         * page that does not search the conversations.
+                         */
+                        /*
+                         * 「会话」 over the list, 「全部 ∨」 at its right end -
+                         * and no field until the reader asks for one.
+                         *
+                         * The reference's list column opens with a heading row,
+                         * not a search box: 会话 sits at 28.8 dp and 全部 at
+                         * 295.2, both 11.6 dp of ink, and the magnifier in the
+                         * header is what brings a field in. This drew the field
+                         * permanently - the condition only checked which page
+                         * the column was on - so the first thing above every
+                         * conversation was an empty box that said nothing and
+                         * took a whole row.
+                         */
+                        /*
+                         * 设备 over 添加设备, as the reference's Code page has it.
+                         *
+                         * Measured on its own column: the 设备 label sits at
+                         * y 121.6 and the white capsule under it runs
+                         * 117.6 x 31.6 dp from 14.8 dp in. Above 会话, this is
+                         * the block that says what the list below is a list of -
+                         * the machines the conversations are attached to.
+                         *
+                         * In MCode the machine is the one the gateway is
+                         * connected to, so the capsule offers a new connection
+                         * rather than a device picker.
+                         */
+                        if (leftMode == LeftMode.Sessions && !searching) {
+                            Text(
+                                "设备",
+                                fontSize = 12.sp,
+                                color = LocalMuted.current,
+                                /*
+                                 * 28.8 in, 41.6 under the header's ink.
+                                 *
+                                 * Measured on the reference: 设备 starts at x
+                                 * 28.8 and its top is 41.6 below the header
+                                 * block's bottom; the capsule under it is 36.8
+                                 * below the label's own bottom. This sat at 14.8
+                                 * with 10/6, which pulled the label left against
+                                 * the column edge and stacked everything under it
+                                 * 14 dp too high - the whole block drifted up.
+                                 */
+                                modifier = Modifier.padding(start = 28.8.dp, top = 13.2.dp, bottom = 22.8.dp),
+                            )
+                            Row(
+                                Modifier
+                                    /*
+                                     * Height first, then the plate, then the inset.
+                                     *
+                                     * `padding(start = 30.dp)` was the first
+                                     * modifier here, so everything after it -
+                                     * height, clip, border, background - sized
+                                     * and painted the area left over *inside*
+                                     * that 30 dp inset. The capsule's plate and
+                                     * its hairline were being drawn in a box
+                                     * whose left edge had already been pushed
+                                     * 30 in, and the row drew as bare text.
+                                     * The inset belongs at the end, where it
+                                     * moves the whole pill rather than resizing
+                                     * what sits behind it.
+                                     */
+                                    /*
+                                     * 16 from the column edge, not 30.
+                                     *
+                                     * Photographed on Claude's Code page: the
+                                     * capsule's left border sits at x 16.0 and
+                                     * its plus mark at 31.6 - so 15.6 of padding
+                                     * inside the pill, not 9. The 30 that was
+                                     * here came from a pass that measured the
+                                     * text's start and called it the pill's edge,
+                                     * which made the whole capsule start where
+                                     * its content should.
+                                     */
+                                    .padding(start = 16.dp)
+                                    .height(31.6.dp)
+                                    .clip(RoundedCornerShape(15.8.dp))
+                                    /*
+                                     * No fill at all.
+                                     *
+                                     * Sampled inside the reference's pill at
+                                     * three points: (249,249,247) - the page's
+                                     * own colour. The capsule is an outline on
+                                     * the page, not a white plate on it. The
+                                     * thumbnail made it look filled; the pixels
+                                     * say otherwise, which is why this is
+                                     * measured rather than eyeballed.
+                                     */
+                                    .border(1.dp, LocalCardLine.current, RoundedCornerShape(15.8.dp))
+                                    .clickable { showConnect = true }
+                                    /*
+                                     * 9 in from the pill's edge, not 14.
+                                     *
+                                     * Measured: the reference's 添加设备 text
+                                     * starts at x 31.6 with the capsule's own
+                                     * edge at 22.0 - 9.6 in - and its ink is
+                                     * 14.0 dp tall, which is 14sp in this face.
+                                     * At 14 in and 13sp the label sat 15 dp too
+                                     * far right and read a step small, so the
+                                     * pill came out 101.6 wide against the
+                                     * reference's 73.6.
+                                     */
+                                    .padding(horizontal = 15.6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                MiIcon(
+                                    "M12 5v14M5 12h14",
+                                    contentDescription = null,
+                                    modifier = Modifier.size(12.8.dp),
+                                    viewBox = 24f,
+                                    strokeWidth = 2.2f,
+                                    tint = LocalText.current,
+                                )
+                                /*
+                                 * 13.2 between the plus and the words.
+                                 *
+                                 * Measured inside the reference's pill: the plus
+                                 * runs 31.6..44.0, and 添加设备 starts at 57.2 -
+                                 * so 13.2 of air, not the 6 this had. With 6 the
+                                 * label crowded the mark and the whole pill came
+                                 * out one third narrower than the reference's.
+                                 */
+                                Spacer(Modifier.width(13.2.dp))
+                                Text("添加设备", fontSize = 14.sp, color = LocalText.current)
+                            }
                         }
-                        OutlinedTextField(
-                            search, { search = it },
+                        if (leftMode == LeftMode.Sessions && !searching) Row(
+                            Modifier
+                                .fillMaxWidth()
+                                /*
+                                 * 44.0 above, measured: the capsule's bottom is
+                                 * at 178.0 and 会话's ink starts at 222.4.
+                                 */
+                                .padding(start = 28.8.dp, end = 20.4.dp, top = 26.dp, bottom = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
                             /*
-                             * `heightIn`, not `height`: a fixed 45dp box with a
-                             * 14sp field and Material's own inner padding left the
-                             * placeholder clipped - 「搜索」 rendered as a cut-off
-                             * glyph pair.
+                             * The heading is also the way into the search.
+                             *
+                             * The reference's header carries a clock and no
+                             * magnifier, so its search is reached some other way
+                             * - and a field that covers nothing until asked for
+                             * still has to be askable. Tapping the heading is
+                             * the one place that costs no pixels: it is already
+                             * there, it already says what the column is, and a
+                             * reader looking for a conversation reaches for it
+                             * first.
                              */
-                            Modifier.fillMaxWidth().padding(horizontal = 12.dp).heightIn(min = 45.dp).focusRequester(focus),
-                            placeholder = { Text("搜索", color = LocalMuted.current, fontSize = 14.sp) },
-                            leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(17.dp)) },
-                            shape = RoundedCornerShape(14.dp),
-                            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp),
-                            // Claude's search sits on white with a hairline pill
-                            // outline, not on the page's own colour with none.
-                            colors = OutlinedTextFieldDefaults.colors(unfocusedContainerColor = LocalField.current, focusedContainerColor = LocalField.current, unfocusedBorderColor = LocalFieldLine.current, focusedBorderColor = LocalFieldLine.current),
-                            singleLine = true,
-                        )
+                            Text(
+                                "会话",
+                                fontSize = 13.sp,
+                                color = LocalMuted.current,
+                                /*
+                                 * No 4 dp inset of its own.
+                                 *
+                                 * The row already starts at 28.8, which is where
+                                 * the reference's 会话 sits; the touch target's
+                                 * own 4 pushed the word to 32.8 and made the
+                                 * heading the only element in the block out of
+                                 * line with 设备 above it and the cards below.
+                                 */
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable { searching = true }
+                                    .padding(vertical = 2.dp),
+                            )
+                            Spacer(Modifier.weight(1f))
+                            Row(
+                                Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { runningOnly = !runningOnly }
+                                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    if (runningOnly) "运行中" else "全部",
+                                    fontSize = 13.sp,
+                                    color = LocalMuted.current,
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                MiIcon(
+                                    "M6 9.5L12 15.5L18 9.5",
+                                    contentDescription = "筛选会话",
+                                    modifier = Modifier.size(11.dp),
+                                    viewBox = 24f,
+                                    strokeWidth = 2f,
+                                    tint = LocalMuted.current,
+                                )
+                            }
+                        }
+                        /*
+                         * Always there on 最近记录, only on demand on Code.
+                         *
+                         * Photographed: Claude's home list carries a white search
+                         * field under the header permanently - 336 by 40, edge at
+                         * x 12.0 - while its Code page has no field at all. This
+                         * showed the field only once `searching` was set, so the
+                         * home page drew no search and its first row sat at 126.4
+                         * where the reference's field runs 108.8..148.8.
+                         */
+                        if ((leftMode == LeftMode.Recent || searching) && isListPage) Row(
+                            Modifier
+                                .fillMaxWidth()
+                                /*
+                                 * 36.0 above the field and 40.0 of it.
+                                 *
+                                 * Claude's field's border runs 108.8..148.8 -
+                                 * a box 40.0 tall. 36 of top margin here put
+                                 * the fill at 121.6 against the reference's
+                                 * 110.0, because the header already ends at
+                                 * 73.2 and carries its own 12 below; 24.4 is
+                                 * what lands the fill on 110.0.
+                                 */
+                                .padding(start = 12.dp, end = 20.4.dp, top = 13.2.dp)
+                                .height(40.dp)
+                                /*
+                                 * No `clip` on this capsule, and the border
+                                 * before the fill.
+                                 *
+                                 * `clip(RoundedCornerShape(20.dp))` cuts every
+                                 * later draw to the rounded rectangle, so a
+                                 * `border` drawn after it loses the half of its
+                                 * stroke that lies on the shape's edge - the
+                                 * field came out with no visible hairline at
+                                 * any colour or width. `background` and
+                                 * `border` both take the shape themselves, so
+                                 * the clip was doing nothing the two of them
+                                 * do not already do.
+                                 */
+                                .border(
+                                    0.8.dp,
+                                    if (LocalBg.current == DarkBg) LocalFieldLine.current else Color(0xFFCECECE),
+                                    RoundedCornerShape(17.2.dp),
+                                )
+                                .background(LocalField.current, RoundedCornerShape(17.2.dp))
+                                .padding(start = 10.2.dp, end = 11.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            /*
+                             * 19dp, because Material's Search glyph does not
+                             * fill its 24 grid: at 15 it drew 9.6 dp of ink
+                             * where Claude's magnifier is 8.4 wide and 15.2
+                             * tall (x 26.4..34.8, y 119.2..134.4). The old
+                             * spacing also pushed the placeholder from 36.0 to
+                             * 46.4, so the gap drops to 2.4.
+                             */
+                            Icon(
+                                Icons.Outlined.Search,
+                                contentDescription = null,
+                                tint = LocalMuted.current,
+                                modifier = Modifier.size(19.dp),
+                            )
+                            Spacer(Modifier.width(0.4.dp))
+                            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                                if (search.isEmpty()) Text("搜索", color = LocalMuted.current, fontSize = 14.sp)
+                                BasicTextField(
+                                    value = search,
+                                    onValueChange = { search = it },
+                                    singleLine = true,
+                                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, color = LocalText.current),
+                                    cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                            /*
+                             * A way back out.
+                             *
+                             * The field is a mode now, and a mode with no exit is
+                             * a trap: before this it was permanent, so nothing
+                             * ever needed to close it. The cross clears what was
+                             * typed and puts the heading row back.
+                             */
+                            /*
+                             * Only where the field had to be asked for.
+                             *
+                             * Claude's 最近记录 carries a plain field with nothing
+                             * at its trailing end - sampled, the right side of
+                             * the box is empty - because there the field is
+                             * always there and has nothing to exit. The cross
+                             * belongs to the Code page, where the field is a mode
+                             * and a mode without an exit is a trap.
+                             */
+                            if (leftMode != LeftMode.Recent) Box(
+                                Modifier
+                                    .size(28.dp)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null,
+                                    ) {
+                                        search = ""
+                                        searching = false
+                                    },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                MiIcon(
+                                    "M6.4 6.4L17.6 17.6M17.6 6.4L6.4 17.6",
+                                    contentDescription = "关闭搜索",
+                                    modifier = Modifier.size(11.dp),
+                                    viewBox = 24f,
+                                    strokeWidth = 2f,
+                                    tint = LocalMuted.current,
+                                )
+                            }
+                        }
                     }
                         /*
                          * The body hits sit between the field and the list, the
@@ -3186,17 +4487,118 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             }
                         }
                         Spacer(Modifier.height(6.dp))
-                        SessionList(
-                            visibleSessions,
-                            currentSession,
-                            search,
-                            onSelect = { select(it) },
-                            compact = false,
-                            modifier = Modifier.weight(1f).fillMaxWidth(),
-                            onLongPress = { sheetTarget = it },
-                            unseen = unseen.toList(),
-                            awaiting = pendingPerms.filterValues { it.isNotEmpty() }.keys.toList(),
-                        )
+                        /*
+                         * On a wide screen the column's body is the page the
+                         * mode names, not always the list.
+                         *
+                         * The reference keeps 项目, Artifacts and 定时任务 inside
+                         * this 360 column with the conversation still beside
+                         * them - the drawer switches what the column shows, not
+                         * what the whole window shows. These three used to
+                         * `return` out of the layout and paint over both panes,
+                         * so switching to 项目 lost the conversation entirely.
+                         *
+                         * They are handed `embedded = true`, which drops their
+                         * own page fill and their status-bar spacer: the column
+                         * has already cleared the bar and painted the page.
+                         */
+                        when (leftMode) {
+                            LeftMode.Projects -> ProjectsScreen(
+                                rows = projectRows,
+                                onOpen = {
+                                    projectFilter = it
+                                    leftMode = LeftMode.Recent
+                                },
+                                onClose = { leftMode = LeftMode.Recent },
+                                onCreateBlank = { name ->
+                                    scope.launch {
+                                        val made = runCatching {
+                                            rpc(JSONObject().put("type", "project.createBlank").put("name", name))
+                                        }.getOrNull()
+                                        if (made != null) {
+                                            projects.add(name)
+                                            projectNames[name] = name
+                                        }
+                                    }
+                                },
+                                onAddFolder = { path ->
+                                    scope.launch {
+                                        runCatching {
+                                            rpc(JSONObject().put("type", "project.add").put("path", path))
+                                        }
+                                        projects.add(path)
+                                        projectNames[path] = path.substringAfterLast('\\').substringAfterLast('/')
+                                    }
+                                },
+                                onRename = { dir, name -> projectNames[dir] = name },
+                                onRemove = { dir -> projects.remove(dir); projectNames.remove(dir) },
+                                embedded = true,
+                                modifier = Modifier.weight(1f).fillMaxWidth(),
+                            )
+                            LeftMode.Artifacts -> ArtifactsScreen(
+                                groups = artifacts.toList(),
+                                loading = artifactsLoading,
+                                failed = artifactsFailed,
+                                facets = artFacets,
+                                category = artCategory,
+                                query = artQuery,
+                                onQuery = { artQuery = it },
+                                onCategory = { artCategory = it },
+                                onRefresh = { refreshArtifacts++ },
+                                onOpen = { root, rel -> openArtifact(root, rel) },
+                                onClose = { leftMode = LeftMode.Recent },
+                                embedded = true,
+                                modifier = Modifier.weight(1f).fillMaxWidth(),
+                            )
+                            LeftMode.Scheduled -> ScheduledScreen(
+                                tasks = automations.toList(),
+                                onNew = { newSession(); leftMode = LeftMode.Recent },
+                                onClose = { leftMode = LeftMode.Recent },
+                                embedded = true,
+                                modifier = Modifier.weight(1f).fillMaxWidth(),
+                            )
+                            LeftMode.Plugins -> PluginsScreen(
+                                servers = pluginServers.toList(),
+                                skills = pluginSkills.toList(),
+                                loading = pluginsLoading,
+                                failed = pluginsFailed,
+                                onRefresh = { refreshPlugins++ },
+                                onToggleSkill = { name, enabled ->
+                                    scope.launch {
+                                        val config = runCatching { rpc(JSONObject().put("type", "config.get")) }
+                                            .getOrNull()?.optJSONObject("data")?.optJSONObject("config")
+                                        val off = config?.optJSONArray("disabledSkills")?.let { arr ->
+                                            (0 until arr.length()).mapNotNull { arr.optString(it).ifBlank { null } }.toMutableList()
+                                        } ?: mutableListOf()
+                                        if (enabled) off.remove(name) else if (name !in off) off.add(name)
+                                        runCatching {
+                                            rpc(JSONObject().put("type", "config.set").put("patch", JSONObject().put("disabledSkills", org.json.JSONArray(off))))
+                                        }
+                                        refreshPlugins++
+                                    }
+                                },
+                                onClose = { leftMode = LeftMode.Recent },
+                                embedded = true,
+                                modifier = Modifier.weight(1f).fillMaxWidth(),
+                            )
+                            else -> SessionList(
+                                visibleSessions,
+                                currentSession,
+                                search,
+                                onSelect = { select(it) },
+                                compact = false,
+                                /*
+                                 * 最近记录 is the flat one: no plate, no hairline,
+                                 * just rows. Code is the page with cards.
+                                 */
+                                flat = leftMode == LeftMode.Recent,
+                                modifier = Modifier.weight(1f).fillMaxWidth(),
+                                onLongPress = { sheetTarget = it },
+                                unseen = unseen.toList(),
+                                awaiting = pendingPerms.filterValues { it.isNotEmpty() }.keys.toList(),
+                                live = connected,
+                            )
+                        }
                         /*
                          * Claude's foot-of-column capsule, which follows the
                          * mode: 新建会话 on the list, 新建项目 on the projects
@@ -3204,33 +4606,71 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                          * after the list so the list takes the space first and
                          * the capsule never covers a row.
                          */
-                        FootCapsule(
+                        /*
+                         * Code only. Photographed: Claude's 最近记录 has nothing
+                         * at the foot of the column - the last conversation ends
+                         * and the page ends. Its Code page carries this capsule.
+                         *
+                         * The isListPage change last pass widened this condition
+                         * to both pages, and on the home list it measured 286.8
+                         * wide by 56.8 tall instead of 123.2 by 44.0: the same
+                         * composable in a different container, stretched by the
+                         * list's own weight rather than sized by its content.
+                         */
+                        if (leftMode == LeftMode.Sessions) FootCapsule(
                             /*
                              * The desktop's capsule reads 新建任务 and makes a
                              * conversation wherever the list is showing; it is
                              * one row with one job, not a menu whose words change.
                              */
                             label = "+ 新建会话",
-                            modifier = Modifier.align(Alignment.CenterHorizontally),
+                            /*
+                             * Against the column's right edge, 16.4 off it.
+                             *
+                             * Re-measured on the reference's own column, which is
+                             * 900 px wide, not 925: its capsule runs
+                             * x 552.0..859.0, i.e. 16.4 dp from the seam. The
+                             * 26.4 here came from measuring against 925 - a
+                             * width this column never has - and put the button
+                             * 10 dp inboard of where the reference sits.
+                             */
+                            modifier = Modifier.align(Alignment.End).padding(end = 16.4.dp),
                             onClick = { newSession() },
                         )
                     }
                     /*
-                     * Claude's divider is not a rule but a handle: a 4dp wide,
-                     * 48dp tall rounded bar in (216,216,214), centred in the
-                     * pane's height, which the reader drags to trade width
-                     * between the two sides. There is no line at all - the two
-                     * panes share the page colour - so without this the split
-                     * cannot be moved and, more to the point, does not look
-                     * like it can be.
+                     * No divider handle between the panes.
+                     *
+                     * The handle came from Claude's Code screen, which has one
+                     * because that screen lets you trade width between a device
+                     * list and a session. Its chat screen does not: the two
+                     * panes share the page colour, the split is fixed, and
+                     * nothing is drawn in the seam at all.
+                     *
+                     * On the phone the handle was the loudest mark in the
+                     * chrome - a 32dp grab target with grip lines, sitting
+                     * between two columns that otherwise have no edge - and it
+                     * was also the thing that blocked taps on the list whenever
+                     * a drag was in flight.
                      */
-                    ColumnDivider(
-                        fraction = leftFraction,
-                        totalWidthPx = paneWidthPx,
-                        onChange = { leftFraction = it },
-                    )
-                    Column(Modifier.weight(1f - leftFraction).fillMaxHeight().fillMaxWidth()) {
+                    Column(Modifier.weight(1f - leftFraction).fillMaxHeight()) {
                         Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+                        /*
+                         * The pane is blank on the pages that own the left column.
+                         *
+                         * Photographed on the reference's 项目, 定时任务 and
+                         * 产物 screens: the right pane is empty page - not a
+                         * conversation header over nothing. This drew the
+                         * header regardless, so a back arrow floated at
+                         * x 379.6..392.4 on a page that has no conversation to
+                         * go back from, and a reader tapping it went somewhere
+                         * they had not asked for.
+                         */
+                        if (leftMode != LeftMode.Projects &&
+                            leftMode != LeftMode.Scheduled &&
+                            leftMode != LeftMode.Artifacts &&
+                            leftMode != LeftMode.Plugins
+                        ) {
                         Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                             /*
                              * Claude's conversation header: a back arrow at the
@@ -3247,7 +4687,16 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             val stopHere: (String) -> Unit = { sid ->
                                 request(JSONObject().put("type", "session.abort").put("sessionID", sid))
                             }
-                            Box(Modifier.size(44.dp).clickable { openDrawer() }, contentAlignment = Alignment.Center) {
+                            /*
+                             * The back arrow starts 40.8 in, not 19.6.
+                             *
+                             * Measured on the reference's own conversation header:
+                             * its arrow's ink runs x 400.8..414.8, which inside a
+                             * 360 dp-wide pane is 40.8 from the seam. This drew at
+                             * 379.6..392.4 - 21.2 left, tucked against the divider
+                             * instead of standing off it.
+                             */
+                            Box(Modifier.size(44.dp).offset(x = 21.2.dp).clickable { openDrawer() }, contentAlignment = Alignment.Center) {
                                 Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回", tint = LocalText.current, modifier = Modifier.size(20.dp))
                             }
                             /*
@@ -3256,32 +4705,64 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                              * to press it on - and a long transcript is exactly
                              * where one wants it.
                              */
-                            Box(
-                                Modifier.size(38.dp).clickable { findOpen = !findOpen; if (!findOpen) findQuery = "" },
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Icon(
-                                    Icons.Outlined.Search,
-                                    contentDescription = if (findOpen) "关闭查找" else "在对话中查找",
-                                    tint = if (findOpen) MaterialTheme.colorScheme.primary else LocalText.current,
-                                    modifier = Modifier.size(18.dp),
-                                )
-                            }
+                            /*
+                             * The header's left end is the arrow and nothing
+                             * else, as Claude's is - measured across its own
+                             * bar: back, the two-line title, a ring and the
+                             * overflow. The find field is still reached from
+                             * the overflow menu, where it does not put a second
+                             * magnifier next to the list's own search.
+                             */
+                            /*
+                             * The conversation's name, centred, with what it is
+                             * attached to underneath - which the reference does
+                             * have.
+                             *
+                             * An earlier pass decided it did not, and the header
+                             * shipped with an empty middle for several rounds.
+                             * Measured on this capture: "Main" runs x 2143..2225
+                             * at y 124..179 (22.4 dp of ink) and "Remote control"
+                             * sits under it at 176..199 in the muted colour.
+                             * That earlier reading counted glyphs from x 1249.6,
+                             * which is inside the left column's own width - the
+                             * measurement had drifted into the wrong pane and the
+                             * conclusion followed it.
+                             */
                             Column(
-                                Modifier.weight(1f).clickable { toTopTicks++ },
+                                Modifier.weight(1f),
                                 horizontalAlignment = Alignment.CenterHorizontally,
                             ) {
-                                Text(currentSessionTitle(sessions, currentSession), fontSize = 16.sp, fontWeight = FontWeight.Medium, color = LocalText.current, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
-                                val where = sessions.find { it.id == currentSession }?.directory.orEmpty()
-                                if (where.isNotBlank()) {
-                                    Text(
-                                        where.substringAfterLast('\\').substringAfterLast('/'),
-                                        fontSize = 11.sp,
-                                        color = LocalMuted.current,
-                                        maxLines = 1,
-                                        softWrap = false,
-                                    )
-                                }
+                                Text(
+                                    sessions.find { it.id == currentSession }?.title
+                                        ?.takeIf { it.isNotBlank() } ?: "New session",
+                                    /*
+                                     * 17sp, and the width comparison was invalid.
+                                     *
+                                     * I raised this to 19.1 on the reference's title
+                                     * measuring 90.8 against this app's 80.8. But the
+                                     * two strings are different - the reference reads
+                                     * 交换机固件, five Han characters, and this reads
+                                     * Greeting - so their widths were never
+                                     * comparable. The measure that is comparable is
+                                     * the ink height: 31.2 for the two lines together
+                                     * against 30.8 here.
+                                     */
+                                    fontSize = 17.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    lineHeight = 22.sp,
+                                    color = LocalText.current,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                )
+                                Text(
+                                    "Remote control",
+                                    fontSize = 11.sp,
+                                    lineHeight = 14.sp,
+                                    color = LocalMuted.current,
+                                    maxLines = 1,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                )
                             }
                             /*
                              * While a turn is in flight Claude puts an amber ring
@@ -3309,10 +4790,76 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                              * that menu, which is where the phone keeps the ones
                              * with no room of their own.
                              */
+                            /*
+                             * Three marks at the header's trailing end, as
+                             * Claude's chat screen has them: a laptop, a filled
+                             * speech bubble with a plus, then the kebab. Read
+                             * off its header at 2.5 px per dp - 19.2 wide at
+                             * 1249.6, 18.4 at 1290.0, and the kebab's 3.2 dots
+                             * at 1337.6.
+                             *
+                             * The laptop opens the left column's Code page and
+                             * the bubble starts a conversation, which are the
+                             * two things those marks do on the reference.
+                             */
+                            /*
+                             * One trailing mark, as the reference has.
+                             *
+                             * Its conversation header's right end holds a single
+                             * ⋯ at x 1290.4..1308.0 and nothing after it. This
+                             * carried two: a laptop glyph at 1291.6 (the way into
+                             * settings) and a ⋮ at 1337.6. Settings keeps its route
+                             * through the drawer; the header does not need a second
+                             * mark competing with the overflow.
+                             */
+                            // Read outside the draw scope: a Canvas lambda is not
+                            // composable, so `Local…current` cannot be called in it.
+                            val bubbleInk = LocalText.current
+                            val bubbleFg = LocalBg.current
+                            /*
+                             * No new-conversation mark here.
+                             *
+                             * Measured on the reference's own conversation header:
+                             * it holds three things - back at x 400.8..414.8, the
+                             * title at 828.0..918.8, and the overflow at
+                             * 1290.4..1308.0. Nothing to the right of the overflow.
+                             * This drew a speech-bubble button at 1337.6..1340.4,
+                             * past the bar's own end, where it read as a fourth
+                             * element the reference does not have. The way in is
+                             * the left column's 新建会话 capsule.
+                             */
                             var headerMenu by remember { mutableStateOf(false) }
-                            Box(Modifier.size(40.dp).clickable { headerMenu = true }, contentAlignment = Alignment.Center) {
-                                Icon(Icons.Outlined.MoreVert, contentDescription = "更多", tint = LocalText.current, modifier = Modifier.size(20.dp))
+                            /*
+                             * 42.4 further in, measured.
+                             *
+                             * The reference's ⋯ sits at 1290.4..1308.0, which is
+                             * 72.8 from the pane's right edge (1363.2); this drew
+                             * at 1332.8, only 30.4 in. With the laptop glyph gone
+                             * the mark moved right into the space it had occupied.
+                             */
+                            Box(Modifier.size(40.dp).offset(x = (-42.4).dp).clickable { headerMenu = true }, contentAlignment = Alignment.Center) {
+                                /*
+                                 * Horizontal dots, not vertical.
+                                 *
+                                 * Enlarged from the reference's header: its mark
+                                 * is three dots in a row, ⋯, at 1290.4..1308.0.
+                                 * This drew ⋮ - the same menu, a different glyph,
+                                 * and the only visible difference at this size
+                                 * between the two headers' right ends.
+                                 */
+                                Canvas(Modifier.size(18.4.dp)) {
+                                    val r = 1.9f * density
+                                    val cy = size.height / 2f
+                                    val gap = size.width / 4f
+                                    drawCircle(Color(0xFF1F1E1C), radius = r, center = androidx.compose.ui.geometry.Offset(gap, cy))
+                                    drawCircle(Color(0xFF1F1E1C), radius = r, center = androidx.compose.ui.geometry.Offset(gap * 2f, cy))
+                                    drawCircle(Color(0xFF1F1E1C), radius = r, center = androidx.compose.ui.geometry.Offset(gap * 3f, cy))
+                                }
                                 DropdownMenu(expanded = headerMenu, onDismissRequest = { headerMenu = false }) {
+                                    MenuRow(
+                                        label = if (infoOpen) "关闭对话信息" else "对话信息",
+                                        onClick = { infoOpen = !infoOpen; headerMenu = false },
+                                    )
                                     MenuRow(
                                         label = if (privacy) "关闭隐私模糊" else "隐私模糊",
                                         onClick = { privacy = !privacy; headerMenu = false },
@@ -3355,7 +4902,37 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                         Timeline(
                                             items,
                                             Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp),
-                                            running = sessions.find { it.id == currentSession }?.running == true,
+                                            share = { id ->
+                                selectionByMessage.getOrPut(id) { SelectionState() }.apply {
+                                    /*
+                                     * Only one reply may be lit: the reference
+                                     * never shows two washes, and a stale one
+                                     * keeps its 复制 chip floating over the
+                                     * transcript.
+                                     */
+                                    onTakeOver = {
+                                        val was = litMessage
+                                        if (was != null && was != id) {
+                                            selectionByMessage[was]?.clear()
+                                        }
+                                        litMessage = id
+                                    }
+                                    /*
+                                     * A tap clears every reply, not just this
+                                     * one: the reference's selection is one
+                                     * screen-wide thing, so dismissing it has to
+                                     * reach the reply that was lit as well as
+                                     * this one - otherwise a tap on a second
+                                     * paragraph left the first still washed.
+                                     */
+                                    onDismiss = {
+                                        selectionByMessage.values.forEach { it.clear() }
+                                        litMessage = null
+                                    }
+                                }
+                            },
+                                            selecting = litMessage != null,
+                            running = sessions.find { it.id == currentSession }?.running == true,
                                             onPerm = ::respondPerm,
                                             onPermReason = ::respondPermReason,
                                             onAnswer = ::answerQuestion,
@@ -3364,6 +4941,27 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                             onFixKey = { loadProviders(); showProviders = true },
                                             find = if (findOpen) findQuery else "",
                                             findStep = findStep,
+                                            onOpenFile = { dir, rel -> openArtifact(dir, rel) },
+                                            root = sessions.find { it.id == currentSession }?.directory.orEmpty(),
+                                            onRevertTurn = ::revertTurn,
+                                            onReviewTurn = { patch -> filePreview = "本回合的改动" to patch },
+                                        )
+                                        /*
+                                         * The info card floats over the pane's top
+                                         * trailing corner, under the find bar - the
+                                         * desktop's `floating` mode, which it uses
+                                         * whenever the pane is too narrow to hold a
+                                         * column beside the prose.
+                                         */
+                                        if (infoOpen) InfoCard(
+                                            items = items.toList(),
+                                            root = sessions.find { it.id == currentSession }?.directory.orEmpty(),
+                                            onOpen = { path ->
+                                                val dir = sessions.find { it.id == currentSession }?.directory.orEmpty()
+                                                openArtifact(dir, path)
+                                            },
+                                            onClose = { infoOpen = false },
+                                            modifier = Modifier.align(Alignment.TopEnd).padding(top = 56.dp, end = 20.dp),
                                         )
                                         /*
                                          * The card hangs over the pane's top trailing
@@ -3386,12 +4984,13 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 }
                             }
                         }
+                        }  // end conversational pane
                     }
                 }
         } else {
             if (empty) {
                 Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-                    AppTopBar(filterActive = runningOnly, privacyActive = privacy, onDrawer = { openDrawer() }, onFilter = { runningOnly = !runningOnly }, onPrivacy = { privacy = !privacy }, findOpen = findOpen, onFind = { findOpen = !findOpen; if (!findOpen) findQuery = "" }, connected = connected)
+                    AppTopBar(filterActive = runningOnly, privacyActive = privacy, onDrawer = { openDrawer() }, onFilter = { runningOnly = !runningOnly }, onPrivacy = { privacy = !privacy }, findOpen = findOpen, onFind = { findOpen = !findOpen; if (!findOpen) findQuery = "" }, infoOpen = infoOpen, onInfo = { infoOpen = !infoOpen }, connected = connected)
                     Box(Modifier.weight(1f).fillMaxWidth()) {
                         WelcomePane(withInput = true, inputBar = inputBar)
                     }
@@ -3400,7 +4999,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             } else {
                 Scaffold(
                     containerColor = MaterialTheme.colorScheme.background,
-                    topBar = { AppTopBar(filterActive = runningOnly, privacyActive = privacy, onDrawer = { openDrawer() }, onFilter = { runningOnly = !runningOnly }, onPrivacy = { privacy = !privacy }, findOpen = findOpen, onFind = { findOpen = !findOpen; if (!findOpen) findQuery = "" }, connected = connected) },
+                    topBar = { AppTopBar(filterActive = runningOnly, privacyActive = privacy, onDrawer = { openDrawer() }, onFilter = { runningOnly = !runningOnly }, onPrivacy = { privacy = !privacy }, findOpen = findOpen, onFind = { findOpen = !findOpen; if (!findOpen) findQuery = "" }, infoOpen = infoOpen, onInfo = { infoOpen = !infoOpen }, connected = connected) },
                     bottomBar = {
                         Column {
                             inputBar()
@@ -3412,6 +5011,36 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         Timeline(
                             items,
                             Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp),
+                            share = { id ->
+                                selectionByMessage.getOrPut(id) { SelectionState() }.apply {
+                                    /*
+                                     * Only one reply may be lit: the reference
+                                     * never shows two washes, and a stale one
+                                     * keeps its 复制 chip floating over the
+                                     * transcript.
+                                     */
+                                    onTakeOver = {
+                                        val was = litMessage
+                                        if (was != null && was != id) {
+                                            selectionByMessage[was]?.clear()
+                                        }
+                                        litMessage = id
+                                    }
+                                    /*
+                                     * A tap clears every reply, not just this
+                                     * one: the reference's selection is one
+                                     * screen-wide thing, so dismissing it has to
+                                     * reach the reply that was lit as well as
+                                     * this one - otherwise a tap on a second
+                                     * paragraph left the first still washed.
+                                     */
+                                    onDismiss = {
+                                        selectionByMessage.values.forEach { it.clear() }
+                                        litMessage = null
+                                    }
+                                }
+                            },
+                            selecting = litMessage != null,
                             running = sessions.find { it.id == currentSession }?.running == true,
                             onPerm = ::respondPerm,
                             onPermReason = ::respondPermReason,
@@ -3421,6 +5050,20 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             onFixKey = { loadProviders(); showProviders = true },
                             find = if (findOpen) findQuery else "",
                             findStep = findStep,
+                            onOpenFile = { dir, rel -> openArtifact(dir, rel) },
+                            root = sessions.find { it.id == currentSession }?.directory.orEmpty(),
+                            onRevertTurn = ::revertTurn,
+                            onReviewTurn = { patch -> filePreview = "本回合的改动" to patch },
+                        )
+                        if (infoOpen) InfoCard(
+                            items = items.toList(),
+                            root = sessions.find { it.id == currentSession }?.directory.orEmpty(),
+                            onOpen = { path ->
+                                val dir = sessions.find { it.id == currentSession }?.directory.orEmpty()
+                                openArtifact(dir, path)
+                            },
+                            onClose = { infoOpen = false },
+                            modifier = Modifier.align(Alignment.TopEnd).padding(top = 56.dp, end = 16.dp),
                         )
                         if (findOpen) FindCard(
                             query = findQuery,
@@ -3764,7 +5407,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                  * read the diff but not close it out is half the rail.
                  */
                 if (changedFiles.isNotEmpty()) {
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(10.dp))
                     val message = commitMessage
                     OutlinedTextField(
                         message,
@@ -4036,6 +5679,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * Android build decodes (mp4/m4v/webm), and MediaController's transport is
      * what the desktop's own bar offers - play, seek, the clock.
      */
+    officePreview?.let { (name, kind, html) ->
+        OfficeViewer(name = name, kind = kind, html = html, onClose = { officePreview = null })
+    }
+
+    pdfPreview?.let { (name, file) ->
+        PdfViewer(name = name, file = file, onClose = { pdfPreview = null })
+    }
+
     videoPreview?.let { (name, file) ->
         ModalBottomSheet(onDismissRequest = { videoPreview = null }, containerColor = Color.Black) {
             Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
@@ -4155,6 +5806,37 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     Icon(Icons.Outlined.ContentCopy, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(14.dp))
                     Text("复制", fontSize = 15.sp, color = LocalText.current)
+                }
+                /*
+                 * 选择文本, the way the reference offers it.
+                 *
+                 * The reference does not bind the long press to the text: its
+                 * sheet carries this item, and picking it is what turns the
+                 * reply selectable. Copying that shape is also what makes the
+                 * rounded wash possible at all - a long press here still belongs
+                 * to this sheet, so nothing upstream fights the gesture that
+                 * picks the word.
+                 */
+                if (msg.role != "user" && msg.text.isNotBlank()) {
+                    Row(Modifier.fillMaxWidth().clickable {
+                        selectionByMessage.getOrPut(msg.id) { SelectionState() }.apply {
+                            clear()
+                            armed = true
+                        }
+                        messageTarget = null
+                        Toast.makeText(context, "长按或拖动选择文字", Toast.LENGTH_SHORT).show()
+                    }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        MiIcon(
+                            "M4.6 6.4h14.8M4.6 12h9.6M4.6 17.6h6.4",
+                            contentDescription = null,
+                            tint = LocalText.current,
+                            modifier = Modifier.size(20.dp),
+                            viewBox = 24f,
+                            strokeWidth = 1.8f,
+                        )
+                        Spacer(Modifier.width(14.dp))
+                        Text("选择文本", fontSize = 15.sp, color = LocalText.current)
+                    }
                 }
                 /*
                  * 编辑并重发 belongs only on the reader's own words: editing a
@@ -4530,14 +6212,32 @@ fun WelcomePane(withInput: Boolean, inputBar: @Composable () -> Unit, inputAtBot
         // Claude's phone empty pane is its asterisk over 月光下的对话?; the
         // two-pane pane greets by name. Both are sampled from its own screens.
         if (inputAtBottom) {
-            // Claude's pad empty pane carries the same asterisk its phone pane
-            // does, drawn rather than a bitmap: the packaged mark is a raster
-            // and read as two grey triangles at this size.
-            SparkMark(Modifier.size(40.dp))
-            Spacer(Modifier.height(14.dp))
+            /*
+             * 39.5, which draws 32.6dp of ink.
+             *
+             * Measured both ways: the reference's ink spans 103px on this pad,
+             * and a 32.6 box here drew only 85. The gap is the drawing, not the
+             * measurement - the spokes are stroked lines that stop at the
+             * radius, so the round cap keeps half a stroke inside the box, and
+             * no spoke points exactly along an axis. 32.6 x 103/85 = 39.5.
+             */
+            /*
+             * 39.5 and 18 - and 39.5 was right all along.
+             *
+             * Last pass I raised this to 49.9 on the theory that a 39.5 box drew
+             * only 32.6 of ink, "because a stroked star stops at the radius".
+             * Measured off the build at 49.9: the ink is 52.0, which scales back
+             * to 41.2 at 39.5 - exactly the reference's own ink. The 32.6 was a
+             * reading of a half-drawn star, not of a small one.
+             *
+             * The gap goes to 18: the reference's mark ends at 414.0 and its
+             * greeting's ink begins at 432.0.
+             */
+            SparkMark(Modifier.size(39.5.dp))
+            Spacer(Modifier.height(18.dp))
             Text(greeting(), fontSize = 18.sp, fontWeight = FontWeight.Normal, color = LocalText.current)
         } else {
-            SparkMark(Modifier.size(40.dp))
+            SparkMark(Modifier.size(39.5.dp))
             Spacer(Modifier.height(16.dp))
             // Claude's phrase is 50px of glyph on the pad - 18sp, not the 44
             // this was set to after a first read of its line box (144px, which
@@ -4554,9 +6254,22 @@ fun WelcomePane(withInput: Boolean, inputBar: @Composable () -> Unit, inputAtBot
          */
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
             Column(
-                // Claude's asterisk centres at 41% of the pane and its phrase
-                // at 48%; a plain centre lands both about 150px low.
-                Modifier.align(Alignment.Center).padding(bottom = 124.dp),
+                /*
+                 * 135.8, not 124.
+                 *
+                 * Measured on the pad at 2.5 px per dp: Claude's asterisk spans
+                 * y 373.2..414.4, so its centre is 393.8 on a 908.8 pane -
+                 * 43.3% down. This block centred 11.8 lower, which is what the
+                 * extra bottom padding takes out.
+                 */
+                /*
+                 * 147.0, not 135.8.
+                 *
+                 * Measured on the build: the mark's centre landed at 399.6 where
+                 * the reference puts it at 393.5 - 6.1 low - so the bottom pad
+                 * grows by twice that.
+                 */
+                Modifier.align(Alignment.Center).padding(bottom = 147.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) { mark() }
             if (withInput) Box(Modifier.align(Alignment.BottomCenter)) { inputBar() }
@@ -4586,6 +6299,385 @@ fun WelcomePane(withInput: Boolean, inputBar: @Composable () -> Unit, inputAtBot
             // 1.14 : 1 puts the block's own centre at 43.8% instead of 50%.
             Spacer(Modifier.weight(0.14f))
         }
+    }
+}
+
+/** The twelve pages the desktop's settings dialog offers, in its order. */
+enum class SetPage(val label: String) {
+    General("常规"), Usage("使用情况"), Appearance("外观"), Config("配置"),
+    Models("模型"), Personal("个性化"), Keys("键盘快捷键"), Mcp("MCP 服务器"),
+    Environment("环境"), Lab("实验室功能"), Archive("已归档对话"), Updates("应用更新"),
+}
+
+/**
+ * The settings page: the desktop's two columns - a navigation strip and the
+ * page beside it.
+ *
+ * The phone had no settings page at all. What it called settings was a 会话设置
+ * sheet (agent, access, effort, goal, model) and a 模型服务 sheet that could only
+ * replace a key for a provider that already existed. Theme, both type sizes,
+ * providers, MCP servers, shortcuts, usage and the archive were unreachable.
+ *
+ * The page is drawn as a single composable with its own switches rather than a
+ * row helper taking a control lambda: `SetRow` with a `@Composable () -> Unit`
+ * parameter reads well but every call site then has to name the lambda, and
+ * there are forty of them. The three small controls below are functions that
+ * return Unit and draw themselves at their call site instead.
+ */
+@Composable
+fun SettingsScreen(
+    config: JSONObject?,
+    archived: List<SessionRow>,
+    usage: JSONObject?,
+    providers: List<JSONObject>,
+    servers: List<JSONObject>,
+    onPatch: (JSONObject) -> Unit,
+    onReopen: (String) -> Unit,
+    onClose: () -> Unit,
+) {
+    var page by remember { mutableStateOf(SetPage.General) }
+    val muted = LocalMuted.current
+    val ink = LocalText.current
+    val hairline = if (LocalBg.current == DarkBg) Color(0xFF2C2C2B) else Color(0xFFE4E1D8)
+    fun str(key: String, fallback: String = "") = config?.optString(key, fallback) ?: fallback
+    fun num(key: String, fallback: Double = 1.0) = config?.optDouble(key, fallback) ?: fallback
+    fun flag(key: String, fallback: Boolean) = config?.let { if (it.has(key)) it.optBoolean(key, fallback) else fallback } ?: fallback
+
+    Row(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        Column(
+            Modifier.width(220.dp).fillMaxHeight()
+                .windowInsetsPadding(WindowInsets.statusBars)
+                .padding(vertical = 12.dp),
+        ) {
+            Text("设置", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = ink,
+                modifier = Modifier.padding(start = 18.dp, bottom = 12.dp))
+            LazyColumn(Modifier.fillMaxWidth()) {
+                items(SetPage.entries.size) { index ->
+                    val entry = SetPage.entries[index]
+                    val active = entry == page
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 8.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (active) LocalPill.current else Color.Transparent)
+                            .clickable { page = entry }
+                            .padding(horizontal = 12.dp, vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(entry.label, fontSize = 14.sp,
+                            fontWeight = if (active) FontWeight.Medium else FontWeight.Normal,
+                            color = if (active) ink else muted)
+                    }
+                }
+            }
+        }
+        Box(Modifier.width(1.dp).fillMaxHeight().background(hairline))
+        Column(
+            Modifier.weight(1f).fillMaxHeight()
+                .windowInsetsPadding(WindowInsets.statusBars)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 28.dp, vertical = 16.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(page.label, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = ink,
+                    modifier = Modifier.weight(1f))
+                Box(Modifier.size(40.dp).clickable { onClose() }, contentAlignment = Alignment.Center) {
+                    Icon(Icons.Filled.Close, contentDescription = "关闭", tint = muted, modifier = Modifier.size(18.dp))
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+
+            when (page) {
+                SetPage.General -> {
+                    SetHead("基本")
+                    SetLabel("语言", "界面文字与提示所用的语言。")
+                    SetChoices(listOf("zh-CN" to "中文", "zh-TW" to "繁體", "en" to "English"), str("language", "zh-CN")) {
+                        onPatch(JSONObject().put("language", it))
+                    }
+                    SetLabel("默认新建项目位置", str("projectRoot").ifBlank { "还没有设置" })
+                    SetLabel("不添加可见 AI 标识", "导出的图片不加水印。")
+                    SetToggle(flag("watermark", false)) { onPatch(JSONObject().put("watermark", it)) }
+                }
+                SetPage.Usage -> SetUsage(usage)
+                SetPage.Appearance -> {
+                    SetHead("主题")
+                    SetLabel("主题", "跟随系统，或者固定一种。")
+                    SetChoices(listOf("system" to "跟随系统", "light" to "浅色", "dark" to "深色"), str("theme", "system")) {
+                        onPatch(JSONObject().put("theme", it))
+                    }
+                    SetHead("字体")
+                    SetLabel("UI 字号", "界面上所有文字的比例。")
+                    SetSteps((num("uiFontScale") * 100).toInt(), 80, 130, "%") {
+                        onPatch(JSONObject().put("uiFontScale", it / 100.0))
+                    }
+                    SetLabel("代码字号", "代码块与终端所用的字号。")
+                    SetSteps((num("codeFontScale") * 100).toInt(), 80, 130, "%") {
+                        onPatch(JSONObject().put("codeFontScale", it / 100.0))
+                    }
+                    SetLabel("字体平滑", "更轻的笔画抗锯齿；关掉则用系统自己的。")
+                    SetToggle(flag("fontSmoothing", true)) { onPatch(JSONObject().put("fontSmoothing", it)) }
+                    SetHead("运动与标记")
+                    SetLabel("减少动态效果", "关掉过渡与入场动画。")
+                    SetChoices(listOf("system" to "跟随系统", "on" to "开", "off" to "关"), str("reduceMotion", "system")) {
+                        onPatch(JSONObject().put("reduceMotion", it))
+                    }
+                    SetLabel("差异标记", "用底色，还是在每行开头加符号。")
+                    SetChoices(listOf("color" to "底色", "signs" to "符号"), str("diffMarks", "color")) {
+                        onPatch(JSONObject().put("diffMarks", it))
+                    }
+                }
+                SetPage.Config -> {
+                    SetHead("工作目录")
+                    SetLabel("默认新建项目位置", str("projectRoot").ifBlank { "还没有设置" })
+                    SetLabel("尊重 .gitignore", "搜索与文件列表跳过被忽略的路径。")
+                    SetToggle(flag("respectGitignore", true)) { onPatch(JSONObject().put("respectGitignore", it)) }
+                    SetHead("文件")
+                    SetLabel("打开位置", "点一个文件时在哪里打开。")
+                    SetChoices(listOf("panel" to "侧栏", "system" to "系统"), str("openTarget", "panel")) {
+                        onPatch(JSONObject().put("openTarget", it))
+                    }
+                }
+                SetPage.Models -> {
+                    SetHead("供应商")
+                    if (providers.isEmpty()) {
+                        Text("正在读取…", fontSize = 13.sp, color = muted)
+                    } else for (provider in providers) {
+                        val id = provider.optString("id")
+                        val ready = provider.optBoolean("configured")
+                        SetLabel(
+                            provider.optString("name", id),
+                            provider.optString("baseURL").ifBlank { id } + (if (ready) " · 已配置" else " · 未配置"),
+                        )
+                        Text(
+                            if (ready) "已就绪" else "缺密钥",
+                            fontSize = 12.sp,
+                            color = if (ready) muted else MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(bottom = 6.dp),
+                        )
+                    }
+                    Note("在桌面端的「模型」页里增删供应商与测试连接；这里显示它们的状态。")
+                }
+                SetPage.Personal -> {
+                    SetHead("你")
+                    SetLabel("称呼", "助手在回复里如何称呼你。")
+                    SetNameField(str("userName")) { onPatch(JSONObject().put("userName", it)) }
+                }
+                SetPage.Keys -> {
+                    SetHead("快捷键")
+                    for ((keys, what) in listOf(
+                        "Ctrl+N" to "新建会话", "Ctrl+K" to "搜索", "Ctrl+F" to "在对话中查找",
+                        "Ctrl+O" to "打开项目", "Ctrl+," to "设置", "Esc" to "关闭当前浮层",
+                    )) {
+                        Row(Modifier.fillMaxWidth().padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(what, fontSize = 14.sp, color = ink, modifier = Modifier.weight(1f))
+                            Text(keys, fontSize = 12.sp, color = muted, fontFamily = FontFamily.Monospace)
+                        }
+                    }
+                    Note("这些键在桌面端生效；平板接键盘时同样可用。")
+                }
+                SetPage.Mcp -> {
+                    if (servers.isEmpty()) {
+                        Text("还没有配置 MCP 服务器。", fontSize = 13.sp, color = muted)
+                    } else {
+                        SetHead("服务器")
+                        for (server in servers) {
+                            val state = server.optString("state").ifBlank { server.optString("status") }
+                            SetLabel(server.optString("name", server.optString("id")), server.optString("command").ifBlank { null })
+                            Text(
+                                when (state) {
+                                    "ready", "connected" -> "已连接"
+                                    "failed", "error" -> "启动失败"
+                                    else -> "未启动"
+                                },
+                                fontSize = 12.sp,
+                                color = if (state == "failed" || state == "error") MaterialTheme.colorScheme.error else muted,
+                                modifier = Modifier.padding(bottom = 6.dp),
+                            )
+                        }
+                    }
+                }
+                SetPage.Environment -> {
+                    SetHead("运行时")
+                    for ((label, value) in listOf(
+                        "应用版本" to str("appVersion"),
+                        "Shell" to str("shell"),
+                        "终端字体" to str("terminalFont"),
+                        "默认项目位置" to str("projectRoot"),
+                    )) {
+                        SetLabel(label, value.ifBlank { null })
+                    }
+                }
+                SetPage.Lab -> {
+                    SetHead("实验")
+                    SetLabel("追求目标", "让模型持续推进，直到目标达成。")
+                    SetToggle(flag("goalModeDefault", false)) { onPatch(JSONObject().put("goalModeDefault", it)) }
+                    SetLabel("子智能体", "允许把一部分工作交给并行的子任务。")
+                    SetToggle(flag("subagents", false)) { onPatch(JSONObject().put("subagents", it)) }
+                }
+                SetPage.Archive -> {
+                    if (archived.isEmpty()) {
+                        Text("没有已归档的对话。", fontSize = 13.sp, color = muted)
+                    } else {
+                        SetHead("已归档")
+                        for (row in archived) {
+                            SetLabel(row.title.ifBlank { row.id }, relTime(row.updated))
+                            Surface(shape = RoundedCornerShape(14.dp), color = LocalPill.current,
+                                modifier = Modifier.padding(bottom = 8.dp)) {
+                                Text("恢复", fontSize = 12.sp, color = ink,
+                                    modifier = Modifier.clickable { onReopen(row.id) }
+                                        .padding(horizontal = 12.dp, vertical = 6.dp))
+                            }
+                        }
+                    }
+                }
+                SetPage.Updates -> {
+                    SetHead("版本")
+                    SetLabel("当前版本", str("appVersion").ifBlank { "—" })
+                    Note("自动更新地址尚未配置，所以这一版不会自行下载新版本。")
+                }
+            }
+            Spacer(Modifier.height(40.dp))
+        }
+    }
+}
+
+/** A section heading, at the dialog's `h2`. */
+@Composable
+fun SetHead(text: String) {
+    Text(text, fontSize = 15.sp, fontWeight = FontWeight(640), color = LocalText.current,
+        modifier = Modifier.padding(top = 10.dp, bottom = 2.dp))
+}
+
+/** A row's title and its sub-line; the control, if any, goes under it. */
+@Composable
+fun SetLabel(title: String, sub: String? = null) {
+    Text(title, fontSize = 14.sp, color = LocalText.current, modifier = Modifier.padding(top = 8.dp))
+    if (!sub.isNullOrBlank()) {
+        Text(sub, fontSize = 12.sp, lineHeight = 17.sp, color = LocalMuted.current,
+            modifier = Modifier.padding(top = 1.dp, bottom = 6.dp))
+    }
+}
+
+/** The quiet sentence a page ends on. */
+@Composable
+fun Note(text: String) {
+    Text(text, fontSize = 12.sp, lineHeight = 18.sp, color = LocalMuted.current,
+        modifier = Modifier.padding(top = 10.dp))
+}
+
+/** A two-state switch. */
+@Composable
+fun SetToggle(on: Boolean, onToggle: (Boolean) -> Unit) {
+    Row(
+        Modifier.padding(bottom = 8.dp)
+            .size(width = 42.dp, height = 24.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (on) MaterialTheme.colorScheme.primary else LocalPill.current)
+            .clickable { onToggle(!on) }
+            .padding(2.dp),
+        horizontalArrangement = if (on) Arrangement.End else Arrangement.Start,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(20.dp).background(if (on) Color.White else LocalMuted.current, CircleShape))
+    }
+}
+
+/** A line of choices, one selected. */
+@Composable
+fun SetChoices(options: List<Pair<String, String>>, selected: String, onPick: (String) -> Unit) {
+    Row(Modifier.padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        for ((value, label) in options) {
+            val active = value == selected
+            Surface(shape = RoundedCornerShape(14.dp),
+                color = if (active) MaterialTheme.colorScheme.primary else LocalPill.current) {
+                Text(label, fontSize = 13.sp,
+                    color = if (active) LocalBg.current else LocalText.current,
+                    modifier = Modifier.clickable { onPick(value) }.padding(horizontal = 12.dp, vertical = 6.dp))
+            }
+        }
+    }
+}
+
+/** A number between two bounds. */
+@Composable
+fun SetSteps(value: Int, min: Int, max: Int, suffix: String, onChange: (Int) -> Unit) {
+    Row(Modifier.padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        for ((label, delta) in listOf("−" to -1, "+" to 1)) {
+            val allowed = (value + delta) in min..max
+            Box(
+                Modifier.size(28.dp).clip(RoundedCornerShape(14.dp))
+                    .background(if (allowed) LocalPill.current else Color.Transparent)
+                    .clickable(enabled = allowed) { onChange(value + delta) },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(label, fontSize = 15.sp,
+                    color = if (allowed) LocalText.current else LocalMuted.current.copy(alpha = 0.4f))
+            }
+            if (delta == -1) {
+                Text("$value$suffix", fontSize = 13.sp, color = LocalText.current,
+                    modifier = Modifier.padding(horizontal = 10.dp))
+            }
+        }
+    }
+}
+
+/** 使用情况: the figures the desktop's usage page shows, from `usage.summary`. */
+@Composable
+fun SetUsage(data: JSONObject?) {
+    if (data == null) {
+        Text("正在读取…", fontSize = 13.sp, color = LocalMuted.current)
+        return
+    }
+    val total = data.optJSONObject("total") ?: JSONObject()
+    SetHead("最近 30 天")
+    Row(Modifier.padding(bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(28.dp)) {
+        for (label in listOf("输入", "输出", "费用")) {
+            Column {
+                Text(label, fontSize = 12.sp, color = LocalMuted.current)
+                Text(
+                    if (label == "费用") fmtCost(total, total.optInt("priced"), total.optInt("unpriced"))
+                    else fmtTokens(if (label == "输入") total.optLong("input") else total.optLong("output")),
+                    fontSize = 20.sp, fontWeight = FontWeight.Medium, color = LocalText.current,
+                )
+            }
+        }
+    }
+    val byModel = data.optJSONArray("byModel")
+    if (byModel != null && byModel.length() > 0) {
+        SetHead("按模型")
+        for (i in 0 until byModel.length()) {
+            val row = byModel.optJSONObject(i) ?: continue
+            SetLabel(row.optString("model", "—"),
+                "输入 ${fmtTokens(row.optLong("input"))} · 输出 ${fmtTokens(row.optLong("output"))}")
+            Text(fmtCost(row, row.optInt("priced"), row.optInt("unpriced")),
+                fontSize = 12.sp, color = LocalMuted.current, modifier = Modifier.padding(bottom = 6.dp))
+        }
+    }
+    val byDay = data.optJSONArray("byDay")
+    if (byDay != null && byDay.length() > 0) {
+        SetHead("按天")
+        for (i in 0 until byDay.length()) {
+            val row = byDay.optJSONObject(i) ?: continue
+            Row(Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
+                Text(row.optString("day", "—"), fontSize = 13.sp, color = LocalText.current, modifier = Modifier.weight(1f))
+                Text(fmtCost(row, row.optInt("priced"), row.optInt("unpriced")), fontSize = 12.sp, color = LocalMuted.current)
+            }
+        }
+    }
+}
+
+/** The reader's name, with the one button that writes it. */
+@Composable
+fun SetNameField(value: String, onSave: (String) -> Unit) {
+    var draft by remember(value) { mutableStateOf(value) }
+    Row(Modifier.padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        androidx.compose.material3.OutlinedTextField(
+            draft, { draft = it }, Modifier.width(220.dp),
+            singleLine = true,
+            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp),
+            shape = RoundedCornerShape(8.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        androidx.compose.material3.TextButton({ onSave(draft.trim()) }) { Text("保存", fontSize = 13.sp) }
     }
 }
 
@@ -4664,6 +6756,9 @@ fun AppTopBar(
     onPrivacy: () -> Unit,
     findOpen: Boolean = false,
     onFind: () -> Unit = {},
+    /** Whether the info card is open, and the tap that toggles it. */
+    infoOpen: Boolean = false,
+    onInfo: () -> Unit = {},
     /** False while the socket is down; the strip under the bar says so. */
     connected: Boolean = true,
 ) {
@@ -4714,6 +6809,23 @@ fun AppTopBar(
                     contentDescription = if (findOpen) "关闭查找" else "在对话中查找",
                     tint = if (findOpen) Ember else LocalText.current,
                     modifier = Modifier.size(18.dp),
+                )
+            }
+            /*
+             * The conversation's record. The desktop hangs it off the header's
+             * info mark (`@info="toggleInfo"` in `App.vue`); without a way in,
+             * the card it opens is a screen nobody can reach.
+             */
+            Box(
+                Modifier.size(40.dp).clickable { onInfo() },
+                contentAlignment = Alignment.Center,
+            ) {
+                // A circle with a stem and a dot - the desktop's info mark.
+                MiIcon(
+                    "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 11v5.5M12 7.6h.01",
+                    modifier = Modifier.size(18.dp),
+                    strokeWidth = 1.7f,
+                    tint = if (infoOpen) Ember else LocalText.current,
                 )
             }
             Box(
@@ -4812,17 +6924,58 @@ fun ThreadLoading() {
     }
 }
 
-fun greeting(): String = when (java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)) {
-    in 5..8 -> "清晨随笔"
-    in 9..11 -> "上午闲话"
-    in 12..13 -> "午后漫谈"
-    in 14..17 -> "下午絮语"
-    in 18..22 -> "晚间随想"
-    else -> "深夜独白"
+/*
+ * Claude's greeting, in its own words and its own shape.
+ *
+ * This used to invent a mood for each part of the day - 清晨随笔, 上午闲话,
+ * 午后漫谈, 下午絮语, 晚间随想, 深夜独白 - six phrases that belong to no app but
+ * this one's imagination. Read off the reference's empty page, it says
+ * 「下午好，Wyatt」: a plain greeting, a comma, the account's own name. The
+ * name is the same W the drawer's account dot carries.
+ *
+ * The ranges follow the reference's visible behaviour (it showed 下午好 at
+ * 16:29); the exact cut-offs it uses are not observable from the outside, so
+ * these are the conventional ones - 5..11 morning, 12..17 afternoon, 18..4
+ * evening and night.
+ */
+fun greeting(): String {
+    val name = "Wyatt"
+    return when (java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)) {
+        in 5..11 -> "上午好，$name"
+        in 12..17 -> "下午好，$name"
+        in 18..23 -> "晚上好，$name"
+        else -> "夜深了，$name"
+    }
 }
 
+/*
+ * The conversation's own name, and nothing invented.
+ *
+ * With no name it used to say 「MCode」 - the app's own name in the place the
+ * conversation's should be, which read as a title that had failed to load. A
+ * new conversation on the reference is named by its first words; until then
+ * the header has no title line at all, so an empty string is the honest answer
+ * and the subtitle sits alone.
+ */
 fun currentSessionTitle(sessions: List<SessionRow>, current: String?): String =
-    current?.let { id -> sessions.find { it.id == id }?.title } ?: "MCode"
+    current?.let { id -> sessions.find { it.id == id }?.title.orEmpty() } ?: ""
+
+/**
+ * What the header says when the conversation has no name yet.
+ *
+ * Claude names a conversation after its first words, so a fresh one shows that
+ * line in the header straight away. This app names it on the server after the
+ * turn settles, which leaves a window - and a conversation that never got a
+ * name - showing nothing but the folder underneath, which reads as a title
+ * that failed to load. The first thing the reader said is the same words the
+ * reference would have used.
+ */
+fun headerTitle(items: List<Item>, sessions: List<SessionRow>, current: String?): String {
+    val named = currentSessionTitle(sessions, current)
+    if (named.isNotBlank()) return named
+    val said = items.firstOrNull { it is Item.Msg && it.role == "user" } as? Item.Msg
+    return said?.text?.trim()?.lineSequence()?.firstOrNull()?.take(60).orEmpty()
+}
 
 /* ------------------------------------------------------------------ */
 /* Timeline / lists                                                    */
@@ -4923,6 +7076,82 @@ fun SentFileChip(name: String) {
  * twenty calls is then one line instead of twenty, which is the difference
  * between a readable transcript and a wall.
  */
+/** One file a `present_files` call handed over. */
+/**
+ * One entry a `present_files` call handed over.
+ *
+ * `url` is set instead of `path` when the call handed over a web address rather
+ * than a file - the desktop's `Delivered` is the same two shapes
+ * (`src/renderer/src/lib/delivered.ts`), and it draws that one as a web card
+ * saying 「网页 · HTML · 地址」 with the address under it.
+ */
+data class DeliveredFile(val path: String, val name: String, val size: Long, val url: String = "")
+
+/**
+ * The files a tool call handed over, from its `metadata.files`.
+ *
+ * Only `present_files` carries any, and only when it completed; the desktop
+ * filters the same way (`deliveredFiles` in `lib/delivered.ts`) and de-duplicates
+ * by path, because a turn that presents the same file twice shows it once.
+ */
+/**
+ * The app's remark that a call wanting input was not run - `NoticeRow.vue`, fed
+ * by `step-rows.ts`: "if (!toldInteractive && part.metadata?.interactive === true)".
+ *
+ * It follows the call that raised it and is added at most once: a streamed call
+ * sends the same part many times as it moves pending -> running -> completed,
+ * so a naive append would stack a column of identical lines under one command.
+ * The row's uid is the call's own, which is what makes the test cheap.
+ */
+fun MutableList<Item>.noteInteractive(part: JSONObject, uid: String) {
+    val metadata = part.optJSONObject("state")?.optJSONObject("metadata") ?: part.optJSONObject("metadata")
+    if (metadata?.optBoolean("interactive") != true) return
+    if (any { it is Item.Note && it.uid == "int.$uid" }) return
+    add(
+        Item.Note(
+            NoteKind.Notice,
+            "该命令需要交互输入，未运行。可让 Agent 改用非交互方式重试",
+            "int.$uid",
+        ),
+    )
+}
+
+fun deliveredOf(part: JSONObject): List<DeliveredFile> {
+    if (part.optString("name") != "present_files") return emptyList()
+    val state = part.optJSONObject("state")
+    val status = state?.optString("status").orEmpty().ifBlank { part.optString("status") }
+    if (status.isNotEmpty() && status != "completed") return emptyList()
+    // Where the metadata sits depends on how the part was read: a live part
+    // carries it at the top level, a replayed one under its `state`. Asking only
+    // the top level showed nothing for a conversation opened from history.
+    val metadata = state?.optJSONObject("metadata") ?: part.optJSONObject("metadata") ?: return emptyList()
+    val files = metadata.optJSONArray("files") ?: return emptyList()
+    val seen = HashSet<String>()
+    val out = ArrayList<DeliveredFile>()
+    for (i in 0 until files.length()) {
+        val entry = files.optJSONObject(i) ?: continue
+        val path = entry.optString("path")
+        if (path.isBlank()) {
+            /*
+             * A web address, not a file. The desktop takes it as its own kind
+             * and shows it as a web card; skipping it here meant a reply that
+             * handed over a page showed nothing at all.
+             */
+            val url = entry.optString("url")
+            if (!url.startsWith("http://") && !url.startsWith("https://")) continue
+            if (!seen.add(url)) continue
+            val name = entry.optString("name").ifBlank { url.substringAfter("://").substringAfter('/').ifBlank { url } }
+            out.add(DeliveredFile("", name, 0L, url))
+            continue
+        }
+        val key = path.replace('\\', '/').lowercase()
+        if (!seen.add(key)) continue
+        val name = entry.optString("name").ifBlank { path.substringAfterLast('/').substringAfterLast('\\') }
+        out.add(DeliveredFile(path, name, entry.optLong("size", 0L)))
+    }
+    return out
+}
+
 data class ToolRun(val items: List<Item.Tool>, val key: String)
 
 /** Turns the flat list into rows, folding neighbouring tool calls together. */
@@ -4962,13 +7191,21 @@ fun stepsOf(rows: List<Any>): List<Any> {
     fun isCall(r: Any) = r is Item.Tool || r is ToolRun
 
     /*
-     * A step is the assistant's words and the calls it made, whichever side of
-     * the words they arrived on.
+     * A step is the assistant's words and the calls it made, wherever they sit
+     * relative to the words.
      *
-     * The server's order varies: sometimes the calls are flushed first and the
-     * prose that describes them follows, sometimes the reverse. Both belong to
-     * one step, and Claude draws one rule beside the pair. Folding only forward
-     * left most steps unwrapped; folding only backward left the others.
+     * What the data actually shows, measured on a real thread on the pad (72
+     * parts, 33 calls): every run of calls is preceded by assistant text, never
+     * the other way round. So the forward walk below is the one that does the
+     * work, and the backward branch is a safety net for a call whose prose is
+     * still ahead of it.
+     *
+     * The comment here used to claim the server's order varies both ways and
+     * that "folding only forward left most steps unwrapped". That is not what
+     * the thread shows - all 16 call runs in it have prose above them - and a
+     * later attempt to strengthen the backward half (letting prose adopt calls
+     * sitting above it) changed nothing at all on that data. Left as it is, with
+     * the claim corrected rather than the code.
      */
     val out = mutableListOf<Any>()
     var i = 0
@@ -5008,24 +7245,84 @@ fun stepsOf(rows: List<Any>): List<Any> {
 }
 
 
-/** Claude's summary of a run: what was run, how much of it broke, what was read. */
-fun runSummary(run: ToolRun): String {
-    val commands = run.items.count { it.name == "bash" || it.name == "exec_command" || it.name == "execute" }
-    val reads = run.items.count { it.name == "read" || it.name == "list" || it.name == "grep" || it.name == "glob" }
-    val writings = run.items.count { it.name == "edit" || it.name == "write" || it.name == "patch" || it.name == "apply_patch" }
-    val failed = run.items.count { it.status == "error" || it.status == "failed" }
-    val parts = mutableListOf<String>()
-    if (commands > 0) parts.add("已运行 $commands 条命令")
-    val others = run.items.size - commands - reads - writings
-    if (others > 0) {
-        val failedNote = if (failed > 0) "（$failed 个失败）" else ""
-        parts.add("已使用 ${others + writings} 个工具$failedNote")
-    } else if (writings > 0) {
-        val failedNote = if (failed > 0) "（$failed 个失败）" else ""
-        parts.add("已编辑 $writings 个文件$failedNote")
+/**
+ * Which count a call adds to in a run's summary - the desktop's `bucketOf`,
+ * name for name, in `lib/tool-meta.ts`.
+ *
+ * Five buckets, and the split matters: a search is not a read. `glob` and
+ * `grep` used to land in the read count here, so a run of two searches and one
+ * read said 「读取了 3 个文件」 when it had opened one file and looked for
+ * patterns twice. The desktop keeps `search` apart and words it 「已搜索 N 次」.
+ */
+private enum class ToolBucket { Read, Edit, Run, Search, Other }
+
+private fun bucketOf(name: String): ToolBucket = when (name) {
+    "read" -> ToolBucket.Read
+    "edit", "write", "apply_patch", "patch" -> ToolBucket.Edit
+    "bash", "exec_command" -> ToolBucket.Run
+    "grep", "glob", "list", "codesearch", "websearch", "webfetch" -> ToolBucket.Search
+    else -> ToolBucket.Other
+}
+
+/**
+ * The path a call touched, for the buckets that count *files* rather than calls.
+ *
+ * Two reads of the same file are one file read. The desktop does this by
+ * collecting `stepTitle` per bucket into a `Set` and counting its size
+ * (`groupSummary` in `lib/step-rows.ts`); this returns the same string
+ * `stepTitle` would, and only for read and edit, which is exactly where that
+ * source applies it. A call with no path falls back to counting as a call.
+ */
+private fun touchedPathOf(tool: Item.Tool): String {
+    val input = tool.raw.optJSONObject("input")
+    return when (tool.name) {
+        "read", "edit", "write" -> input?.optString("path").orEmpty()
+            .ifBlank { input?.optString("filePath").orEmpty() }
+            .ifBlank { input?.optString("file_path").orEmpty() }
+            .ifBlank { tool.raw.optString("title") }
+        else -> ""
     }
-    if (reads > 0) parts.add("读取了 $reads 个文件")
-    return parts.joinToString(", ").ifBlank { "已使用 ${run.items.size} 个工具" }
+}
+
+/**
+ * A run's summary line, in the desktop's own words and its own order.
+ *
+ * Mirrors `groupSummary` + `ToolGroup.vue`: buckets in first-appearance order,
+ * joined with 「 · 」, each worded from `buildWorkDisplay.*` in `lib/i18n.ts`
+ * rather than assembled here. This used to say 「读取了 N 个文件」 in a comma-
+ * joined list, counted searches as reads, and folded edits into a generic
+ * 「已使用 N 个工具」 - four separate drifts from what the desktop says.
+ *
+ * The failure count is not part of the summary: the desktop marks a failed
+ * group with an icon on the line (`groupFailed`), and appending 「（N 个失败）」
+ * here put a second, different signal on the same row.
+ */
+fun runSummary(run: ToolRun): String {
+    if (run.items.isEmpty()) return ""
+    val order = mutableListOf<ToolBucket>()
+    val calls = mutableMapOf<ToolBucket, Int>()
+    val paths = mutableMapOf<ToolBucket, MutableSet<String>>()
+    for (tool in run.items) {
+        val bucket = bucketOf(tool.name)
+        if (bucket !in order) order.add(bucket)
+        val path = if (bucket == ToolBucket.Read || bucket == ToolBucket.Edit) touchedPathOf(tool) else ""
+        if (path.isNotBlank()) {
+            paths.getOrPut(bucket) { mutableSetOf() }.add(path)
+        } else {
+            calls[bucket] = (calls[bucket] ?: 0) + 1
+        }
+    }
+    return order.mapNotNull { bucket ->
+        val count = (paths[bucket]?.size ?: 0) + (calls[bucket] ?: 0)
+        if (count <= 0) return@mapNotNull null
+        when (bucket) {
+            ToolBucket.Read -> "已读取 $count 个文件"
+            ToolBucket.Edit -> "已编辑 $count 个文件"
+            ToolBucket.Run -> "已运行 $count 条命令"
+            ToolBucket.Search -> "已搜索 $count 次"
+            ToolBucket.Other -> "已执行 $count 个操作"
+        }
+    }.joinToString(" · ")
 }
 
 /**
@@ -5393,6 +7690,23 @@ fun FindCard(
 fun Timeline(
     items: List<Item>,
     modifier: Modifier,
+    /*
+     * Each reply's selection, owned by the screen.
+     *
+     * The message sheet's 选择文本 arms it from outside the transcript, so the
+     * state cannot live inside `MarkdownBody` - the two would be different
+     * objects and the arming would go nowhere.
+     */
+    share: (String) -> SelectionState = { SelectionState() },
+    /*
+     * Whether any reply is currently lit.
+     *
+     * The 回到底部 disc and a selection's right-hand handle occupy the same spot
+     * at the bottom of the transcript, and on the pad the disc was drawn over the
+     * handle - the reader could see a selection and still not grab its far end.
+     * The disc is told to stand down while this is true.
+     */
+    selecting: Boolean = false,
     running: Boolean = false,
     onPerm: (String, String) -> Unit = { _, _ -> },
     onPermReason: (String, String) -> Unit = { _, _ -> },
@@ -5404,6 +7718,20 @@ fun Timeline(
     find: String = "",
     /** Which match is the current one, counting from the conversation's start. */
     findStep: Int = 0,
+    /** Where a delivered file opens, and the folder that names it. */
+    onOpenFile: ((String, String) -> Unit)? = null,
+    root: String = "",
+    /**
+     * Taking a turn's files back, offered on its edited-files card.
+     *
+     * Handed the turn's assistant message ids, which is how the server names
+     * the turn (`session.revertTurn`). Null where there is no session to act
+     * on, which is also how the desktop leaves the buttons off a side
+     * conversation.
+     */
+    onRevertTurn: ((List<String>) -> Unit)? = null,
+    /** 审阅: open the turn's recorded diffs. Handed the patch to show. */
+    onReviewTurn: ((String) -> Unit)? = null,
 ) {
     val listState = rememberLazyListState()
     val scope = androidx.compose.runtime.rememberCoroutineScope()
@@ -5436,6 +7764,27 @@ fun Timeline(
      * the list as of this composition, which is all the rows are meant to be.
      */
     val rows = remember(items.toList()) { stepsOf(rowsOf(items.toList())) }
+    /*
+     * Each turn's edits, and which of the drawn rows ends that turn.
+     *
+     * The desktop draws one card per turn, after the turn's last row
+     * (`MessageStream.vue` places `EditedFilesCard` at the end of every turn).
+     * The rows here are folded - a step swallows the calls under a paragraph, a
+     * run swallows neighbouring calls - so the card cannot hang off the call
+     * that made it: it goes under whichever folded row last covers the turn,
+     * which is what `keysByRow` is for.
+     */
+    val edits = remember(items.toList()) { turnEdits(items.toList()) }
+    val editAt = remember(rows) {
+        if (edits.isEmpty()) return@remember emptyMap<Int, String>()
+        val covered = keysByRow(rows)
+        val out = HashMap<Int, String>()
+        for ((turnKey, _) in edits) {
+            val at = covered.indexOfLast { turnKey in it }
+            if (at >= 0) out[at] = turnKey
+        }
+        out
+    }
     /*
      * The turn the two glyphs belong to.
      *
@@ -5561,9 +7910,50 @@ fun Timeline(
         verticalArrangement = Arrangement.spacedBy(8.dp),
         // The first turn used to sit flush against the header and read as
         // clipped; Claude leaves a breath of air above it.
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 28.dp, end = 28.dp, top = 10.dp, bottom = 6.dp),
+        /*
+         * A centred column, not a full-width one.
+         *
+         * Measured off Claude's chat pane - not its Code pane, which is a
+         * different layout and the one I had been reading: its text starts
+         * 99.5dp in from the pane's edge and stops the same distance short of
+         * the far edge, which makes a reading column about 577dp wide inside a
+         * 775dp pane. The phone ran the text edge to edge at 13dp, so every
+         * reply was 200px wider than the reference's and its line length was
+         * half again as long - the single biggest reason the transcript did not
+         * read like Claude's.
+         *
+         * Done with padding rather than a fixed width so the column still fills
+         * a narrow screen: `widthIn` would have pinned it and left a phone with
+         * margins wider than the text.
+         */
+        /*
+         * 40 either side, measured on the reference's Code pane.
+         *
+         * The 137.6/124 here came from a reading of Claude's chat pane, where
+         * the text starts 99.5 dp in from a 775 dp pane. A_claude.png is the
+         * Code pane - the layout this app actually mirrors, with the device
+         * block and the conversation list in the left column - and its text
+         * starts 40.0 dp in: 「美容师功能这一轮的实测进展：」 at x 400.0, pane edge
+         * at 360.0. Reading the wrong pane cost 97 dp of measure.
+         */
+        /*
+         * 48.8 left, 21.6 right - and they are not equal.
+         *
+         * Measured on the reference's own conversation with a long reply in it
+         * (CL-MAIN), not on its Code pane: prose runs x 408.8..1341.6 against a
+         * pane from 360.0 to 1363.2, so 48.8 in and 21.6 off the far edge. The
+         * 40/40 that stood here came from A_claude.png, which turned out to be
+         * the Code screen - a different column geometry, and reading it cost
+         * 8.0 on the left and 22.4 on the right.
+         *
+         * The asymmetry is the reference's own: its prose is narrower on the
+         * right so a long line does not run into the pane's edge, where a
+         * gesture strip lives.
+         */
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 48.8.dp, end = 21.6.dp, top = 10.dp, bottom = 6.dp),
     ) {
-        for (item in rows) {
+        for (rowAt in rows.indices) {
+            val item = rows[rowAt]
             item(key = (item as? ToolRun)?.key ?: (item as? Step)?.key ?: (item as Item).key) {
                 /*
                  * `@keyframes msg-in` (MessageStream.vue): 0.2s on
@@ -5579,7 +7969,14 @@ fun Timeline(
                     tween(durationMillis = 200, easing = CubicBezierEasing(0.2f, 0.7f, 0.2f, 1f)),
                     label = "row-in",
                 )
-                Box(Modifier.graphicsLayer { alpha = appear; translationY = (1f - appear) * 8.dp.toPx() }) {
+                /*
+                 * A Column, not a Box: the row can carry a second child - the
+                 * turn's edited-files card that hangs under its last row - and
+                 * a Box stacks its children on top of each other, so the card
+                 * was drawn over the paragraph it was meant to follow. Measured
+                 * on the pad: 「起更新了。」 sat behind the card's top edge.
+                 */
+                Column(Modifier.graphicsLayer { alpha = appear; translationY = (1f - appear) * 8.dp.toPx() }) {
                 when (item) {
                     /*
                      * A step: the rule down the left, then the words and the
@@ -5615,7 +8012,7 @@ fun Timeline(
                                 (item.body as? Item.Msg)?.let { StepBody(it) }
                                 for (call in item.calls) {
                                     when (call) {
-                                        is Item.Tool -> ToolRow(call)
+                                        is Item.Tool -> ToolRow(call, indent = true)
                                         is ToolRun -> RunRow(call)
                                     }
                                 }
@@ -5638,17 +8035,35 @@ fun Timeline(
                                         if (isUser) Modifier
                                             .align(Alignment.CenterEnd)
                                             /*
-                                             * Claude's bubble hugs its words and
-                                             * only grows when they need room; a
-                                             * fixed share of the pane turned
-                                             * "hello" into a full-width slab. The
-                                             * cap is a maximum, not a width.
+                                             * Hugs its words, with a cap.
+                                             *
+                                             * Measured off Claude's own reply
+                                             * screen: the bubble around 「Hi」 is
+                                             * 94px wide - 29.8dp - against a 730px
+                                             * reply above it. `fillMaxWidth(0.78)`
+                                             * made every turn a slab three
+                                             * quarters of the pane wide whatever
+                                             * was in it, so a two-word question
+                                             * looked like a paragraph and the
+                                             * reader's own voice shouted.
+                                             *
+                                             * `widthIn(max = ...)` instead: as wide
+                                             * as the words, no wider than 78% of
+                                             * the column.
                                              */
-                                            // `.user-bubble` is 78% of the reading
-                                            // column, not a fixed width: on a wide
-                                            // pane a hard 560 left the bubble short
-                                            // of the cap MiMo draws it to.
-                                            .fillMaxWidth(0.78f)
+                                            /*
+                                             * 95.7 here puts the bubble's edge
+                                             * 90.3dp from the screen's - the
+                                             * reference's figure, and not an
+                                             * accident: its bubble stops clear of
+                                             * the header's trailing icons. Measured
+                                             * at 77.3 first, which landed at 71.9 -
+                                             * the pane's own inset is not additive
+                                             * with this one the way the arithmetic
+                                             * suggested.
+                                             */
+                                            .padding(end = 95.7.dp)
+                                            .widthIn(max = 520.dp)
                                         else Modifier.fillMaxWidth()
                                     )
                                     // Claude renders assistant turns straight on the
@@ -5662,19 +8077,40 @@ fun Timeline(
                                      * below and loses the side inset the bubble
                                      * needed.
                                      */
+                                    /*
+                                     * 20 corner and 9.2 / 10.8 of inset, all four
+                                     * measured off the reference's bubble: it
+                                     * carried 16 and 13/9, a tighter pill that
+                                     * made a two-word question read as a chip.
+                                     * The vertical pair is 10.8 above the words
+                                     * and 10.5 below - a 38dp bubble around a
+                                     * 21dp line.
+                                     */
                                     .background(
                                         if (isUser) LocalBubble.current else Color.Transparent,
-                                        RoundedCornerShape(if (isUser) 16.dp else 0.dp),
+                                        RoundedCornerShape(if (isUser) 20.dp else 0.dp),
                                     )
                                     .padding(
-                                        start = if (isUser) 13.dp else 0.dp,
-                                        end = if (isUser) 13.dp else 0.dp,
-                                        top = if (isUser) 9.dp else 5.dp,
-                                        bottom = if (isUser) 9.dp else 5.dp,
+                                        start = if (isUser) 9.2.dp else 0.dp,
+                                        end = if (isUser) 9.2.dp else 0.dp,
+                                        top = if (isUser) 10.8.dp else 5.dp,
+                                        bottom = if (isUser) 10.5.dp else 5.dp,
                                     )
-                                    // Claude's turns answer a long press with
-                                    // 复制 / 从此处分支; both are here now.
-                                    .combinedClickable(onClick = {}, onLongClick = { onMessage(item) }),
+                                    /*
+                                     * No long press here.
+                                     *
+                                     * It used to open the message sheet, and that
+                                     * is what made the text unselectable: this
+                                     * detector sits outside the words, so it took
+                                     * the press before any line could, and a
+                                     * sustained press painted the whole bubble
+                                     * grey instead of picking a word. The sheet
+                                     * moved to the ⓘ mark under the reply, where
+                                     * it does not compete with the words.
+                                     */
+                                    .pointerInput(item.id) {
+                                        detectTapGestures(onTap = {})
+                                    },
                             ) {
                                 // A picture arrives above the words it was sent
                                 // with, the way the desktop draws it.
@@ -5742,9 +8178,50 @@ fun Timeline(
                                     }
                                 } else {
                                     if (item.text.isNotBlank()) {
+                                        /*
+                                         * A reply can be selected.
+                                         *
+                                         * Nothing in this app was inside a
+                                         * `SelectionContainer`, so a long press
+                                         * on a reply produced no selection at
+                                         * all - while the reference selects, and
+                                         * with a warm #ECDFE6 tint rather than
+                                         * the system's blue. The tint is provided
+                                         * by `MCodeTheme`; this is the container
+                                         * that lets it be seen.
+                                         */
+                                        /*
+                                         * A controlled container: it hands back
+                                         * the range it holds, and the tint is
+                                         * drawn from it.
+                                         *
+                                         * Compose's own fill is one rectangle per
+                                         * line, hard against the glyphs, with
+                                         * square ends - and nothing on the
+                                         * container reaches it. So the container
+                                         * keeps only its handles and its hit
+                                         * testing, the tint on the text is the
+                                         * transparent colour provided by
+                                         * `MCodeTheme`, and `MarkdownBody` paints
+                                         * the wash itself with the reference's 4dp
+                                         * corner and its air around the letters.
+                                         */
+                                        /*
+                                         * No `SelectionContainer`.
+                                         *
+                                         * It owns both the hit testing and the
+                                         * fill, and its fill cannot be rounded -
+                                         * the hook that would let a line draw its
+                                         * own is `internal` at every foundation
+                                         * version through 1.10. `MarkdownBody`
+                                         * therefore does its own long-press word
+                                         * selection and paints the wash with the
+                                         * reference's 4dp corner.
+                                         */
                                         MarkdownBody(
                                             item.text,
                                             dark = LocalBg.current == DarkBg,
+                                            share = share(item.id),
                                         )
                                     }
                                     /*
@@ -5778,17 +8255,104 @@ fun Timeline(
                                         else -> Unit
                                     }
                                     /*
-                                     * Claude ends a reply with two quiet glyphs -
-                                     * copy, then read aloud - at 149,147,143 on
-                                     * the pad, 127px wide for the pair. They were
-                                     * only reachable by long-pressing the turn
-                                     * here, which nothing on screen said.
+                                     * 「正在重新连接」 - the provider request being
+                                     * tried again, with the attempt and the
+                                     * reason. `RetryRow.vue` gives it a
+                                     * reconnect mark, the count, and the
+                                     * reason after a middot, in the muted ink,
+                                     * at the same 14/22.4 as a tool row.
+                                     *
+                                     * The gateway publishes this only on
+                                     * `message.updated` and never stores it, so
+                                     * the row is live-only; a transcript read
+                                     * back has no such field and draws nothing.
+                                     */
+                                    if (item.retryAttempt > 0) {
+                                        Row(
+                                            Modifier.fillMaxWidth().padding(top = 6.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            MiIcon(
+                                                "M20 12a8 8 0 1 1-2.3-5.6M20 4v4h-4",
+                                                modifier = Modifier.size(15.dp),
+                                                strokeWidth = 1.8f,
+                                                tint = LocalMuted.current,
+                                            )
+                                            Spacer(Modifier.width(7.dp))
+                                            Text("正在重新连接", fontSize = 14.sp, lineHeight = 22.4.sp, color = LocalMuted.current)
+                                            Spacer(Modifier.width(5.dp))
+                                            Text(
+                                                item.retryAttempt.toString(),
+                                                fontSize = 14.sp,
+                                                lineHeight = 22.4.sp,
+                                                color = LocalMuted.current,
+                                            )
+                                            if (item.retryReason.isNotBlank()) {
+                                                Text(" · ", fontSize = 14.sp, lineHeight = 22.4.sp, color = LocalMuted.current)
+                                                Text(
+                                                    item.retryReason,
+                                                    fontSize = 14.sp,
+                                                    lineHeight = 22.4.sp,
+                                                    color = LocalMuted.current,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    modifier = Modifier.weight(1f, fill = false),
+                                                )
+                                            }
+                                        }
+                                    }
+                                    /*
+                                     * Two glyphs under every reply: copy and share.
+                                     *
+                                     * Claude draws six - copy, share, read aloud, a
+                                     * thumb up, a thumb down and a retry, at
+                                     * 15.6 / 12.0 / 14.4 / 14.0 / 14.0 / 8.0 with
+                                     * their centres 36.2 apart, the first 137.2 dp
+                                     * in from the pane.
+                                     *
+                                     * The four that are missing are missing because
+                                     * nothing behind them exists here, and a mark
+                                     * that cannot act is a lie about the interface:
+                                     *
+                                     *   the two votes  a message to Anthropic's own
+                                     *                  service; this gateway has no
+                                     *                  endpoint that could take one.
+                                     *   retry          reopening a turn is on the
+                                     *                  long press of the message, which
+                                     *                  is where this app puts it.
+                                     *   read aloud     the engine is not on this
+                                     *                  device. `pm list packages`
+                                     *                  shows no `*.tts` provider at
+                                     *                  all, so `TextToSpeech` binds
+                                     *                  nothing and never calls back -
+                                     *                  tried, measured, and taken out
+                                     *                  rather than left looking
+                                     *                  pressable.
+                                     *
+                                     * The pitch stays at the reference's 36.2 so
+                                     * the two marks that are here sit where Claude
+                                     * puts them.
                                      */
                                     val context = androidx.compose.ui.platform.LocalContext.current
                                     var copied by remember(item.id) { mutableStateOf(false) }
-                                    if (item.id == lastReplied) Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    /*
+                                     * A 20dp target around each 14-16dp mark, with the
+                                     * gaps pulled in to keep the 36.2 pitch.
+                                     *
+                                     * 14.4dp is too small to hit reliably at this
+                                     * density; a 20dp box around each mark, and 16.2
+                                     * between boxes, puts the centres 36.2 apart -
+                                     * the reference's pitch - while leaving a target
+                                     * a finger can land on.
+                                     */
+                                    Row(
+                                        Modifier.padding(top = 15.6.dp, start = 0.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(16.2.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        // Copy.
                                         Box(
-                                            Modifier.size(34.dp).clickable {
+                                            Modifier.size(20.dp).clickable {
                                                 val board = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                                                 board.setPrimaryClip(android.content.ClipData.newPlainText("MCode", item.text))
                                                 copied = true
@@ -5800,20 +8364,78 @@ fun Timeline(
                                                 Icons.Outlined.ContentCopy,
                                                 contentDescription = "复制",
                                                 tint = if (copied) Color(0xFF2E7D32) else LocalMuted.current,
-                                                modifier = Modifier.size(16.dp),
+                                                modifier = Modifier.size(15.6.dp),
                                             )
                                         }
+                                        /*
+                                         * Share: the platform's own chooser, which is
+                                         * what this app can do with a reply.
+                                         *
+                                         * The two votes are gone rather than drawn
+                                         * and inert. They are a message to Anthropic's
+                                         * own service - there is no endpoint behind
+                                         * them here, and nothing this gateway could do
+                                         * with a thumb. A mark that cannot act is a
+                                         * lie about the interface.
+                                         */
                                         Box(
-                                            Modifier.size(34.dp).clickable { onMessage(item) },
+                                            Modifier.size(20.dp).clickable {
+                                                val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                                    type = "text/plain"
+                                                    putExtra(android.content.Intent.EXTRA_TEXT, item.text)
+                                                }
+                                                context.startActivity(android.content.Intent.createChooser(send, "分享回复"))
+                                            },
                                             contentAlignment = Alignment.Center,
                                         ) {
                                             Icon(
-                                                Icons.Outlined.PlayArrow,
-                                                contentDescription = "更多操作",
+                                                Icons.Outlined.IosShare,
+                                                contentDescription = "分享",
                                                 tint = LocalMuted.current,
-                                                modifier = Modifier.size(16.dp),
+                                                modifier = Modifier.size(14.0.dp),
                                             )
                                         }
+                                        /*
+                                         * 更多, where the message sheet lives now.
+                                         *
+                                         * The sheet used to answer a long press,
+                                         * which is the one gesture the text needs
+                                         * for selection - so it moved here, beside
+                                         * 复制 and 分享, and the long press was freed
+                                         * for the words.
+                                         */
+                                        Box(
+                                            Modifier.size(20.dp).clickable { onMessage(item) },
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Icon(
+                                                Icons.Outlined.MoreVert,
+                                                contentDescription = "更多",
+                                                tint = LocalMuted.current,
+                                                modifier = Modifier.size(15.6.dp),
+                                            )
+                                        }
+                                    }
+                                    /*
+                                     * The line under the last reply of a turn.
+                                     *
+                                     * Claude ends a turn with 「Claude 是 AI，可能会出错。」
+                                     * at 46px of glyph - 13sp - starting level with the
+                                     * reply's own left edge. Nothing said it here, so
+                                     * the transcript simply stopped.
+                                     *
+                                     * Only on the last answer: the reference draws it
+                                     * once at the foot of a turn, not after each
+                                     * paragraph-sized update within one.
+                                     */
+                                    if (item.id == lastReplied) {
+                                        Text(
+                                            "Claude 是 AI，可能会出错。",
+                                            fontSize = 13.sp,
+                                            lineHeight = 18.sp,
+                                            color = LocalMuted.current.copy(alpha = 0.75f),
+                                            modifier = Modifier.padding(top = 12.dp),
+                                        )
                                     }
                                 }
                             }
@@ -5853,17 +8475,20 @@ fun Timeline(
                             if (open) {
                                 // The run opens in place: each call keeps the row
                                 // it would have had on its own.
-                                for (call in item.items) ToolRow(call)
+                                for (call in item.items) ToolRow(call, indent = true)
                             }
                         }
                     }
-                    is Item.Tool -> ToolRow(item)
+                    is Item.Tool -> {
+                        ToolRow(item, onOpenDelivered = onOpenFile, root = root)
+                    }
                     is Item.Perm -> {
                         val (at, total) = permIndex[item.requestId] ?: (1 to 1)
                         PermCard(item.copy(queueTotal = total, queuePosition = at), onPerm = onPerm, onPermReason = onPermReason)
                     }
                     is Item.Quest -> QuestCard(item, onAnswer = onAnswer)
                     is Item.Gap -> GapRule(item.label)
+                    is Item.Note -> NoteRow(item)
                     is Item.Err -> {
                         // A broken turn is a card, not a red line lost in the
                         // prose: the desktop gives it its own surface and its
@@ -5952,6 +8577,45 @@ fun Timeline(
                         }
                     }
                 }
+                /*
+                 * The turn's edits, under its last row.
+                 *
+                 * Only once the turn is over: a live turn's files are still
+                 * moving, and the desktop holds the card back for the same
+                 * reason (`v-if="!(at === turns.length - 1 && shownBusy)"`).
+                 * `reverted` reads the flag the server writes on the turn's last
+                 * message when 撤销 actually moved something.
+                 */
+                val turnKey = editAt[rowAt]
+                val turn = turnKey?.let { edits[it] }
+                // The last turn's card waits while it is still streaming; an
+                // earlier turn's is settled and stays.
+                val settled = !running || turnKey != edits.keys.lastOrNull()
+                if (turn != null && settled) {
+                    /*
+                     * The desktop's order under a finished reply: its files
+                     * changed, then what it handed over (`MessageStream.vue`
+                     * puts `EditedFilesCard` before `DeliveredFilesCard`).
+                     */
+                    if (turn.files.isNotEmpty()) {
+                        EditedCard(
+                            turn,
+                            root,
+                            onOpenFile,
+                            onRevert = if (onRevertTurn != null && turn.messages.isNotEmpty()) {
+                                { onRevertTurn(turn.messages) }
+                            } else {
+                                null
+                            },
+                            onReview = if (turn.patch.isBlank() || onReviewTurn == null) null else {
+                                { onReviewTurn(turn.patch) }
+                            },
+                        )
+                    }
+                    if (turn.delivered.isNotEmpty()) {
+                        DeliveredCards(turn.delivered, root, onOpenFile ?: { _, _ -> })
+                    }
+                }
                 }
             }
         }
@@ -5977,8 +8641,16 @@ fun Timeline(
         val liveCalls = items.filterIsInstance<Item.Tool>().count { it.status == "running" }
         if (liveCalls > 0) {
             item(key = "tasks") {
+                /*
+                 * Not clickable: the count is a statement, not a door.
+                 *
+                 * It was `clickable { }` with an empty body, which claims the
+                 * touch, draws the ripple and then does nothing - a control in
+                 * appearance only. There is no page behind it to open, so it is
+                 * plain text again.
+                 */
                 Row(
-                    Modifier.fillMaxWidth().clickable { }.padding(start = 10.dp, top = 4.dp, bottom = 2.dp),
+                    Modifier.fillMaxWidth().padding(start = 10.dp, top = 4.dp, bottom = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
@@ -6004,8 +8676,14 @@ fun Timeline(
      * on screen (a card, or its 「拒绝并说明」 field open under it) the disc is a tap
      * that might approve or explain instead of scrolling, and it covered the
      * card's own buttons. It steps aside until the queue is clear.
+     *
+     * It steps aside for a live selection too. The disc sits exactly where a
+     * selection's own handles go - bottom centre, over the last line of the
+     * reply - and on the pad it covered the right-hand handle outright: the
+     * reader could see a selection and be unable to grab either end of it. A
+     * selection is a more specific mode than "scroll down", so the disc yields.
      */
-    if (!atEnd && items.none { it is Item.Perm }) {
+    if (!atEnd && items.none { it is Item.Perm } && !selecting) {
         Box(
             Modifier
                 .align(Alignment.BottomCenter)
@@ -6013,6 +8691,9 @@ fun Timeline(
                 .size(43.dp)
                 .shadow(3.dp, CircleShape)
                 .background(if (LocalBg.current == DarkBg) Color(0xFF2E2E2E) else Color(0xFFFEFEFE), CircleShape)
+                // Clipped, so a press cannot paint a square patch across the
+                // circle's four corners - the shape the eye reads first.
+                .clip(CircleShape)
                 .clickable {
                     follows = true
                     scope.launch { listState.animateScrollToItem(rows.size + if (running) 0 else -1) }
@@ -6045,24 +8726,26 @@ fun Timeline(
  * the clock. A straight rule would read as a section break in a document; the
  * wave is what makes it read as time passing.
  */
-/** One wavy rule: quadratic humps at the pitch measured off Claude's divider. */
+/** One hairline rule: the gap marker's own line, either side of the clock. */
 @Composable
 private fun WaveLine(ink: Color, modifier: Modifier = Modifier) {
-    Canvas(modifier.height(9.dp)) {
-        val amp = size.height / 3f
-        val mid = size.height / 2f
-        val step = with(density) { 9.dp.toPx() }
-        val path = androidx.compose.ui.graphics.Path()
-        path.moveTo(0f, mid)
-        var x = 0f
-        var up = true
-        while (x < size.width) {
-            val nx = (x + step).coerceAtMost(size.width)
-            path.quadraticBezierTo((x + nx) / 2f, if (up) mid - amp * 2f else mid + amp * 2f, nx, mid)
-            up = !up
-            x = nx
-        }
-        drawPath(path, ink, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5f))
+    /*
+     * A hairline, not a wave.
+     *
+     * This drew a real sine - six humps across the pane, 1.5dp of stroke each.
+     * Claude's gap marker is the plainest thing on the page: one 1px rule at
+     * the text colour's weakest step, broken in the middle by the clock. The
+     * wave was the loudest mark in a transcript that is otherwise all
+     * restraint, and it is the one thing that made the phone's page look drawn
+     * rather than set.
+     */
+    Canvas(modifier.height(1.dp)) {
+        drawLine(
+            ink,
+            androidx.compose.ui.geometry.Offset(0f, size.height / 2f),
+            androidx.compose.ui.geometry.Offset(size.width, size.height / 2f),
+            strokeWidth = 1f,
+        )
     }
 }
 
@@ -6453,14 +9136,51 @@ fun SessionList(
     onSelect: (String) -> Unit,
     compact: Boolean,
     modifier: Modifier = Modifier,
+    /**
+     * No card: a flat row on the page.
+     *
+     * Claude's 最近记录 list is rows on the page - icon, title, and a time under
+     * it - with no plate and no hairline. Its Code page is the one that draws
+     * cards. Same component, two skins, because the rows are otherwise
+     * identical.
+     */
+    flat: Boolean = false,
     onLongPress: ((SessionRow) -> Unit)? = null,
     /** Rows whose turn finished out of sight, and rows parked on an answer. */
     unseen: List<String> = emptyList(),
     awaiting: List<String> = emptyList(),
+    /** False while the link is down, so an empty list is not read as an empty machine. */
+    live: Boolean = true,
 ) {
     val filtered = sessions.filter { it.title.contains(query, true) || it.id.contains(query, true) }
     if (filtered.isEmpty()) {
-        Text("没有匹配的会话", fontSize = 13.sp, color = LocalMuted.current, modifier = Modifier.padding(16.dp))
+        /*
+         * Two different emptinesses.
+         *
+         * 「没有匹配的会话」 is about a search that found nothing; on a machine with
+         * no conversations at all it claims a filter where there is none. The
+         * field is always on now, so the first thing a new install shows is this
+         * line - it has to say which of the two it means.
+         */
+        /*
+         * Three emptinesses, not two.
+         *
+         * A dropped link empties this list without emptying the machine - seen
+         * on the pad: the reconnect banner above said the link was down, and
+         * this line said there were no conversations, which was wrong by
+         * eighteen. 「连接已断开」 is the banner's job to shout about; here the
+         * line only has to not contradict it.
+         */
+        Text(
+            when {
+                !live -> "连接断开，暂时读不到会话"
+                query.isBlank() -> "还没有对话"
+                else -> "没有匹配的会话"
+            },
+            fontSize = 15.sp,
+            color = LocalMuted.current,
+            modifier = Modifier.padding(16.dp),
+        )
         return
     }
     // `modifier` already carries the weight the parent gave this list; filling
@@ -6470,8 +9190,20 @@ fun SessionList(
     // its own breathing room at the bottom, not a reservation for the pill.
     LazyColumn(
         modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 6.dp),
+        /*
+         * No gap on the flat list: the reference's rows butt against each other
+         * at a 60.0 pitch, so a 2 dp arrangement made every row 62.0 and every
+         * title 2 low by the tenth.
+         *
+         * The 6.8 top is the other half of that measurement: with the rows at
+         * their own height the first title landed at 167.2 where the reference
+         * puts it at 174.0.
+         */
+        verticalArrangement = Arrangement.spacedBy(if (flat) 0.dp else 2.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(
+            top = if (flat) 6.8.dp else 0.dp,
+            bottom = 6.dp,
+        ),
     ) {
         for (s in filtered) {
             item(key = s.id) {
@@ -6482,14 +9214,92 @@ fun SessionList(
                     // and never read, so the list had no idea where you were.
                     Modifier
                         .fillMaxWidth()
-                        .combinedClickable(onClick = { onSelect(s.id) }, onLongClick = { onLongPress?.invoke(s) })
-                        .then(
-                            if (s.id == current) {
-                                Modifier.background(LocalPill.current, RoundedCornerShape(10.dp))
-                            } else {
-                                Modifier
-                            },
+                        /*
+                         * The height comes before the click handler, not after.
+                         *
+                         * `combinedClickable` claims the area it is applied to,
+                         * and everything after it only shrinks what is drawn -
+                         * so a 59.4dp row whose height was set after the handler
+                         * had a hit box the size of its text, and a tap on the
+                         * empty part of a row did nothing at all. That is why a
+                         * conversation could not be opened from the list.
+                         */
+                        /*
+                         * A card, measured off the reference at 400 dpi.
+                         *
+                         * Claude's rows in the wide layout are white cards on the
+                         * page's own fill: 332 x 68 dp, 14 dp in from the column's
+                         * edge, 1 dp of #E1E1DF around them and about 12 dp of
+                         * corner. Earlier passes read them as bare rows on a
+                         * downscaled capture - the fill and the border are four
+                         * levels apart and vanish at half size - so the list drew
+                         * as a thread of text with nothing between the rows.
+                         *
+                         * The card is the click target, which is why the shape
+                         * comes before `combinedClickable`: a modifier after it
+                         * only shrinks what is drawn, not what can be tapped.
+                         */
+                        /* 12 either side, not 14: the reference's card spans x 12.0..347.6. */
+                        /*
+                         * Height before inset.
+                         *
+                         * `height` sizes what it wraps, so with the vertical
+                         * padding applied first the row measured 60 + 5 + 5 = 70
+                         * and the titles ran 72.4 apart where the reference's
+                         * run 60.0. Stated first, the 60 is the row's own.
+                         */
+                        /*
+                         * 41.4 for the drawer, 43.6 elsewhere-compact.
+                         *
+                         * Measured on this build: the drawer's titles ran 45.6
+                         * apart where the reference's run 42.4, 43.6, 43.6,
+                         * 44.8, 42.4 - a 43.4 mean. The 43.6 here was set from
+                         * the mean rather than from the spacing that produces
+                         * it, so every row carried 2.2 of extra height. The flat
+                         * list keeps its own 60 and is unaffected.
+                         */
+                        .height(
+                            when {
+                                compact -> 41.4.dp
+                                flat -> 60.dp
+                                else -> 68.dp
+                            }
                         )
+                        /*
+                         * 1.6 on the flat list: measured, the mark sits at 26.0
+                         * and the row draws its icon column inside this inset.
+                         */
+                        .padding(horizontal = if (compact) 6.dp else if (flat) 1.6.dp else 12.dp, vertical = if (compact) 0.dp else 5.dp)
+                        /*
+                         * Cards in the list, plain lines in the drawer.
+                         *
+                         * Claude's open drawer (claude_code.png) is #F3F3F0 edge to
+                         * edge and its conversation rows carry no fill and no border
+                         * - a </> mark, a title, at most a grey dot at the trailing
+                         * end. The cards belong to the wide list, where the pane is
+                         * white and a card sits a step above it.
+                         *
+                         * This applied the card to both, so the drawer drew bordered
+                         * slabs inside a panel that has no room for them.
+                         */
+                        .then(
+                            if (compact || flat) Modifier
+                            else Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(LocalCard.current)
+                                .border(1.dp, LocalCardHairline.current, RoundedCornerShape(12.dp)),
+                        )
+                        .combinedClickable(onClick = { onSelect(s.id) }, onLongClick = { onLongPress?.invoke(s) })
+                        /*
+                         * No fill on the open conversation.
+                         *
+                         * Claude marks it with a dot at the row's trailing end
+                         * (the 20px grey disc beside 「Main」 in its own list),
+                         * not with a grey slab behind the whole row - measured
+                         * on the pad, its own open row has the page's fill from
+                         * edge to edge. The slab made our list read as a menu
+                         * with a selected item rather than as a thread.
+                         */
                         /*
                          * `.row.task > .row-open`: a 34 minimum with 6 above
                          * and below, and 2 between rows (`.lists`'s gap). This
@@ -6497,7 +9307,33 @@ fun SessionList(
                          * was 48 tall against the desktop's 34 and the list
                          * read as spaced-out cards rather than as a thread.
                          */
-                        .padding(horizontal = 14.dp, vertical = if (compact) 6.dp else 6.dp),
+                        /*
+                         * 64.6 dp of pitch in the list, 43.6 in the drawer.
+                         *
+                         * Re-measured off the pad's own 3408-wide pixels rather
+                         * than a downscaled capture: the list's glyph tops sit
+                         * at 175.6 and 240.0 - 64.4 apart - and their
+                         * timestamps' at 196.4 and 262.0, 65.6 apart. The 59.4
+                         * here plus the list's 2 of `spacedBy` came to 61.4,
+                         * close enough to look right and three dp short by the
+                         * second row. 62.6 + 2 is the measured 64.6.
+                         *
+                         * The drawer's rows are single-line and 43.6 apart
+                         * (glyph tops 390.8 / 433.6 / 477.2 / 520.8), so 41.6
+                         * plus the same 2 of gap.
+                         *
+                         * The inline padding is 30 in the drawer and 26 in the
+                         * list: the drawer's glyph starts at 30.0, the list's
+                         * at 26.0.
+                         */
+                        /*
+                         * 30.0, photographed: the drawer's glyph starts at x
+                         * 30.0 and its title at 61.2. The comment above already
+                         * named 30.0 while the code passed 10, so every drawer
+                         * row began 20 dp left of the reference and its titles
+                         * landed at 16.4 against 61.2.
+                         */
+                        .padding(start = if (compact) 23.6.dp else 18.dp, end = if (compact) 10.dp else 14.dp, top = 0.dp, bottom = 0.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     /*
@@ -6509,54 +9345,378 @@ fun SessionList(
                      * four times the desktop's size - a tablet row that read as
                      * an icon list rather than a conversation list.
                      */
-                    Box(Modifier.width(23.dp), contentAlignment = Alignment.Center) {
+                    /*
+                     * A 12dp glyph column, and the title starts 26.0 dp in -
+                     * which is the row's own 26 padding, not 26 plus a column.
+                     *
+                     * Measured on the pad: the </> mark runs x=26.0..35.6 and
+                     * "Main" starts at the same 26.0, so the glyph and the text
+                     * share a left edge - the glyph sits above the title's
+                     * first character rather than beside it in a fixed column.
+                     * Claude's rows are two lines with the mark hung at the
+                     * start of the first, which is what the enlarged crop
+                     * shows; a 23dp column with a 3dp spacer pushed every title
+                     * 26dp right of where it belongs.
+                     */
+                    /*
+                     * The drawer's rows are laid out differently from the
+                     * list's, and they are the reason `compact` exists.
+                     *
+                     * Measured off Claude's drawer: its glyph runs x=30.0..41.6
+                     * and its title starts at 61.2 - 19.6 of gap, so the column
+                     * here is 31.2 wide off the drawer's own 30 of padding. In
+                     * the list the same glyph runs 26.0..37.6 with the title at
+                     * 49.2. Two screens, two columns; the 12dp box this used to
+                     * be drew the title at 42 in the drawer against 61.2.
+                     */
+                    /*
+                     * The glyph hangs from the row's top, not its middle.
+                     *
+                     * Claude's `</>` ink runs y=175.6..185.6 while the title's
+                     * runs 174.0..186.4 - the mark sits on the title's first
+                     * line, aligned to its top, and the timestamp below has
+                     * nothing beside it. `Alignment.CenterVertically` on the
+                     * row put the glyph at 182.0, 6.4 low, centred on the whole
+                     * two-line block instead of on its first line.
+                     */
+                    /*
+                     * Lifted 6.4, because the row centres its children and
+                     * Claude hangs the mark on the title's first line.
+                     *
+                     * The row's `CenterVertically` puts a 11.6 box in the
+                     * middle of a 34.4 two-line block, which measured 182.8
+                     * against the reference's 175.6. `align(Alignment.Top)` was
+                     * worse - it pinned the glyph to the row's own top, above
+                     * the title entirely - so the offset is the one that lands
+                     * on the line.
+                     */
+                    /*
+                     * A 36 dp tile behind the mark, measured off the reference.
+                     *
+                     * Claude's rows put the </> in its own rounded square of
+                     * #F5F5F3, 36 x 36, starting 32 dp into the card - the tile
+                     * is what gives the row something to sit against, and
+                     * without it the mark reads as a bullet beside the text. The
+                     * offsets below are the tile's, not the glyph's.
+                     */
+                    Box(
+                        modifier = Modifier
+                            /*
+                             * 23.6 on the flat list, 36 on the cards.
+                             *
+                             * Photographed: the home row's mark runs 26.0..37.6
+                             * and its title starts at 49.6 - a 23.6 column off
+                             * the row's 26.0 padding. The cards' 36 column is a
+                             * different page's geometry, and using it here put
+                             * the home title at 77.6 against 49.6.
+                             */
+                            .width(if (compact) 31.2.dp else if (flat) 23.6.dp else 36.dp)
+                            /*
+                             * The flat row's mark sits 6 right and 13.6 up.
+                             *
+                             * Measured against the reference's own first row: its
+                             * mark's ink runs x 26.0..37.6 with the row's first
+                             * line at y 174.0. This drew it at 20.0 and 187.6 -
+                             * left of the title's own left edge and a line low,
+                             * which read as a bullet beside the text rather than
+                             * a mark on it.
+                             */
+                            .offset(
+                                x = if (flat) 6.dp else 0.dp,
+                                y = when {
+                                    compact -> (-6.4).dp
+                                    flat -> (-13.6).dp
+                                    else -> 0.dp
+                                },
+                            ),
+                        /*
+                         * Top on the flat rows.
+                         *
+                         * The mark hangs at the start of the title's line; a
+                         * centred box put it 15 dp below the text it belongs to
+                         * - measured, the mark's ink at y 190.0 while the title
+                         * began at 175.2. Centre is right for the cards, where
+                         * the mark sits against a two-line block.
+                         */
+                        contentAlignment = when {
+                            compact -> Alignment.TopStart
+                            flat -> Alignment.TopStart
+                            else -> Alignment.Center
+                        },
+                    ) {
+                        /*
+                         * No tile behind the mark.
+                         *
+                         * Sampled the reference's card at the mark's own
+                         * position: (249,249,247) - the page's colour, all the
+                         * way through. There is no grey square there, only the
+                         * mark itself and whatever the mark is made of. This
+                         * drew a 36 dp rounded square first and then the glyph on
+                         * top, which is why the column read as a list of tiles
+                         * beside a reference that reads as a list of lines.
+                         */
                         /*
                          * The desktop's `convo-cell`: a conversation mark on
                          * every row (the path at Sidebar.vue:1288, 24 grid, 2
                          * line), and a <> for one that works in a project
                          * folder - Claude draws the same split the phone had.
                          */
-                        if (s.running || s.directory.isNotBlank()) {
+                        /*
+                         * A code mark for a conversation that works in a folder
+                         * and a speech bubble for one that does not - Claude's
+                         * own split. Both are outlines: this drew a closed
+                         * rectangle (`M5 5h14v14H5z`) for the first, which under
+                         * a stroke reads as an empty box, which is exactly what
+                         * every row showed.
+                         */
+                        /*
+                         * A spinner while it runs, the mark otherwise.
+                         *
+                         * The reference's card for a live conversation shows a
+                         * half-arc turning inside a soft rounded square, not the
+                         * `</>` - measured on its own card at 400 dpi. This
+                         * branch tested `s.running || s.directory.isNotBlank()`,
+                         * so a running conversation in a project (which is most
+                         * of them) took the code mark and the spinner never
+                         * appeared. Running comes first now.
+                         */
+                        if (s.running) {
+                            val spin = rememberInfiniteTransition(label = "row-mark-spin")
+                            val angle by spin.animateFloat(
+                                initialValue = 0f,
+                                targetValue = 360f,
+                                animationSpec = infiniteRepeatable(
+                                    animation = tween(900, easing = LinearEasing),
+                                ),
+                                label = "row-mark-angle",
+                            )
+                            Box(
+                                Modifier.size(36.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                /*
+                                 * 20 dp, and a heavy arc.
+                                 *
+                                 * Measured on the reference's own running card:
+                                 * the ring's ink runs 20.0 dp wide by 14.0 tall -
+                                 * it is an open arc, taller than a half circle
+                                 * would be, and its stroke is thick relative to
+                                 * its size. 18 dp at 2.6 read as a hairline hoop
+                                 * beside a 36 dp tile.
+                                 */
+                                Canvas(Modifier.size(20.dp)) {
+                                    withTransform({ rotate(angle) }) {
+                                        drawArc(
+                                            color = Color(0xFF9C9A93),
+                                            startAngle = 0f,
+                                            sweepAngle = 220f,
+                                            useCenter = false,
+                                            style = Stroke(width = 3.2f * density, cap = StrokeCap.Round),
+                                        )
+                                    }
+                                }
+                            }
+                        } else if (s.id == current) {
+                            /*
+                             * `</>` marks the conversation you are reading.
+                             *
+                             * Photographed in the drawer: Main - the open one -
+                             * carries a code mark, and every other row carries a
+                             * speech bubble, whether or not that conversation has
+                             * a directory. This tested `directory.isNotBlank()`,
+                             * so a project conversation wore the code mark and a
+                             * plain one wore a bubble, and the mark said where a
+                             * conversation lived rather than which one is on
+                             * screen.
+                             *
+                             * Fills the grid: `M9 7…M19 17` inside 24 drew 7.2 of
+                             * mark in an 11.6 box, where Claude's `</>` ink is
+                             * 11.6 x 10.0.
+                             */
                             MiIcon(
-                                "M5 5h14v14H5zM7.5 10.5 5.5 12l2 1.5M10.5 10.5l2 1.5-2 1.5",
-                                modifier = Modifier.size(14.dp),
+                                "M6.4 5.2 1.6 12l4.8 6.8M17.6 5.2 22.4 12l-4.8 6.8M15.6 3.6 8.4 20.4",
+                                modifier = Modifier.size(11.6.dp),
                                 viewBox = 24f,
-                                strokeWidth = 1.6f,
+                                strokeWidth = 2.2f,
                                 tint = LocalMuted.current,
                             )
                         } else {
                             MiIcon(
-                                "M4.5 5h15a1.5 1.5 0 0 1 1.5 1.5v9a1.5 1.5 0 0 1-1.5 1.5H10l-4.5 3.5V17H4.5A1.5 1.5 0 0 1 3 15.5v-9A1.5 1.5 0 0 1 4.5 5z",
-                                modifier = Modifier.size(14.dp),
+                                /*
+                                 * Round, not a rounded rectangle.
+                                 *
+                                 * Enlarged from the drawer, the reference's mark
+                                 * is a circle with a short tail at its lower
+                                 * left - the tail is a straight notch, not a
+                                 * second lobe. The 1.6-cornered rectangle this
+                                 * drew read as a chat panel next to the
+                                 * reference's round one.
+                                 */
+                                "M12 3.4a8.6 8.6 0 1 0-4.6 15.9L6 21.4l4.6-2.4a8.6 8.6 0 0 0 1.4 0A8.6 8.6 0 0 0 12 3.4Z",
+                                modifier = Modifier.size(11.6.dp),
+                                viewBox = 24f,
+                                strokeWidth = 1.9f,
                                 tint = LocalMuted.current,
                             )
                         }
                     }
-                    Spacer(Modifier.width(3.dp))
-                    Column(Modifier.weight(1f)) {
-                        // Claude sets the title and its timestamp tight against
-                        // each other (32 px between the two baselines at 450
-                        // dpi), so the pair reads as one row rather than two.
-                        Text(
+                    if (!compact) Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f).padding(top = if (compact) 0.dp else 0.dp)) {
+                        /*
+                         * 17sp of title over 14sp of time.
+                         *
+                         * Measured: "Main"'s cap height is 12.4 dp and the CJK
+                         * title beside it 15.2 - 18sp in this face, where the
+                         * 16 here drew 14.4. The timestamp's CJK ink is 13.2,
+                         * which is 14sp, not the 13 that was here.
+                         *
+                         * The two run 22.4 apart (title top 174.0, time top
+                         * 196.4) with a 10.0 gap between their inks; the
+                         * timestamp starts at x=48.8, the title at 49.2, so
+                         * there is no indent of its own - the 5dp that used to
+                         * push it right was compensating for the glyph column
+                         * being too narrow, and both lines now sit in the same
+                         * column the way the reference's do.
+                         */
+                        /*
+                         * Title and time on one line in the wide layout.
+                         *
+                         * The reference puts 6 小时 at the card's top right, on
+                         * the title's own baseline, and leaves the second line
+                         * for the row's state - so the time is a sibling of the
+                         * title rather than the line under it. Stacked, the card
+                         * read as two lines of equal weight and said nothing
+                         * about when the conversation happened without reading
+                         * down to the second one.
+                         */
+                        if (!compact) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    s.title.ifEmpty { s.id }.take(26),
+                                    /*
+                                     * 18sp, which the comment here already said.
+                                     *
+                                     * "Measured: Main's cap height is 12.4 dp and
+                                     * the CJK title 15.2 - 18sp in this face,
+                                     * where the 16 here drew 14.4" - and the code
+                                     * then passed 15. Photographed against the
+                                     * home list, the title ink is 12.8 against
+                                     * this row's 11.2.
+                                     */
+                                    fontSize = if (flat) 18.sp else 15.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    lineHeight = if (flat) 22.sp else 20.sp,
+                                    color = LocalText.current,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false),
+                                )
+                                Spacer(Modifier.weight(1f))
+                                /*
+                                 * Cards put the time at the row's trailing end;
+                                 * flat rows put it under the title instead.
+                                 *
+                                 * Claude's 最近记录 has no time on the title
+                                 * line at all - it sits on the second line, left
+                                 * aligned with the title. Keeping both drew the
+                                 * word twice, once at each end.
+                                 */
+                                if (!flat) Text(
+                                    relTime(s.updated),
+                                    fontSize = 12.sp,
+                                    lineHeight = 16.sp,
+                                    color = LocalMuted.current,
+                                )
+                            }
+                            /*
+                             * The card's second line: what the conversation is
+                             * attached to and whether that link is up.
+                             *
+                             * The reference's own card carries 「已连接 · Remote
+                             * control」 here in #296118 with a small laptop mark
+                             * before it, 12.4 dp of ink starting at 78.0 - which
+                             * is the title's own left edge, so the line sits
+                             * under the title rather than under the tile. This
+                             * card left the space empty, so an 82 dp row had one
+                             * line of text floating in it.
+                             */
+                            /*
+                             * Flat rows carry the time here; cards carry the link.
+                             *
+                             * Photographed, Claude's 最近记录 puts a grey 「4分钟前」
+                             * under the title, aligned to the title's own left
+                             * edge, and says nothing about connections - the
+                             * 已连接 • Remote control line belongs to its Code
+                             * page's cards. Drawing the connection line on both
+                             * made the home list a column of status readouts.
+                             */
+                            if (flat) {
+                                /*
+                                 * 14sp, 10.0 above: the reference's title ink
+                                 * ends at 186.4 and its time ink starts at
+                                 * 196.4.
+                                 */
+                                Text(
+                                    relTime(s.updated),
+                                    fontSize = 14.sp,
+                                    lineHeight = 16.sp,
+                                    color = LocalMuted.current,
+                                    modifier = Modifier.padding(top = 3.dp),
+                                )
+                            } else Row(
+                                Modifier.padding(top = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                MiIcon(
+                                    "M5.6 7.4h12.8a1.2 1.2 0 0 1 1.2 1.2v7.4H4.4V8.6a1.2 1.2 0 0 1 1.2-1.2zM3.2 16h17.6v2a1 1 0 0 1-1 1H4.2a1 1 0 0 1-1-1z",
+                                    contentDescription = null,
+                                    modifier = Modifier.size(11.2.dp),
+                                    viewBox = 24f,
+                                    strokeWidth = 1.7f,
+                                    tint = if (live) Color(0xFF296118) else LocalMuted.current,
+                                )
+                                Spacer(Modifier.width(5.dp))
+                                Text(
+                                    if (live) "已连接" else "已断开",
+                                    fontSize = 12.sp,
+                                    lineHeight = 15.sp,
+                                    color = if (live) Color(0xFF296118) else LocalMuted.current,
+                                )
+                                Text(
+                                    /*
+                                     * A bullet, not a middot.
+                                     *
+                                     * The reference's separator is a filled dot at
+                                     * mid-height - U+2022 - where this used U+00B7,
+                                     * which sits on the baseline of a Latin face
+                                     * and reads as a full stop between two words.
+                                     */
+                                    " • Remote control",
+                                    fontSize = 12.sp,
+                                    lineHeight = 15.sp,
+                                    color = LocalMuted.current,
+                                )
+                            }
+                        }
+                        if (compact) Text(
                             s.title.ifEmpty { s.id }.take(if (compact) 34 else 26),
-                            // 14 at weight 500 over a 20 line-height is the
-                            // desktop's `row-label` exactly; this carried 15 at
-                            // the default weight, which is a different voice.
-                            fontSize = 14.sp,
+                            /*
+                             * 12sp in the drawer, 17sp in the list.
+                             *
+                             * Measured: the drawer's row ink is 10.8 tall
+                             * (11.6sp for CJK) where the list's is 15.2
+                             * (16.3sp). One size for both made every drawer
+                             * row a third too large and pushed its baseline
+                             * 6 dp low.
+                             */
+                            fontSize = if (compact) 13.sp else 17.sp,
                             fontWeight = FontWeight.Medium,
-                            lineHeight = 20.sp,
+                            lineHeight = if (compact) 17.sp else 22.sp,
                             color = LocalText.current,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        if (!compact) {
-                            Text(
-                                relTime(s.updated),
-                                fontSize = 12.sp,
-                                lineHeight = 16.sp,
-                                color = LocalMuted.current,
-                            )
-                        }
+
                     }
                     /*
                      * The desktop's three marks (`Sidebar.vue`, `statusOf`):
@@ -6642,7 +9802,13 @@ fun DrawerContent(
     onNewTask: () -> Unit = {},
     onArtifacts: () -> Unit = {},
     onPlugins: () -> Unit = {},
+    onScheduled: () -> Unit = {},
     onProjects: () -> Unit = {},
+    /** The Code row: the conversation list, which is this app's own Code page. */
+    onSessions: () -> Unit = {},
+    /** The 最近记录 row: the flat conversation list Claude opens on. */
+    onRecent: () -> Unit = {},
+    onSettings: () -> Unit = {},
     /** Which column page is open, so the drawer can mark the row for it. */
     currentPage: LeftMode = LeftMode.Sessions,
     onSearch: () -> Unit = {},
@@ -6656,14 +9822,38 @@ fun DrawerContent(
     // the page's 249,249,247, which is what makes it read as a sheet laid over
     // the conversation rather than as the page itself sliding across.
     Column(Modifier.fillMaxSize().background(if (LocalBg.current == DarkBg) Color(0xFF1C1C1B) else Color(0xFFF3F3F0))) {
-        Column(Modifier.padding(horizontal = 18.dp)) {
-            Spacer(Modifier.height(28.dp))
+        Column(Modifier.padding(horizontal = 24.dp)) {
+            /*
+             * 42.4 above the word, not 28.
+             *
+             * Claude's "Claude" ink runs y=54.4..74.8 - 20.8 dp of it, which is
+             * 28sp in this face - and its left edge is at 24.0, so the drawer
+             * carries 24 of inline padding, not 18. The word was drawing 10 dp
+             * tall at 19.2, two sizes small and 5 to the left.
+             */
+            Spacer(Modifier.height(13.6.dp))
             // Claude's drawer opens with its name at 32sp and a search glyph at
             // the far right of the same line, which opens the list's search.
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("MCode", fontSize = 32.sp, fontWeight = FontWeight.Normal, color = LocalText.current, modifier = Modifier.weight(1f))
+                /*
+                 * "Claude", not this app's own name, and 24sp.
+                 *
+                 * Measured: the word's ink is 20.4 dp tall (54.4..74.4) and runs
+                 * x=24.0..110.8, which is 24sp in this face - the 32 that was
+                 * here drew 27 and reached past 130. The mark beside it is
+                 * 19.2 across and its centre sits at 315.8.
+                 */
+                Text(
+                    "Claude",
+                    fontSize = 27.5.sp,
+                    lineHeight = 36.sp,
+                    fontWeight = FontWeight.Normal,
+                    color = LocalText.current,
+                    maxLines = 1,
+                    modifier = Modifier.weight(1f),
+                )
                 Box(Modifier.size(36.dp).clickable { onSearch() }, contentAlignment = Alignment.Center) {
-                    Icon(Icons.Outlined.Search, contentDescription = "搜索", tint = LocalText.current, modifier = Modifier.size(22.dp))
+                    Icon(Icons.Outlined.Search, contentDescription = "搜索", tint = LocalText.current, modifier = Modifier.size(19.2.dp))
                 }
             }
             Spacer(Modifier.height(12.dp))
@@ -6691,36 +9881,150 @@ fun DrawerContent(
              * leaves the drawer and opens a new conversation; it is the only
              * row the desktop's rail has besides the artifact centre.
              */
-            // MiMo's 新建任务: a round speech bubble with its tail at the
-            // lower left and a plus in the middle (Sidebar.vue, 24 grid, 2 line).
-            DrawerItem(Icons.Outlined.ChatBubbleOutline, "新建任务", path = "M20.3 15.4A9 9 0 1 0 16.5 19.8L21 21zM12 9.5v5M9.5 12h5") {
-                onNewTask()
-            }
-            Spacer(Modifier.height(12.dp))
-            // 项目: the desktop's side column is the project list itself, so
-            // it needs no row of its own; the phone's list is a page behind a
-            // drawer, and without a row it is unreachable.
-            DrawerItem(Icons.Outlined.Folder, "项目", active = currentPage == LeftMode.Projects) { onProjects() }
-            // MiMo's 产物中心: the open tray with a screen resting in it (20 grid, 1.2 line).
+        }
+        /*
+         * The four rows live outside the 24-padded block above.
+         *
+         * That block exists to line the word 「Claude」up at x=24 and the section
+         * heads with it; the rows themselves are a pill that starts at x=8 with
+         * its glyph at 26.4. Keeping them inside the 24 put the glyph at 44.8 -
+         * 18 dp right of where the reference draws it - because the pill's own
+         * 8 and the glyph's 10.4 stacked on top of that 24.
+         */
+        Column(Modifier.padding(horizontal = 8.dp)) {
+            /*
+             * Claude's four rows, with its words and its order:
+             * 项目 / Code / Artifacts / 定时任务.
+             *
+             * Read off its own drawer. This had five - 新建任务, 项目,
+             * 产物中心, 插件, 设置 - so the drawer was a menu of things this app
+             * can do rather than the four destinations the reference offers,
+             * and every label but 项目 was a different word for the same page.
+             * 新建任务 lives on as the capsule at the foot of the column, which
+             * is where Claude puts it too; 设置 is on the header's own menu.
+             *
+             * The glyphs are the reference's own paths: a tray for 项目, a
+             * code mark for Code, a circle overlapping a square for Artifacts,
+             * and a clock for 定时任务.
+             */
+            DrawerItem(
+                Icons.Outlined.Folder,
+                "项目",
+                active = currentPage == LeftMode.Projects,
+                /*
+                 * A tray, not a folder.
+                 *
+                 * Claude's 项目 mark is an inbox: two short rules above a
+                 * trapezoid whose sides lean in. This drew a folder - complete
+                 * with its folded corner - which reads as a file browser rather
+                 * than as the projects list. The path fills the 24 grid so the
+                 * ink is the full 18.4 the row asks for; the folder path ran
+                 * 3.4..15 and drew 12.
+                 */
+                path = "M2 2.6h20M2 8.2h20M3.6 12.4h16.8l-1.6 9.2H5.2z",
+            ) { onProjects() }
+            /*
+             * 最近记录 is not a drawer row.
+             *
+             * I added one last pass on the assumption that the home list must be
+             * a destination like the others. Photographed, Claude's drawer has
+             * exactly four rows - 项目, Code, Artifacts, 定时任务 - and 最近记录
+             * appears in none of them: it is where the app opens, reached by
+             * pressing back out of a page rather than by choosing it. A fifth
+             * row would have pushed every real row down by 57.6 and made the
+             * drawer claim a destination the reference does not offer.
+             */
+            /*
+             * 「Code」, opening the conversation list - the reference's own
+             * second row.
+             *
+             * Claude's Code page is a device panel this app has no counterpart
+             * for, so an earlier pass relabelled this row 设置 and pointed it at
+             * the settings screen. The label left the drawer one row short of
+             * the reference and put an unrelated destination in the slot a
+             * reader reaches for first. In MCode the conversations are the
+             * column beside this rail, so that slot goes back to them, wearing
+             * the reference's own `</>` mark.
+             *
+             * Settings keeps its own way in: the header's laptop glyph on the
+             * chat pane, and the bottom of this drawer.
+             */
+            DrawerItem(
+                Icons.Outlined.Code,
+                "Code",
+                active = currentPage == LeftMode.Sessions,
+                path = "M6.4 5.2 1.6 12l4.8 6.8M17.6 5.2 22.4 12l-4.8 6.8M15.6 3.6 8.4 20.4",
+                pathStroke = 2.2f,
+            ) { onSessions() }
             DrawerItem(
                 Icons.AutoMirrored.Outlined.Article,
-                "产物中心",
+                "Artifacts",
                 active = currentPage == LeftMode.Artifacts,
-                path = "M2.9 11.5h3.4l1 1.9h5.4l1-1.9h3.4M2.9 11.5 5 4.6h10l2.1 6.9M2.9 11.5v3.9h14.2v-3.9",
-                pathViewBox = 20f,
-                pathStroke = 1.2f,
+                /*
+                 * A fan over a rectangle - the shape the reference uses - not a
+                 * circle beside a square.
+                 *
+                 * Claude's Artifacts mark is a half-disc with a wedge cut out,
+                 * sitting over the top-left corner of a box: it reads as
+                 * "something being made", where a circle and a square read as
+                 * two objects. Fills the 24 grid.
+                 */
+                path = "M7.6 12.2A5.4 5.4 0 0 1 18.4 9.4l-6.2 6.2a5.4 5.4 0 0 1-4.6-3.4zM12.4 12.2h9v9h-9z",
+                pathStroke = 1.5f,
             ) { onArtifacts() }
-            // 插件: the desktop's page for MCP servers and skills, which the
-            // phone had no way to reach at all - so a skill could not be turned
-            // off, and a server that failed to start could not be seen.
-            DrawerItem(Icons.Outlined.Extension, "插件", active = currentPage == LeftMode.Plugins) { onPlugins() }
-            Spacer(Modifier.height(20.dp))
-            HorizontalDivider(color = LocalMuted.current.copy(alpha = 0.18f))
-            Spacer(Modifier.height(18.dp))
+            /*
+             * 定时任务, and it opens 定时任务.
+             *
+             * This row carried a clock and the word 定时任务 while its click
+             * went to `onPlugins` - the label and the destination disagreed,
+             * and the page the label promised did not exist at all, so the
+             * `automation.tasks` the server pushes were collected and never
+             * drawn. It has its own page now.
+             */
+            DrawerItem(
+                Icons.Outlined.Schedule,
+                "定时任务",
+                active = currentPage == LeftMode.Scheduled,
+                path = "M12 3.6c4.64 0 8.4 3.76 8.4 8.4s-3.76 8.4-8.4 8.4S3.6 16.64 3.6 12 7.36 3.6 12 3.6zM12 7.8V12l3 1.8",
+            ) { onScheduled() }
+            /*
+             * The hairline sits 8.2 under the last row and 20.2 above the
+             * section head.
+             *
+             * Measured off Claude's drawer: 定时任务's row ends at 320.4, the
+             * rule is at 328.6, and 最近使用's ink runs 348.8..361.6. This
+             * carried 20 and 18, which put the rule 12 low and the head 6 low
+             * on top of that - the two spaces the drawer reads as a break
+             * rather than a section boundary.
+             */
+            Spacer(Modifier.height(8.2.dp))
+            /*
+             * The rule and the section head keep the 24 inset the rows just
+             * gave up: measured, the rule runs from 24.0 and 最近使用's ink
+             * starts at 24.8, so they belong to the word 「Claude」above, not to
+             * the pill.
+             */
+            HorizontalDivider(
+                modifier = Modifier.padding(horizontal = 16.dp),
+                color = LocalMuted.current.copy(alpha = 0.30f),
+            )
+            Spacer(Modifier.height(15.4.dp))
             // `.section-head`: 12 at weight 500, in the body's grey. This read
             // 13 at the default weight, which is a size and a voice off.
-            Text("最近使用", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = LocalMuted.current)
-            Spacer(Modifier.height(8.dp))
+            Text(
+                "最近使用",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                color = LocalMuted.current,
+                modifier = Modifier.padding(start = 16.dp),
+            )
+            /*
+             * 20.8 between the head's ink and the first row's: the head ends
+             * at 361.6 and the first row's title starts at 390.0. The 8 that
+             * was here pulled the rows up under the head; 20.8 then overshot
+             * by 7.2 because the head's own line box adds air below its ink.
+             */
+            Spacer(Modifier.height(13.6.dp))
         }
         /*
          * Claude's drawer shows the three most recent conversations and then a
@@ -6729,7 +10033,21 @@ fun DrawerContent(
          */
         Column(Modifier.weight(1f)) {
             SessionList(
-                sessions.take(3),
+                /*
+                 * Six, and at a 43.4 pitch.
+                 *
+                 * Counted off the drawer photographed this pass: Main, 大模型推理
+                 * 部署方案, 笼管交换机级联, 电影剧情总结, Python code request,
+                 * macOS 屏幕保护密码设置 - six titles at y 390.0, 432.4, 476.0,
+                 * 519.6, 564.4, 606.8, with 查看全部 at 654.4.
+                 *
+                 * The note here previously claimed seven rows at a 28-to-31
+                 * pitch, which was a reading of a *different* screenshot whose
+                 * rows I had counted through a window that cut off the fifth.
+                 * Six at 43.4 is what the drawer itself shows, and 43.6 is
+                 * already the compact row height, so only the count was wrong.
+                 */
+                sessions.take(6),
                 null,
                 "",
                 onSelect,
@@ -6739,9 +10057,16 @@ fun DrawerContent(
                 unseen = unseen,
                 awaiting = awaiting,
             )
-            if (sessions.size > 3) {
+            if (sessions.size > 6) {
+                /*
+                 * 24.8 in from the drawer's edge and 654.4 down, not 20/660.8.
+                 *
+                 * The last row ends at 620.4 and this line's ink starts at
+                 * 654.4, so the row is ~8 tall plus 10 of padding; 18 of inline
+                 * padding put the word at 20.0, 4.8 left of the reference.
+                 */
                 Row(
-                    Modifier.fillMaxWidth().clickable { onSeeAll() }.padding(horizontal = 18.dp, vertical = 10.dp),
+                    Modifier.fillMaxWidth().clickable { onSeeAll() }.padding(start = 24.8.dp, end = 18.dp, top = 6.dp, bottom = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text("查看全部", fontSize = 14.sp, color = LocalMuted.current)
@@ -6750,16 +10075,65 @@ fun DrawerContent(
                 }
             }
         }
+        /*
+         * Settings lives at the foot of the drawer now.
+         *
+         * Its old home was the second row, where the reference has Code; that
+         * slot is Code again, so this is where 设置 goes - out of the reading
+         * path, above the account, which is where a settings entry belongs in
+         * a rail whose top four rows are the pages you actually work in.
+         */
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clickable { onSettings() }
+                .padding(start = 24.8.dp, end = 18.dp, top = 2.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            MiIcon(
+                "M12 8.4a3.6 3.6 0 1 0 0 7.2 3.6 3.6 0 0 0 0-7.2zM19.4 12a7.4 7.4 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7.4 7.4 0 0 0-2-1.2L14.5 3h-4l-.4 2.6a7.4 7.4 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6a7.4 7.4 0 0 0 0 2.4l-2 1.6 2 3.4 2.4-1a7.4 7.4 0 0 0 2 1.2l.4 2.6h4l.4-2.6a7.4 7.4 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z",
+                contentDescription = null,
+                modifier = Modifier.size(15.2.dp),
+                viewBox = 24f,
+                strokeWidth = 1.6f,
+                tint = LocalMuted.current,
+            )
+            Spacer(Modifier.width(11.6.dp))
+            Text("设置", fontSize = 14.sp, color = LocalMuted.current)
+        }
         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(42.dp).background(Ember, CircleShape), contentAlignment = Alignment.Center) {
-                Text("W", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
+            /*
+             * Claude's account dot is a violet disc, #6E62D9, 43.6 across, and
+             * it carries the reader's initial in white. This drew an ember
+             * disc in the app's own accent, which read as a status light rather
+             * than as an account.
+             */
+            Box(Modifier.size(43.6.dp).background(Color(0xFF6E62D9), CircleShape), contentAlignment = Alignment.Center) {
+                /*
+                 * Normal weight, not SemiBold. Claude's initial reads as a
+                 * light "W" at the centre of a 43.6 disc; at SemiBold the same
+                 * glyph is a size heavier and reads as a logo rather than as an
+                 * initial.
+                 */
+                Text("W", color = Color.White, fontWeight = FontWeight.Normal, fontSize = 17.sp)
             }
             Spacer(Modifier.weight(1f))
-            Button(
-                onCreate,
-                shape = RoundedCornerShape(22.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = LocalText.current, contentColor = LocalBg.current),
-            ) { Text("+ 新建会话", fontSize = 14.sp) }
+            /*
+             * The capsule is 43.6 tall and 118.8 wide (x 224.8..343.6), with
+             * 22 corners - a pill, not a Material button with its own 40dp
+             * minimum, which drew 39.6.
+             */
+            Box(
+                Modifier
+                    .height(43.6.dp)
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(LocalText.current)
+                    .clickable { onCreate() }
+                    .padding(horizontal = 22.4.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("+ 新建会话", fontSize = 14.sp, color = LocalBg.current)
+            }
         }
     }
 }
@@ -6797,95 +10171,61 @@ fun DrawerItem(
                 if (active) {
                     Modifier
                         .background(
-                            if (LocalBg.current == DarkBg) Color(0xFF2B2B2A) else Color(0xFFEEEDEC),
-                            RoundedCornerShape(8.dp),
+                            if (LocalBg.current == DarkBg) Color(0xFF2B2B2A) else Color(0xFFF0EFEC),
+                            RoundedCornerShape(13.6.dp),
                         )
                 } else {
                     Modifier
                 },
             )
-            .heightIn(min = 38.dp)
-            .padding(horizontal = 14.dp)
+            /*
+             * 55.6 tall, a 13.6 corner, and the pill 8 in from the drawer's
+             * edge.
+             *
+             * Re-measured off Claude's own drawer at 2.5 px per dp, scanning
+             * the pixel column through the selected row: the pill's fill runs
+             * y=152.8..208.4 - 55.6 dp, not the 27.2 an earlier pass recorded -
+             * and the four rows' centres sit at 124.6 / 180.6 / 236.2 / 292.6,
+             * a 56.0 pitch. Those earlier numbers came from reading the
+             * downscaled 1080-wide capture as if it were the device's own
+             * resolution, which halved them; the row was drawn half height and
+             * the drawer read as a dense menu where the reference is a list of
+             * full-height rows.
+             */
+            .height(55.6.dp)
+            .padding(horizontal = 8.dp)
             .clickable { onClick() },
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // The desktop's `row-ico` is 18 in a 24 grid; where its own path is
-        // known it is drawn, and the Material lookalike is only a fallback.
+        /*
+         * Inside the pill: 10.4 of its own inset, an 18.4 glyph, and the label
+         * at 60.8 dp from the drawer's edge.
+         *
+         * Measured: the glyphs run 26.4..45.6 and the words start at 60.4-60.8,
+         * so the gap between the two is 15.2 and the drawer's own 24 of inline
+         * padding puts the glyph at 26.4 - 2.4 of it is the pill's inset.
+         */
+        Spacer(Modifier.width(10.4.dp))
         if (path != null) {
             MiIcon(
                 path,
                 contentDescription = label,
-                modifier = Modifier.size(18.dp),
+                modifier = Modifier.size(18.4.dp),
                 viewBox = pathViewBox,
                 strokeWidth = pathStroke,
                 tint = LocalText.current,
             )
         } else {
-            Icon(icon, contentDescription = label, tint = LocalText.current, modifier = Modifier.size(18.dp))
+            Icon(icon, contentDescription = label, tint = LocalText.current, modifier = Modifier.size(18.4.dp))
         }
-        Spacer(Modifier.width(14.dp))
-        Text(label, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
+        Spacer(Modifier.width(15.2.dp))
+        Text(label, fontSize = 16.sp, fontWeight = FontWeight.Normal, color = LocalText.current)
     }
 }
 
 /* ------------------------------------------------------------------ */
 /* The left column's three pages                                       */
 /* ------------------------------------------------------------------ */
-
-/**
- * The draggable divider between the two panes.
- *
- * Measured off Claude on the pad: the bar is 10px across at 400dpi - 4dp - and
- * 120px tall - 48dp - in (216,216,214), vertically centred in the pane and not
- * at all attached to the top or bottom edge. The touch target is wider than the
- * bar (24dp) because a 4dp handle is not something a finger can find.
- */
-@Composable
-fun ColumnDivider(fraction: Float, totalWidthPx: Int, onChange: (Float) -> Unit) {
-    val bar = if (LocalBg.current == DarkBg) Color(0xFF3E3E3C) else Color(0xFFD8D8D6)
-    var paneWidth by remember { mutableStateOf(totalWidthPx) }
-    LaunchedEffect(totalWidthPx) { paneWidth = totalWidthPx }
-    /*
-     * `pointerInput(Unit)` captures its lambda once, so a `fraction` read inside
-     * it is the value from the first composition - every drag would compute from
-     * the same starting point and the handle would jump back. The current
-     * fraction and the callback are read through state holders instead, which is
-     * what makes a drag continuous.
-     */
-    val live = rememberUpdatedState(fraction)
-    val emit = rememberUpdatedState(onChange)
-    Box(
-        Modifier
-            .width(32.dp)
-            .fillMaxHeight()
-            // A description so the handle is a node a driver can find, and so
-            // a screen reader can say what it is. A bare Box is not in the tree
-            // at all, which is also why `adb input swipe` had nothing to land on.
-            .semantics { contentDescription = "调整分栏宽度" }
-            /*
-             * `draggable`, not a hand-rolled `pointerInput`: the handle sits
-             * between two panes that both consume pointer events, and a raw
-             * pointerInput never saw a single event here - three swipes across
-             * the handle moved the split by zero. `draggable` installs a
-             * proper gesture node that takes part in the hit test, so the
-             * parent's scroll cannot claim the drag first.
-             */
-            .draggable(
-                orientation = androidx.compose.foundation.gestures.Orientation.Horizontal,
-                state = rememberDraggableState { delta ->
-                    if (paneWidth > 0) emit.value((live.value + delta / paneWidth).coerceIn(0.18f, 0.46f))
-                },
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        Box(
-            Modifier
-                .width(4.dp)
-                .height(48.dp)
-                .background(bar, RoundedCornerShape(2.dp)),
-        )
-    }
-}
 
 /**
  * 插件, the desktop's page for what the model can reach: MCP servers and skills.
@@ -6911,6 +10251,14 @@ fun PluginsScreen(
     onRefresh: () -> Unit,
     onToggleSkill: (String, Boolean) -> Unit,
     onClose: () -> Unit,
+    /*
+     * True when the caller already owns the window: on a wide screen these
+     * pages are the left column's content, so they must not paint the page
+     * colour under the whole screen or add a status-bar spacer for a bar the
+     * column has already cleared.
+     */
+    embedded: Boolean = false,
+    modifier: Modifier = Modifier,
 ) {
     var query by remember { mutableStateOf("") }
     // 全部 / 已启用 / 已停用, the desktop's three status filters.
@@ -6925,10 +10273,37 @@ fun PluginsScreen(
         }
     }
 
-    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+    /*
+     * No fillMaxSize on top of the caller's modifier.
+     *
+     * The wide layout hands this page `Modifier.weight(1f).fillMaxWidth()` inside
+     * a Column, and this wrapped that in another `fillMaxSize()`. Two size
+     * constraints on the same node is a conflict the layout resolves by giving
+     * the page a height its children cannot measure against: the header's Box
+     * drew its burger and nothing else - no title, no search, no filter, though
+     * all three are in the code and all three draw on the home page.
+     *
+     * When the page is not embedded it owns the screen and asks for it plainly.
+     */
+    Column(
+        /*
+         * fillMaxSize in both cases - the caller's weight supplies the height.
+         *
+         * Stripping it to fillMaxWidth when embedded looked like the fix for the
+         * double-constraint problem, and made the page worse: with no height
+         * constraint the column measured to its children, so the empty state's
+         * `weight(1f)` had nothing to divide and the block sat at the column's
+         * own top - the clock at y 219.2 where the reference puts it at 449.6.
+         *
+         * `weight` already gives this node a bounded height; fillMaxSize inside
+         * that bound is not a second opinion, it is the same number.
+         */
+        modifier.then(Modifier.fillMaxSize())
+            .then(if (embedded) Modifier else Modifier.background(MaterialTheme.colorScheme.background)),
+    ) {
         // The status bar is drawn over the page, so the header has to step under
         // it - without this the title sat on top of the clock and the arrow.
-        Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+        if (!embedded) Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
         Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp).padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(38.dp).clickable { onClose() }, contentAlignment = Alignment.Center) {
                 Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回", tint = LocalText.current, modifier = Modifier.size(20.dp))
@@ -7112,6 +10487,14 @@ fun ProjectsScreen(
     onRename: (String, String) -> Unit,
     onRemove: (String) -> Unit,
     onClose: () -> Unit,
+    /*
+     * True when the caller already owns the window: on a wide screen these
+     * pages are the left column's content, so they must not paint the page
+     * colour under the whole screen or add a status-bar spacer for a bar the
+     * column has already cleared.
+     */
+    embedded: Boolean = false,
+    modifier: Modifier = Modifier,
 ) {
     var menuFor by remember { mutableStateOf<String?>(null) }
     var renameFor by remember { mutableStateOf<String?>(null) }
@@ -7120,37 +10503,265 @@ fun ProjectsScreen(
     var addDraft by remember { mutableStateOf("") }
     var creating by remember { mutableStateOf(false) }
     var createDraft by remember { mutableStateOf("") }
+    /*
+     * The header's two marks are controls, not decoration: the magnifier opens
+     * a name filter and the sliders keep only the folders that have a
+     * conversation. They are drawn to the reference's geometry because its page
+     * carries the same pair, and both do what their label says - a mark that
+     * looks clickable and is not is the one thing a header must not contain.
+     */
+    var searching by remember { mutableStateOf(false) }
+    var nameFilter by remember { mutableStateOf("") }
+    var onlyWithSessions by remember { mutableStateOf(false) }
+    val visible = remember(rows, nameFilter, onlyWithSessions) {
+        rows.filter { row ->
+            (nameFilter.isBlank() || row.name.contains(nameFilter, ignoreCase = true) || row.directory.contains(nameFilter, ignoreCase = true)) &&
+                (!onlyWithSessions || row.sessions > 0)
+        }
+    }
     val muted = LocalMuted.current
     val ink = LocalText.current
     val fieldLine = LocalFieldLine.current
     val fieldBg = LocalField.current
 
-    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+    Column(
+        modifier.then(if (embedded) Modifier.fillMaxSize() else Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)),
+    ) {
         // The status bar is drawn over the page, so the header steps under it -
         // without this the title sat on top of the clock, as the plugins page's
         // first cut did.
-        Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
-        Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp).padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(38.dp).clickable { onClose() }, contentAlignment = Alignment.Center) {
-                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回", tint = LocalText.current, modifier = Modifier.size(20.dp))
+        if (!embedded) Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+        /*
+         * The reference's projects header: burger, 项目 centred on the column,
+         * and two marks on the right - a magnifier and a filter.
+         *
+         * Measured: 「项目」 runs x 163.2..196.8 (centre 180.0, the column's
+         * own), the magnifier's target 272.0..312.0 and the filter's
+         * 316.0..356.0, both 40 square on y 44.8..84.8. This header carried a
+         * 24sp left-aligned title and a back arrow, which is the shape of a
+         * pushed screen rather than of the reference's page - the page is one of
+         * the four the drawer switches between, so it is reached from the drawer
+         * and has no "back" of its own.
+         */
+        Box(Modifier.fillMaxWidth().height(63.2.dp)) {
+            Text(
+                "项目",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
+                color = LocalText.current,
+                maxLines = 1,
+                softWrap = false,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                /*
+                 * Centred on the column, which is 5 dp right of where the
+                 * padded row puts it.
+                 *
+                 * The reference's 「项目」 runs 164.0..194.0, centre 179.0, on a
+                 * 360 dp column whose centre is 180.0. Ours measured centre
+                 * 174.0 - five left - because the row's own end padding is
+                 * asymmetric to place the marks, and the title was inheriting
+                 * that. It had a -5.2 offset, which pushed it the wrong way;
+                 * this one is +5.0.
+                 */
+                /*
+                 * A stated height, not fillMaxSize+wrapContentHeight.
+                 *
+                 * Those two fight in a fixed-height Box: fillMaxSize claims the
+                 * whole 63.2 and wrapContentHeight then asks the text for its
+                 * own, which resolved to nothing here - the title drew no ink at
+                 * all and the header showed only its burger. Same fault as the
+                 * home header two passes ago, in a second place.
+                 */
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(63.2.dp)
+                    .align(Alignment.Center)
+                    .wrapContentHeight(Alignment.CenterVertically)
+                    .offset(x = 2.4.dp),
+            )
+            /*
+             * SpaceBetween, not a weight spacer.
+             *
+             * The Row had `Spacer(Modifier.weight(1f))` between the burger and
+             * the two marks. Proved by painting the header red: that Row drew its
+             * burger at x 15.6..31.6 and not one pixel of the title, the
+             * magnifier or the filter, though all three sit in the same Row with
+             * explicit 40 dp targets. A single weight child in a Row inside a
+             * Box inside a weighted Column claimed the whole track.
+             *
+             * SpaceBetween needs no weight: burger, marks, marks, with the gaps
+             * laid out by the arrangement, and the title is the Box's own centred
+             * child.
+             */
+            Row(
+                Modifier.fillMaxWidth().height(63.2.dp).padding(start = 1.6.dp, end = 4.4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    Modifier.size(44.dp).clickable { onClose() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    MiIcon(
+                        "M0.95 2.6h22.1M0.95 12h22.1M0.95 21.4h11.05",
+                        contentDescription = "菜单",
+                        modifier = Modifier.size(16.4.dp),
+                        viewBox = 24f,
+                        strokeWidth = 1.9f,
+                        tint = LocalText.current,
+                    )
+                }
+                /*
+                 * A weight spacer pushes the two marks to the trailing edge.
+                 *
+                 * The header is a Box: the title is its own centred child, laid
+                 * down first, and this Row goes over it. SpaceBetween spread the
+                 * burger and the two marks evenly across the bar, which put the
+                 * search glyph on top of the title's last character - visible in
+                 * the build as 「项(搜索)目」. A weight before the marks keeps them
+                 * at the right edge, where the reference puts them.
+                 */
+                Spacer(Modifier.weight(1f))
+                /*
+                 * 搜索项目 and 筛选项目 are real: the page filters its rows by
+                 * name and by whether it has conversations. They are drawn as
+                 * the reference's two 40-square targets, at its two positions.
+                 */
+                Box(
+                    Modifier.size(40.dp).clickable { searching = !searching },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    /*
+                     * 26.6, because Material's magnifier leaves a quarter of its
+                     * grid empty: at 17 dp it drew 12.0 dp of ink where the
+                     * reference's runs 18.8 (x 286.4..305.2). Scaling by the
+                     * measured ratio is the only way to hit it - the grid size
+                     * is not the drawn size.
+                     */
+                    Icon(Icons.Outlined.Search, contentDescription = "搜索项目", tint = LocalText.current, modifier = Modifier.size(26.6.dp))
+                }
+                Box(
+                    Modifier.size(40.dp).clickable { onlyWithSessions = !onlyWithSessions },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    /*
+                     * Three vertical sliders, not a funnel.
+                     *
+                     * The reference's filter mark is three stems 4.8 dp apart
+                     * with a hollow ring on each - the outer two high, the middle
+                     * one low - measured at x 820..859, y 145..178 on its own
+                     * bar. What stood here was `M4 5.6h16M7 12h10M10 18.4h4`,
+                     * three horizontal rules of decreasing width: the usual
+                     * funnel, and plainly a different drawing at 6x zoom.
+                     *
+                     * Each stem is broken around its ring so the ring's inside
+                     * shows the page rather than the stem running through it,
+                     * which is what the reference's hollow centres do.
+                     */
+                    MiIcon(
+                        "M4.8 1.2V5.8M4.8 12.2V22.8M12 1.2V11.8M12 18.2V22.8M19.2 1.2V5.8M19.2 12.2V22.8" +
+                            "M2.4 9a2.4 2.4 0 1 0 4.8 0a2.4 2.4 0 1 0-4.8 0" +
+                            "M9.6 15a2.4 2.4 0 1 0 4.8 0a2.4 2.4 0 1 0-4.8 0" +
+                            "M16.8 9a2.4 2.4 0 1 0 4.8 0a2.4 2.4 0 1 0-4.8 0",
+                        contentDescription = "筛选项目",
+                        modifier = Modifier.size(22.6.dp),
+                        viewBox = 24f,
+                        strokeWidth = 1.8f,
+                        tint = if (onlyWithSessions) MaterialTheme.colorScheme.primary else LocalText.current,
+                    )
+                }
             }
-            Spacer(Modifier.width(6.dp))
-            Text("项目", fontSize = 24.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current, modifier = Modifier.weight(1f))
         }
-        if (rows.isEmpty()) {
-            // The empty outline: a folder with no fill, the words, and the one
-            // sentence that says what a project is.
-            Column(Modifier.fillMaxWidth().padding(top = 90.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(Icons.Outlined.Folder, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(63.dp))
-                Spacer(Modifier.height(14.dp))
-                Text("暂无项目", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
-                Spacer(Modifier.height(4.dp))
-                Text("添加一个文件夹，把它的对话归在一起。", fontSize = 13.sp, color = LocalMuted.current)
+        if (searching) {
+            Row(
+                Modifier.fillMaxWidth().padding(start = 12.dp, end = 20.4.dp, top = 13.2.dp, bottom = 8.dp)
+                    .border(0.8.dp, LocalFieldLine.current, RoundedCornerShape(17.2.dp))
+                    .background(LocalField.current, RoundedCornerShape(17.2.dp))
+                    .padding(start = 10.2.dp, end = 11.dp, top = 11.dp, bottom = 11.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Outlined.Search, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(19.dp))
+                Spacer(Modifier.width(0.4.dp))
+                androidx.compose.foundation.text.BasicTextField(
+                    value = nameFilter,
+                    onValueChange = { nameFilter = it },
+                    singleLine = true,
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 15.sp, color = LocalText.current),
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+        if (visible.isEmpty()) {
+            /*
+             * The reference's own empty page, in its own words.
+             *
+             * Measured off Claude's projects page at 400dpi: its tray mark is
+             * centred on the column, 「暂无项目」 runs x 146.4..213.6 at y
+             * 416.4..440.4 (24 tall - 17sp, medium), and the sentence under it
+             * runs 61.6..298.4 at 448.4..469.6 (21.2 - 13sp). This said
+             * 「添加一个文件夹，把它的对话归在一起。」, which is this app's own
+             * explanation of its own feature rather than the reference's line;
+             * the reference says 「您创建或加入的项目将显示在此处。」 - what the
+             * page is for, not how to work it.
+             */
+            Column(
+                Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 168.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                /*
+                 * The tray, at 56 dp of ink.
+                 *
+                 * Measured on the reference's empty projects page: the mark runs
+                 * 56.0 wide by 29.2 tall. The path fills the 24 grid to 20, so a
+                 * declared 40 drew 33.3 - two thirds of it, and the empty page's
+                 * centrepiece came out smaller than the sentence under it.
+                 */
+                /*
+                 * Three parts of three different widths, not two rules and a tray.
+                 *
+                 * Measured on the reference's empty 项目 page at 400 dpi:
+                 *
+                 *   upper rule   y 321.6..326.0   x 159.2..200.4   41.2 wide
+                 *   lower rule   y 335.2..340.0   x 152.0..207.6   55.6 wide
+                 *   tray         y 348.8..394.8   x 146.0..213.6   67.6 wide, 46 tall
+                 *
+                 * So the rules widen downward and the tray is widest - a hopper
+                 * seen from the front, which is what the reference draws. This
+                 * had `M2 2.6h20M2 8.2h20` - two rules of equal width - and read
+                 * as a menu glyph rather than a container.
+                 *
+                 * Scaled to a 24 grid on the tray's 67.6: the rules are 14.6 and
+                 * 19.7 wide, centred on 12; the tray spans 2.3..21.7 and is 16.3
+                 * tall with 3.7 of taper.
+                 */
+                MiIcon(
+                    "M4.7 1.6h14.6M2.2 6.4h19.7M2.3 12h19.4l-3.5 10.4H5.8z",
+                    contentDescription = null,
+                    modifier = Modifier.size(67.6.dp),
+                    viewBox = 24f,
+                    strokeWidth = 1.6f,
+                    tint = LocalMuted.current,
+                )
+                /*
+                 * 25.6 and 16.4, measured off the reference's own empty 项目 page:
+                 * its mark ends at 394.8, 暂无项目 runs 420.4..435.6 and the line
+                 * under it starts at 452.0. The 14 and 8 here pulled the three
+                 * lines into a tight block that read as one paragraph.
+                 */
+                Spacer(Modifier.height(25.6.dp))
+                Text("暂无项目", fontSize = 17.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
+                Spacer(Modifier.height(16.4.dp))
+                Text(
+                    "您创建或加入的项目将显示在此处。",
+                    fontSize = 13.sp,
+                    lineHeight = 21.2.sp,
+                    color = LocalMuted.current,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                )
             }
         }
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 18.dp, end = 18.dp, top = 6.dp, bottom = 20.dp)) {
-            items(rows.size) { index ->
-                val row = rows[index]
+            items(visible.size) { index ->
+                val row = visible[index]
                 Box(Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
                     Row(
                         Modifier
@@ -7209,31 +10820,50 @@ fun ProjectsScreen(
         }
         // The two ways a project comes into being, at the foot of the page the
         // way the desktop's home carries them.
+        /*
+         * A right-hand capsule, not two full-width buttons.
+         *
+         * The reference's projects page carries one dark pill at the foot of the
+         * column - 「+ 新建项目」, 122.8 wide and 40 tall, its right edge 16.4
+         * from the column's own - and it has no second button because its only
+         * way in is "make a blank project". MCode has two ways in from the
+         * desktop (a blank folder, or a path that already exists), so both stay:
+         * the primary keeps the reference's capsule and the second becomes the
+         * text control the reference would use for a secondary action.
+         */
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            Modifier.fillMaxWidth().padding(start = 18.dp, end = 16.4.dp, top = 10.dp, bottom = 10.dp),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = LocalPill.current,
-                modifier = Modifier.weight(1f).clickable { creating = true },
+            Row(
+                Modifier
+                    .clip(RoundedCornerShape(22.dp))
+                    .clickable { adding = true; addDraft = "" }
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(Modifier.padding(vertical = 10.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.Add, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(15.dp))
-                    Spacer(Modifier.width(5.dp))
-                    Text("新建空白项目", fontSize = 13.sp, color = LocalText.current)
-                }
+                Icon(Icons.Outlined.FolderOpen, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(5.dp))
+                Text("添加文件夹", fontSize = 13.sp, color = LocalMuted.current)
             }
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = LocalPill.current,
-                modifier = Modifier.weight(1f).clickable { adding = true; addDraft = "" },
+            Spacer(Modifier.width(8.dp))
+            Row(
+                Modifier
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(LocalText.current)
+                    .clickable { creating = true }
+                    .padding(horizontal = 16.dp, vertical = 10.5.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(Modifier.padding(vertical = 10.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Outlined.FolderOpen, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(15.dp))
-                    Spacer(Modifier.width(5.dp))
-                    Text("添加文件夹", fontSize = 13.sp, color = LocalText.current)
-                }
+                Icon(Icons.Filled.Add, contentDescription = null, tint = LocalBg.current, modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    "新建项目",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = LocalBg.current,
+                )
             }
         }
         Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
@@ -7356,7 +10986,7 @@ fun ProjectsScreen(
 }
 
 /** Which page the left column is showing. Claude switches between them in place. */
-enum class LeftMode { Sessions, Projects, Artifacts, Plugins }
+enum class LeftMode { Recent, Sessions, Projects, Artifacts, Scheduled, Plugins, Settings }
 
 /**
  * The black capsule at the foot of the column.
@@ -7367,13 +10997,31 @@ enum class LeftMode { Sessions, Projects, Artifacts, Plugins }
  */
 @Composable
 fun FootCapsule(label: String, enabled: Boolean = true, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    /*
+     * Measured at the pad's 2.5 px per dp: 123.2 x 44.0, its right edge 26.4 dp
+     * in from the column's 370. This drew 107.6 x 26.8 - the width followed
+     * from the old 18dp of inset on a 14sp label, and the height from 10dp of
+     * vertical padding over a line that was itself too small. The capsule read
+     * as a chip beside Claude's button.
+     */
     Surface(
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(22.dp),
         color = if (enabled) LocalText.current else LocalMuted.current.copy(alpha = 0.4f),
-        modifier = Modifier.padding(top = 8.dp, bottom = 10.dp).then(modifier).clickable(enabled = enabled) { onClick() },
+        modifier = Modifier.padding(top = 8.dp, bottom = 16.dp).then(modifier).clickable(enabled = enabled) { onClick() },
     ) {
-        Row(Modifier.padding(horizontal = 18.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(label, fontSize = 14.sp, color = LocalBg.current)
+        /*
+         * A fixed 44.0 dp, not padding over a line of text.
+         *
+         * The vertical padding was doing the job and could not finish it: 19.2
+         * either side over a 16sp line measures 40.8, three dp short of the
+         * reference, because the line's own height is not the font size and
+         * changes with the face. The height is the measurement, so it is set.
+         */
+        Row(
+            Modifier.height(44.dp).padding(horizontal = 22.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(label, fontSize = 16.sp, color = LocalBg.current)
         }
     }
 }
@@ -7623,6 +11271,14 @@ fun ArtifactsScreen(
     onRefresh: () -> Unit,
     onOpen: (String, String) -> Unit,
     onClose: () -> Unit,
+    /*
+     * True when the caller already owns the window: on a wide screen these
+     * pages are the left column's content, so they must not paint the page
+     * colour under the whole screen or add a status-bar spacer for a bar the
+     * column has already cleared.
+     */
+    embedded: Boolean = false,
+    modifier: Modifier = Modifier,
 ) {
     var grid by remember { mutableStateOf(true) }
     val rows = remember(groups) { artifactRows(groups) }
@@ -7636,36 +11292,137 @@ fun ArtifactsScreen(
     val shown = if (needle.isEmpty()) rows else rows.filter { it.name.lowercase().contains(needle) }
     val now = remember { System.currentTimeMillis() }
 
-    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
-        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(44.dp).clickable { onClose() }, contentAlignment = Alignment.Center) {
-                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回", tint = LocalText.current, modifier = Modifier.size(20.dp))
+    Column(
+        modifier.then(if (embedded) Modifier.fillMaxSize() else Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)),
+    ) {
+        if (!embedded) Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+        /*
+         * The reference's artifacts header: burger, Artifacts centred on the
+         * column, one mark on the right.
+         *
+         * Measured at 400dpi: 「Artifacts」 runs x 143.6..216.4 (centre 180.0)
+         * and the filter's target 316.0..356.0 on y 44.8..84.8. This header was
+         * a bare 44dp back arrow over a 24sp title, which is a pushed screen's
+         * shape; the page is one of the four the drawer switches between.
+         *
+         * What follows it is not the reference's: its page is one 334-wide
+         * search field and an empty mark, while this one carries the desktop's
+         * own anatomy - a title, a sentence, the kind chips and the layout
+         * switch, all of which filter or re-draw the list and none of which the
+         * reference has because its Artifacts page has nothing to filter yet.
+         */
+        Box(Modifier.fillMaxWidth().height(63.2.dp)) {
+            Text(
+                "Artifacts",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
+                color = LocalText.current,
+                maxLines = 1,
+                softWrap = false,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                /* +2.4, as the projects page: the row's end padding is asymmetric. */
+                /*
+                 * A stated height, not fillMaxSize+wrapContentHeight.
+                 *
+                 * Those two fight in a fixed-height Box: fillMaxSize claims the
+                 * whole 63.2 and wrapContentHeight then asks the text for its
+                 * own, which resolved to nothing here - the title drew no ink at
+                 * all and the header showed only its burger. Same fault as the
+                 * home header two passes ago, in a second place.
+                 */
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(63.2.dp)
+                    .align(Alignment.Center)
+                    .wrapContentHeight(Alignment.CenterVertically)
+                    .offset(x = 2.4.dp),
+            )
+            Row(
+                Modifier.fillMaxWidth().height(63.2.dp).padding(start = 1.6.dp, end = 4.4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(Modifier.size(44.dp).clickable { onClose() }, contentAlignment = Alignment.Center) {
+                    MiIcon(
+                        "M0.95 2.6h22.1M0.95 12h22.1M0.95 21.4h11.05",
+                        contentDescription = "菜单",
+                        modifier = Modifier.size(16.4.dp),
+                        viewBox = 24f,
+                        strokeWidth = 1.9f,
+                        tint = LocalText.current,
+                    )
+                }
+                Spacer(Modifier.weight(1f))
+                Box(
+                    Modifier.size(40.dp).clickable { grid = !grid },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    /*
+                     * The same three-stem slider as the projects page, because
+                     * the reference draws the same mark on both - measured at
+                     * x 328.0, 16.0 wide on this page, and x 328.0, 15.6 wide on
+                     * the projects one. This was the funnel again, so the two
+                     * pages disagreed with each other as well as with Claude.
+                     */
+                    MiIcon(
+                        "M4.8 1.2V5.8M4.8 12.2V22.8M12 1.2V11.8M12 18.2V22.8M19.2 1.2V5.8M19.2 12.2V22.8" +
+                            "M2.4 9a2.4 2.4 0 1 0 4.8 0a2.4 2.4 0 1 0-4.8 0" +
+                            "M9.6 15a2.4 2.4 0 1 0 4.8 0a2.4 2.4 0 1 0-4.8 0" +
+                            "M16.8 9a2.4 2.4 0 1 0 4.8 0a2.4 2.4 0 1 0-4.8 0",
+                        contentDescription = if (grid) "列表视图" else "网格视图",
+                        modifier = Modifier.size(22.6.dp),
+                        viewBox = 24f,
+                        strokeWidth = 1.8f,
+                        tint = LocalText.current,
+                    )
+                }
             }
         }
         LazyColumn(
             Modifier.fillMaxWidth().weight(1f),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 40.dp, end = 40.dp, top = 14.dp, bottom = 40.dp),
+            /*
+             * 16 either side, as the reference: its field and card both run
+             * x 16.0..343.6. This used 40, which is where the 40.0 x-start of
+             * every row came from.
+             */
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 16.dp, end = 16.dp, top = 0.8.dp, bottom = 40.dp),
         ) {
             item {
-                Text("产物中心", fontSize = 24.sp, lineHeight = 30.sp, color = LocalText.current)
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    "这里汇总了你在 MCode 里生成过的全部产物，可预览、下载或回到对话继续",
-                    fontSize = 13.sp,
-                    lineHeight = 20.sp,
-                    color = LocalMuted.current,
-                )
-                Spacer(Modifier.height(16.dp))
-                // The search field: 36dp tall on the desktop, a hairline pill.
+                /*
+                 * No page heading and no blurb.
+                 *
+                 * Photographed on the reference's artifacts page with a real
+                 * artifact in it: the bar says Artifacts, and the page goes
+                 * straight to the search field at y 104.8 - no 「产物中心」, no
+                 * sentence under it. This opened with a 24sp heading and two
+                 * lines of explanation, which pushed the field from 104.8 to
+                 * 210.4 and made the page read as a marketing screen rather than
+                 * a shelf.
+                 */
+                /*
+                 * The field is a 56 dp capsule, as the reference draws it.
+                 *
+                 * Measured on Claude's artifacts page: the box runs y
+                 * 262..401 px - 56.0 dp tall - from 16.0 dp in to 56.4 dp short
+                 * of the far edge, with fully rounded ends. This was a 36 dp
+                 * rounded rectangle at 8 dp, which read as a form control rather
+                 * than the page's one piece of furniture.
+                 */
                 OutlinedTextField(
                     query,
                     onQuery,
-                    Modifier.fillMaxWidth().heightIn(min = 36.dp),
-                    placeholder = { Text("搜索产物", fontSize = 13.sp, color = LocalMuted.current) },
-                    leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(15.dp)) },
-                    shape = RoundedCornerShape(8.dp),
-                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp),
+                    Modifier.fillMaxWidth().height(56.dp),
+                    placeholder = { Text("搜索 Artifacts", fontSize = 15.sp, color = LocalMuted.current) },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Outlined.Search,
+                            contentDescription = null,
+                            tint = LocalMuted.current,
+                            /* 22, because Material's glyph draws three quarters of its grid. */
+                            modifier = Modifier.size(22.dp),
+                        )
+                    },
+                    shape = RoundedCornerShape(28.dp),
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 15.sp),
                     colors = OutlinedTextFieldDefaults.colors(
                         unfocusedContainerColor = LocalField.current,
                         focusedContainerColor = LocalField.current,
@@ -7675,40 +11432,16 @@ fun ArtifactsScreen(
                     singleLine = true,
                 )
                 Spacer(Modifier.height(12.dp))
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        for ((key, label, count) in listOf(
-                            Triple("", "全部", facets?.optInt("total") ?: 0),
-                            Triple("doc", "文档", facets?.optInt("doc") ?: 0),
-                            Triple("app", "应用", facets?.optInt("app") ?: 0),
-                            Triple("other", "其他", facets?.optInt("other") ?: 0),
-                        )) {
-                            val on = category == key
-                            Surface(
-                                shape = RoundedCornerShape(10.dp),
-                                color = if (on) LocalPill.current else Color.Transparent,
-                                modifier = Modifier.clickable { onCategory(key) },
-                            ) {
-                                Row(Modifier.padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Text(label, fontSize = 14.sp, color = if (on) LocalText.current else LocalMuted.current)
-                                    if (!loading) {
-                                        Spacer(Modifier.width(5.dp))
-                                        Text("$count", fontSize = 12.sp, color = LocalMuted.current)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    // MiMo's two layouts, at the end of the filter row.
-                    Box(Modifier.size(30.dp).clickable { grid = !grid }, contentAlignment = Alignment.Center) {
-                        Icon(
-                            if (grid) Icons.AutoMirrored.Outlined.Article else Icons.Outlined.Folder,
-                            contentDescription = if (grid) "列表视图" else "网格视图",
-                            tint = LocalMuted.current,
-                            modifier = Modifier.size(16.dp),
-                        )
-                    }
-                }
+                /*
+                 * No filter row and no layout toggle.
+                 *
+                 * The reference's artifacts page holds the search field and then
+                 * its cards - measured, the field ends at 160.4 and the first
+                 * card starts at 180.8, with nothing between. This put a row of
+                 * category pills (全部 19 / 文档 5 / 应用 0 / 其他 …) and a
+                 * grid-or-list switch in that 20 dp. Neither exists on the
+                 * reference; the pills also cost a row of height on every visit.
+                 */
                 Spacer(Modifier.height(10.dp))
             }
             if (failed) {
@@ -7730,16 +11463,25 @@ fun ArtifactsScreen(
                     Text("还没有任何产物，去对话里生成一些吧。", fontSize = 13.sp, color = LocalMuted.current, modifier = Modifier.padding(vertical = 32.dp))
                 }
             } else if (grid) {
-                // Three across with 14 between, as MiMo lays its grid.
-                for (chunk in shown.chunked(3)) {
+                /*
+                 * One card per row, horizontal - the reference's own shape.
+                 *
+                 * Photographed with a real artifact in it: the card runs x
+                 * 16.0..343.6 by y 180.8..279.2 - 327.6 wide, 98.4 tall - with a
+                 * 155.2 x 86.4 thumbnail well inset 8 from the card's left, its
+                 * lower-left corner carrying a violet brush badge, and three
+                 * lines of text starting at x 172.0: the title at 197.6, a lock
+                 * with the visibility note at 222.0, and the age at 252.4.
+                 *
+                 * This laid three square tiles across, each with its mark
+                 * centred in a 96 dp well above the name. A shelf of documents
+                 * reads better as rows than as a photo grid, and a row gives the
+                 * title room to be a title.
+                 */
+                for (row in shown) {
                     item {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                            for (row in chunk) {
-                                ArtifactTile(row, now, Modifier.weight(1f)) { onOpen(row.root, row.path) }
-                            }
-                            repeat(3 - chunk.size) { Spacer(Modifier.weight(1f)) }
-                        }
-                        Spacer(Modifier.height(14.dp))
+                        ArtifactCard(row, now) { onOpen(row.root, row.path) }
+                        Spacer(Modifier.height(8.dp))
                     }
                 }
             } else {
@@ -7762,36 +11504,176 @@ fun ArtifactsScreen(
     }
 }
 
-/** MiMo's tile: a well with the mark and its kind, the name under it, the age and conversation at the foot. */
+/**
+ * The reference's artifact record: a thumbnail well on the left, three lines on
+ * the right.
+ *
+ * Measured at 400 dpi on its own artifacts page - card 327.6 x 98.4, well
+ * 155.2 x 86.4 inset 8 from the left, the badge 11.6 across at the well's
+ * lower-left, and the text column starting 18.8 past the well's right edge with
+ * its lines at 197.6, 222.0 and 252.4.
+ *
+ * The well carries the artifact's own preview when there is one; with none to
+ * show it keeps the page tint and puts the kind's mark in the middle, which is
+ * what the reference does for a record it cannot render.
+ */
 @Composable
-private fun ArtifactTile(row: ArtRow, now: Long, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Column(
-        modifier
+private fun ArtifactCard(row: ArtRow, now: Long, onClick: () -> Unit) {
+    /*
+     * The reference's record, measured off its own artifacts page at 400 dpi.
+     *
+     *   card    x 16.0..343.6   y 180.8..279.2   327.6 x 98.4
+     *   well    x 28.0..140.0   y 192.8..267.6   112.0 x 74.8
+     *   title   x 152.8..269.2  y 197.6..211.2
+     *   lock    x 154.4..165.2, then 仅您可见 at 172.4..222.0, y 221.6..234.0
+     *   edited  x 152.8..228.0  y 252.0..263.6
+     *
+     * Two of my earlier numbers were wrong and between them drew a card 14.4
+     * taller than the reference's. The well is 112 x 74.8, not 155.2 x 86.4 -
+     * a vertical scan at x=80dp puts its fill from 192.8 to 267.6 and a
+     * horizontal one at y=224 puts its edges at 28.0 and 140.0. And the card's
+     * inset is 12, from 16.0 to 28.0 and from 180.8 to 192.8, not 8.
+     */
+    Row(
+        Modifier
+            .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
-            .background(MaterialTheme.colorScheme.surface)
-            .border(1.dp, if (LocalBg.current == DarkBg) Color(0xFF2C2C2B) else Color(0xFFE4E1D8), RoundedCornerShape(14.dp))
-            .clickable { onClick() },
+            /*
+             * No fill. Sampled inside the reference's own card at x 200 y 224:
+             * (249,249,247) - the page's own colour. The card is a 1 dp outline
+             * and nothing else, and the only thing darker on it is the
+             * thumbnail well at (237,237,235). This filled with surface
+             * (254,254,254), which made every record read as a white tile
+             * floating above a grey page.
+             */
+            .border(1.dp, if (LocalBg.current == DarkBg) Color(0xFF2C2C2B) else Color(0xFFE1E1DF), RoundedCornerShape(14.dp))
+            .clickable { onClick() }
+            .padding(start = 12.dp, end = 12.dp, top = 10.6.dp, bottom = 10.6.dp),
+        verticalAlignment = Alignment.Top,
     ) {
         Box(
-            Modifier.fillMaxWidth().height(96.dp).background(LocalBg.current),
+            Modifier
+                .width(112.dp)
+                .height(74.8.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(if (LocalBg.current == DarkBg) Color(0xFF262625) else Color(0xFFEDEDEB)),
             contentAlignment = Alignment.Center,
         ) {
-            Canvas(Modifier.size(38.dp)) { row.badge.glyph(this) }
-            Row(
-                Modifier.align(Alignment.BottomStart).padding(8.dp)
-                    .background(row.badge.fg.copy(alpha = 0.12f), RoundedCornerShape(6.dp))
-                    .padding(horizontal = 6.dp, vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            Canvas(Modifier.size(26.dp)) { row.badge.glyph(this) }
+            /*
+             * The palette sticker, at the well's lower-left corner.
+             *
+             * A 23.6 square flush with the well's own left edge and standing on
+             * its bottom edge - x 28.0..51.6, y 243.6..267.2 against a well that
+             * runs to 267.6. Not a circle overhanging the corner, which is what
+             * I drew first off the thumbnail.
+             *
+             * Enlarged 6x, the mark inside is a palette: a rounded body with a
+             * notch bitten out at its lower right and four dots on its face, in
+             * #5C50AC on a #DEDBFA ground. It marks the record as something the
+             * model drew rather than something the reader wrote.
+             */
+            Box(
+                Modifier
+                    .align(Alignment.BottomStart)
+                    .size(23.6.dp)
+                    .background(Color(0xFFDEDBFA), RoundedCornerShape(4.dp)),
+                contentAlignment = Alignment.Center,
             ) {
-                Box(Modifier.size(5.dp).background(row.badge.fg, CircleShape))
-                Spacer(Modifier.width(4.dp))
-                Text(row.badge.label, fontSize = 10.sp, color = row.badge.fg)
+                Canvas(Modifier.size(15.2.dp)) {
+                    val ink = Color(0xFF5C50AC)
+                    val w = 1.5f * density
+                    val path = androidx.compose.ui.graphics.Path().apply {
+                        moveTo(size.width * 0.10f, size.height * 0.52f)
+                        cubicTo(
+                            size.width * 0.10f, size.height * 0.18f,
+                            size.width * 0.90f, size.height * 0.18f,
+                            size.width * 0.90f, size.height * 0.52f,
+                        )
+                        cubicTo(
+                            size.width * 0.90f, size.height * 0.74f,
+                            size.width * 0.72f, size.height * 0.80f,
+                            size.width * 0.60f, size.height * 0.72f,
+                        )
+                        lineTo(size.width * 0.52f, size.height * 0.90f)
+                        cubicTo(
+                            size.width * 0.34f, size.height * 0.96f,
+                            size.width * 0.10f, size.height * 0.82f,
+                            size.width * 0.10f, size.height * 0.52f,
+                        )
+                        close()
+                    }
+                    drawPath(path, ink, style = androidx.compose.ui.graphics.drawscope.Stroke(w))
+                    /*
+                     * Four dots, floating inside the body rather than touching
+                     * its edge - the first build put the upper row at 0.40 of the
+                     * height, which is where the outline runs, so they read as
+                     * notches cut out of the stroke.
+                     */
+                    for (fx in listOf(0.36f, 0.54f, 0.72f)) {
+                        drawCircle(ink, radius = 1.15f * density, center = androidx.compose.ui.geometry.Offset(size.width * fx, size.height * 0.44f))
+                    }
+                    drawCircle(ink, radius = 1.15f * density, center = androidx.compose.ui.geometry.Offset(size.width * 0.31f, size.height * 0.62f))
+                }
             }
         }
-        Column(Modifier.padding(horizontal = 11.dp, vertical = 9.dp)) {
-            Text(row.name, fontSize = 13.sp, color = LocalText.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Spacer(Modifier.height(2.dp))
-            Text(artifactWhen(row.at, now), fontSize = 11.sp, color = LocalMuted.current)
+        Spacer(Modifier.width(12.8.dp))
+        /*
+         * The three lines are placed by their own ink positions, not stacked
+         * with equal spacers. Measured on the reference: title ink at 197.6,
+         * 仅您可见 at 221.6, 编辑于 at 252.0 - that is 24.0 then 30.4 apart,
+         * and the title sits 4.8 under the well's top.
+         *
+         * First build of this card: 34.4 and 36.0 apart, with the title's ink
+         * 11.2 under the well instead of 4.8. So the offsets below come from
+         * those four numbers - the block rides up 6.4, and the two gaps give up
+         * 10.4 and 5.6.
+         */
+        Column(Modifier.offset(y = (-3.6).dp)) {
+            Text(
+                row.name,
+                fontSize = 15.sp,
+                color = LocalText.current,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(0.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                /*
+                 * The padlock is drawn from a colour read outside the draw scope:
+                 * a Canvas lambda is not composable, so `LocalMuted.current`
+                 * cannot be called inside it.
+                 */
+                val lockInk = LocalMuted.current
+                Canvas(Modifier.size(10.8.dp)) {
+                    val ink = lockInk
+                    val w = 1.3f * density
+                    drawRoundRect(
+                        ink,
+                        topLeft = androidx.compose.ui.geometry.Offset(size.width * 0.16f, size.height * 0.44f),
+                        size = androidx.compose.ui.geometry.Size(size.width * 0.68f, size.height * 0.48f),
+                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(size.width * 0.14f),
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(w),
+                    )
+                    drawArc(
+                        ink,
+                        startAngle = 180f,
+                        sweepAngle = 180f,
+                        useCenter = false,
+                        topLeft = androidx.compose.ui.geometry.Offset(size.width * 0.28f, size.height * 0.10f),
+                        size = androidx.compose.ui.geometry.Size(size.width * 0.44f, size.height * 0.44f),
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(w),
+                    )
+                }
+                Spacer(Modifier.width(7.2.dp))
+                Text("\u4ec5\u60a8\u53ef\u89c1", fontSize = 11.2.sp, color = LocalMuted.current)
+            }
+            Spacer(Modifier.height(6.4.dp))
+            Text(
+                "\u7f16\u8f91\u4e8e " + artifactWhen(row.at, now),
+                fontSize = 11.2.sp,
+                color = LocalMuted.current,
+            )
         }
     }
 }
@@ -8247,18 +12129,25 @@ fun AccessPill(level: String, onPick: (String) -> Unit, fullAllowed: Boolean = t
     }
     val tint = if (level == "full") MaterialTheme.colorScheme.primary else LocalText.current
     val caret = LocalMuted.current
+    /*
+     * `.pill` again, as the model pill is: 28 tall, a 6 corner, 11 of inline
+     * padding. This carried a 17 corner and 12/8 of padding, so the access
+     * pill stood 60px tall on the pad against the model pill's 50 and the two
+     * read as different kinds of control on the same row.
+     */
     Box {
         Row(
             Modifier
-                .clip(RoundedCornerShape(17.dp))
+                .height(24.dp)
+                .clip(RoundedCornerShape(50))
                 .background(LocalPill.current)
                 .clickable { open = true }
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+                .padding(horizontal = 11.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             AccessGlyphs(level, tint)
             Spacer(Modifier.width(6.dp))
-            Text(word, fontSize = 13.sp, color = tint)
+            Text(word, fontSize = 13.sp, lineHeight = 20.sp, color = tint)
             /*
              * The desktop's caret is a 16 unit chevron at the weaker text
              * colour, not a Material arrow: a filled triangle would read as a
@@ -8368,6 +12257,8 @@ fun AccessPill(level: String, onPick: (String) -> Unit, fullAllowed: Boolean = t
 fun InputCapsule(
     enabled: Boolean,
     modelLabel: String,
+    /** An open conversation, which only changes the placeholder's words. */
+    hasSession: Boolean = false,
     /** What the last turn spent, and the model's window - the desktop's ring. */
     contextUsed: Int = 0,
     contextLimit: Int = 0,
@@ -8476,16 +12367,53 @@ fun InputCapsule(
         }
     }
     /*
-     * Claude's composer is a little off centre: on the pad its card runs
-     * x=1034..3333 in a pane from 925 to 3408 - 44dp of air on the left and
-     * 30dp on the right, a card 920dp wide. Measured on the card's clean top
-     * edge (y=1950); a row through its text gives white runs broken by the
-     * glyphs and reads far narrower if you take the longest one.
+     * The card's inset from its pane, re-measured at the pad's real density.
      *
-     * This used to be 118/113, symmetric, which is 1.5dp from the truth on the
-     * right and 74dp from it on the left.
+     * Every figure in this file used to be divided by 3.156 - the screenshot's
+     * nominal 1080 against the pad's 3408 - which is not a dp. The pad reports
+     * 400 dpi, so a dp is 2.5 px, and dividing by 3.156 inflated every reading
+     * by 26%. Checked by inverting a number this app sets itself: a transcript
+     * inset of 112 dp inside a pane starting at 925 px predicts 1205 px, and the
+     * screenshot shows 1207.
+     *
+     * At 2.5, Claude's card runs x=1226..3141 in a pane from 935: 116.4 dp of
+     * air on the left, 106.8 on the right, 766.4 wide. This had 12.7 and 12.0,
+     * which made the card 964 dp wide - 200 dp, a quarter, wider than the
+     * reference, and why its contents looked spread out where Claude's are
+     * gathered.
+     *
+     * Height 246 px is 98.4 dp; the card's foot sits 83 px - 33.2 dp - above the
+     * screen's. This carried 12.8 for that gap, less than half.
+     *
+     * The 33.2 is measured from the screen's own edge, and the row already
+     * carries the navigation-bar inset (`windowInsetsPadding` on the Row at the
+     * top of the wide layout, 16.8 dp of gesture bar on this pad). Spending the
+     * whole 33.2 here on top of that inset put the card's foot 50 dp up the
+     * screen - measured on the rebuilt build - so what belongs here is the
+     * difference.
      */
-    Box(modifier.fillMaxWidth().padding(start = 44.dp, end = 30.dp, top = 8.dp, bottom = 8.dp)) {
+    /*
+     * The card's own margins, measured off the reference rather than guessed.
+     *
+     * On the pad Claude's composer sits 10.4 dp from its pane's right edge and
+     * 12 dp from the left, and it is the whole width between them. This used to
+     * be 116.4 and 106.8 - figures read from a different window size - and they
+     * were applied inside the conversation pane after it had already been
+     * narrowed by the two-pane split, so the card lost 106.8 dp off a pane that
+     * was itself only 74% of the screen: it ended up 101.6 dp short of the right
+     * edge against the reference's 10.4.
+     */
+    /*
+     * 36.8 in from the pane's left, 13.2 from its right.
+     *
+     * The comment above says 59dp on the pad, which is what the desktop's
+     * composer uses inside its own column - but this card sits in a pane that is
+     * already inset, and measured on A_claude.png it runs x 396.8..1350.0 with
+     * the pane starting at 360.0: 36.8 left, 13.2 right. At 12/16 the card was
+     * 24.8dp wide of where the reference puts it and its left edge nearly
+     * touched the column rule.
+     */
+    Box(modifier.fillMaxWidth().padding(start = 36.8.dp, end = 13.2.dp, top = 8.dp, bottom = 16.4.dp)) {
         /*
          * The @ menu, over the box exactly where the slash menu sits: a file
          * named and chosen here goes into the words as its relative path, which
@@ -8599,27 +12527,68 @@ fun InputCapsule(
         }
         Surface(
             /*
-             * `.box`'s own 10px corner (`Composer.vue`), not the 20 this carried:
-             * at 20 the card reads as a pill sunk into the page rather than as
-             * the sheet the desktop lifts off it.
+             * Sampled off Claude's own composer on this pad, which is the thing
+             * being copied - the desktop stylesheet describes a different
+             * design at this size, and following it put the wrong fill, the
+             * wrong edge and 15dp of extra height into the box.
+             *
+             *   fill    #FEFEFE   (not #FFFFFF: a page of #F9F9F7 wants the
+             *                       card one step off white, not pure white)
+             *   edge    1px #DCDCDC, a crisp line, not a 6% ink
+             *   corner  22.4, from the fill's own profile: at 2.5 px per dp the
+             *           corner takes 56 px to reach the card's left edge
+             *   drop    0 1px 2px #0000000d, 0 6px 18px #0000001b
              */
-            shape = RoundedCornerShape(10.dp),
-            color = MaterialTheme.colorScheme.surface,
-            // Claude's card carries a hairline: 220,220,220 on the pad, two
-            // pixels wide at 400dpi, which is what separates a white plate from
-            // a page that is almost as white.
-            border = androidx.compose.foundation.BorderStroke(1.dp, if (LocalBg.current == DarkBg) Color(0xFF2C2C2B) else Color(0xFFDCDCDC)),
+            shape = RoundedCornerShape(22.4.dp),
+            color = if (LocalBg.current == DarkBg) Color(0xFF1F1F1F) else Color(0xFFFEFEFE),
             /*
-             * `.box` carries `--shadow-md`: a 1px drop in light, and in dark
-             * three lifts at once - 2/4, 1/2 and a half-pixel white inner edge
-             * that is what actually separates the card from a page a shade
-             * lighter than it. Elevation alone gives the drop; the white inner
-             * line has to be drawn.
+             * 0.6dp of edge, not 1: the reference's is two pad pixels at this
+             * density, and `3` here read as a drawn border rather than as the
+             * card's own lip. Measured across the top edge: 220,220,220 twice
+             * on the reference against three times here.
              */
-            shadowElevation = if (LocalBg.current == DarkBg) 4.dp else 2.dp,
-            modifier = Modifier.fillMaxWidth(),
+            border = androidx.compose.foundation.BorderStroke(
+                0.6.dp,
+                if (LocalBg.current == DarkBg) Color(0xFF2E2E2E) else Color(0xFFDCDCDC),
+            ),
+            /*
+             * 4, not 6. Compose's elevation falls in every direction, and at 6
+             * the wash above the card was visible - 249 easing down to 241 over
+             * 6px - where the reference has nothing above it and its whole drop
+             * below. Lower is the only lever `Surface` gives toward a shadow
+             * that only goes down.
+             */
+            shadowElevation = if (LocalBg.current == DarkBg) 2.dp else 4.dp,
+            /*
+             * 766.4 inside a 1003.2 pane, centred: 130.4 left, 106.8 right.
+             *
+             * Measured on the reference's own conversation - its composer's
+             * white card runs x 490.4..1256.4. This filled the pane minus 12 of
+             * padding, so the card ran 951.6 wide with its right edge 14.4 from
+             * the seam where the reference leaves a tenth of the screen empty.
+             * The composer's width is what makes the transcript read as a column
+             * rather than as a wall, and it is the last thing on the page to
+             * look wrong when everything else has been matched.
+             */
+            modifier = Modifier
+                .fillMaxWidth()
+                /*
+                 * 78.4 / 78.0, not 130.4 / 106.8: a second inset already sits
+                 * between the pane and this card - measured, the card landed at
+                 * 182.4 from the seam against the reference's 130.4, so 52 of
+                 * the intended inset was being applied twice.
+                 */
+                .padding(start = 78.4.dp, end = 78.dp),
         ) {
-            Column(Modifier.padding(horizontal = 0.dp, vertical = 0.dp)) {
+            /*
+             * 8 of inset at each side, 7.6 under the control row.
+             *
+             * Measured at 2.5 px per dp: the card is 98.4 tall; its control row
+             * runs 55.2 to 92.4 from the top, leaving 7.6 beneath it. The
+             * placeholder's ink starts 15.2 down. Bottom was 16 here, which made
+             * the card 102 tall - 3.6 too much - and pushed the whole row up.
+             */
+            Column(Modifier.padding(start = 8.dp, end = 8.dp, top = 3.dp, bottom = 7.6.dp)) {
                 /*
                  * Queued prompts, oldest first, above the field: a line each with
                  * the words, a send-now arrow and an × to withdraw. The desktop
@@ -8704,56 +12673,217 @@ fun InputCapsule(
                     }
                     Spacer(Modifier.height(4.dp))
                 }
-                OutlinedTextField(
-                    text, { text = it },
+                /*
+                 * Measured against Claude's own composer on this pad by row
+                 * projection over the box - the desktop stylesheet describes a
+                 * different design at this size, and the two gaps are where it
+                 * shows most:
+                 *
+                 *   placeholder from the box's top   15.8dp   (was 24.1 here)
+                 *   control row from the box's top   44.0dp   (was 79.9 here)
+                 *   gap between the two rows         28dp     (was 56 here)
+                 *
+                 * The empty middle was the single most visible difference: the
+                 * card read as a mostly-blank panel with a toolbar pinned to
+                 * its floor.
+                 */
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        /*
+                         * 12 from the card's inner edge (8 + 4) so the text
+                         * starts 16.8 in, and 12.2 above it - the placeholder's
+                         * ink begins 15.2 below the card's top, and this area
+                         * begins 3 down.
+                         */
+                        .padding(start = 12.dp, end = 12.dp, top = 12.2.dp, bottom = 0.dp)
+                        /*
+                         * The whole card is 78dp: 1 of border, 8 of the card's
+                         * own inset both sides, 8 above the words and 6 below
+                         * them leaves 55 for the writing area. Written as the sum
+                         * rather than a round number so the arithmetic stays
+                         * visible - an earlier `78 - 18` produced a 109dp box
+                         * because the card's own 8 was not in it.
+                         */
+                        /*
+                         * 41.4, fitted rather than derived.
+                         *
+                         * The card's 98.4 splits as 3 of the column's top inset,
+                         * this box, the 35.2 control row, 7.6 beneath it and the
+                         * 1.2 border - but Compose's own text metrics put
+                         * another 10 into the result, so 51.4 produced 108.4 and
+                         * the card sat a full centimetre high. Measured back off
+                         * the build: 41.4 lands the card at 98.4.
+                         */
+                        .heightIn(min = 41.4.dp, max = 190.dp),
+                ) {
                     /*
-                     * Claude's phone composer says what a send will do: while a
-                     * turn is in flight the line becomes 「将消息加入队列…」, so
-                     * it is clear the words wait their turn instead of steering
-                     * the running reply.
+                     * The prompt mark, then the words.
+                     *
+                     * This mark was removed in the previous pass on the reading
+                     * that Claude's composer opens with bare text. It does not:
+                     * cropped at the pad's own 400dpi, the first ink in its box
+                     * is a 1.6dp stem 23.6 tall at x=502.8, with a bracket
+                     * hanging off its top half and an arrow inside it, running
+                     * out to x=518.0 - 15.2 across. The words start after it.
+                     *
+                     * The removal had been argued from a downscaled screenshot
+                     * where the mark is three grey pixels; at this scale it is
+                     * unmistakable.
                      */
-                    /*
-                     * Claude's idle line reads 「输入 / 以使用命令」 - it teaches the
-                     * slash commands right where they would be typed - and
-                     * its own grey is 123,121,116, a step lighter than the
-                     * muted used for labels elsewhere on the page.
-                     */
-                    placeholder = {
-                        Text(
-                            if (running) "将消息加入队列…" else "输入 / 以使用命令",
-                            color = if (LocalBg.current == DarkBg) DarkMuted else Color(0xFF7B7974),
-                        )
-                    },
-                    /*
-                     * `.input`'s measurements: 13 over a 20 line-height, and
-                     * the box's own 16/16/8 inset - the text starts where the
-                     * desktop's does, and an empty composer is 60 tall rather
-                     * than one line tall.
-                     */
-                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp, lineHeight = 20.sp, color = LocalText.current),
-                    colors = OutlinedTextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent, focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent),
-                    shape = RoundedCornerShape(0.dp),
-                    maxLines = 8,
-                    // `.input`'s 60 is a minimum, not a height: the box grows
-                    // with the text up to its own cap.
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp),
-                )
-                // `.row`: 44 tall, 8 in from each edge, 4 between the controls.
+                    if (text.isEmpty()) {
+                        /*
+                         * 3.6 of left offset: the stem's ink measured 506.4
+                         * against the reference's 502.8. The card's own inner
+                         * padding sets where the text block starts, and moving
+                         * it would move the typed text with it, so only the
+                         * placeholder's mark is nudged.
+                         */
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.offset(x = (-3.6).dp),
+                        ) {
+                            // Read outside the draw scope: `Local…current` is a
+                            // composable call and a Canvas lambda is not.
+                            val phInk = if (LocalBg.current == DarkBg) DarkMuted else Color(0xFF7B7974)
+                            // `requiredSize`, not `size`: inside a Row the canvas was being
+                            // measured against the row's own width and drew 30.4
+                            // dp of mark where 15.2 was asked for.
+                            Canvas(Modifier.requiredSize(15.2.dp, 23.6.dp)) {
+                                val w = size.width
+                                val h = size.height
+                                val ink = phInk
+                                val stem = 1.6.dp.toPx()
+                                // The stem, full height on the left.
+                                drawLine(ink, androidx.compose.ui.geometry.Offset(stem / 2, 0f), androidx.compose.ui.geometry.Offset(stem / 2, h), strokeWidth = stem)
+                                /*
+                                 * The bracket: out along the top, down to just
+                                 * above the middle, back to the stem - open at
+                                 * the left, so it reads as a bracket rather than
+                                 * as a box.
+                                 */
+                                /*
+                                 * Not a bracket - a brace of three rules and
+                                 * two uprights, read off the reference pixel by
+                                 * pixel (x 502.8..518.0, y 792.8..816.4):
+                                 *
+                                 *   row 800: a full rule from 506.4 to 518.0
+                                 *   row 804: a full rule from 506.4 to 517.2
+                                 *   row 807: a rule from 504.8 to 516.8,
+                                 *            reaching further left
+                                 *
+                                 * with a short upright at 506.8..507.6 spanning
+                                 * rows 797..804, and a longer one at
+                                 * 515.6..516.8 spanning rows 804..811.
+                                 *
+                                 * So it reads as コ stacked over a コ, offset -
+                                 * the shape a terminal prints before a prompt.
+                                 * The earlier version drew one bracket the height
+                                 * of half the mark, which is why it looked like a
+                                 * box rather than like this.
+                                 */
+                                /*
+                                 * Fractions of the canvas, then pulled inside
+                                 * the stroke's own half-width: at w * 0.95 the
+                                 * outer rules ran half a stem past the box and
+                                 * the mark measured 30.4 wide in a 15.2 box.
+                                 */
+                                /*
+                                 * Vertically the brace occupies 797..811 of a
+                                 * mark that runs 792.8..816.4 - 14 of 23.6, so
+                                 * 0.18..0.77 of the box, with the three rules at
+                                 * 0.31 / 0.50 / 0.62. The earlier 0.30/0.48/0.62
+                                 * spread them over the whole height, which made
+                                 * the mark read twice the size of the reference's.
+                                 */
+                                val s1 = h * 0.31f
+                                val s2 = h * 0.50f
+                                val s3 = h * 0.62f
+                                /*
+                                 * The reference's rules run 506.4..518.0 on a box
+                                 * that starts at 502.8 with a 15.2 width: they
+                                 * begin at 0.24 of the box and stop 0.15 short of
+                                 * its right edge. Drawing them to `w - stem / 2`
+                                 * made the mark 20.8 wide instead of 15.2.
+                                 */
+                                val x0 = w * 0.24f
+                                val x1 = w * 0.24f
+                                val x2 = w * 0.86f
+                                // Top rule, and the short upright under its left end.
+                                drawLine(ink, androidx.compose.ui.geometry.Offset(x1, s1), androidx.compose.ui.geometry.Offset(x2, s1), strokeWidth = stem)
+                                drawLine(ink, androidx.compose.ui.geometry.Offset(x1 + stem / 2, s1), androidx.compose.ui.geometry.Offset(x1 + stem / 2, s2), strokeWidth = stem)
+                                // Middle rule, and the longer upright under its right end.
+                                drawLine(ink, androidx.compose.ui.geometry.Offset(x1, s2), androidx.compose.ui.geometry.Offset(x2, s2), strokeWidth = stem)
+                                drawLine(ink, androidx.compose.ui.geometry.Offset(x2 - stem / 2, s2), androidx.compose.ui.geometry.Offset(x2 - stem / 2, s3), strokeWidth = stem)
+                                // The lead-in rule, which starts left of the others.
+                                drawLine(ink, androidx.compose.ui.geometry.Offset(x0, s3), androidx.compose.ui.geometry.Offset(x2, s3), strokeWidth = stem)
+                            }
+                            Spacer(Modifier.width(1.2.dp))
+                            Text(
+                                when {
+                                    running -> "将消息加入队列…"
+                                    hasSession -> "回复 Claude…"
+                                    else -> "与 Claude 对话…"
+                                },
+                                fontSize = 16.sp,
+                                lineHeight = 23.6.sp,
+                                color = if (LocalBg.current == DarkBg) DarkMuted else Color(0xFF7B7974),
+                            )
+                        }
+                    }
+                    BasicTextField(
+                        text,
+                        { text = it },
+                        // 16/23.6, matching the placeholder above it so the box
+                        // does not change height the moment someone types.
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 16.sp, lineHeight = 23.6.sp, color = LocalText.current),
+                        cursorBrush = androidx.compose.ui.graphics.SolidColor(LocalText.current),
+                        maxLines = 8,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                // `.row`: 44 tall, 4 between the controls, and no inset of its
+                // own - the box's own 8 already holds it off the edge, which is
+                // why the desktop writes `padding: 0 8px` there and the card
+                // carries the rest.
                 Row(
-                    Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 8.dp),
+                    /*
+                     * 35.2 tall, not 28.
+                     *
+                     * Every control in this row was about two thirds of its real
+                     * size: the plus and the mic circles 22.5 where Claude's are
+                     * 35.2, the model pill 29 where its is 35.2, and the send
+                     * disc 28.2. Measured on the pad at 2.5 px per dp, the row
+                     * of controls is 35.2 tall and its top sits 56.0 dp below
+                     * the card's top edge with 8.0 left beneath it.
+                     *
+                     * The gaps are the reference's too: 6.4 between the plus and
+                     * the pill, 8.8 between the mic and the send, 8.0 from the
+                     * send to the card's right edge, 10.8 from the card's left
+                     * to the plus. The old 4 everywhere made a cramped bar.
+                     */
+                    Modifier.fillMaxWidth().height(35.2.dp).padding(horizontal = 0.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.4.dp),
                 ) {
                     var plusMenu by remember { mutableStateOf(false) }
                     var skillPicker by remember { mutableStateOf(false) }
-                    // Claude's + and mic both sit in a soft pill circle; the
-                    // round button on the right is ink until there is something
-                    // to send, then the theme's accent.
+                    /*
+                     * `.attach`: a 28 box on `--radius-md` (6), not a 36 circle.
+                     * The desktop's plus, mic and send are all the same 28/6
+                     * square with a glyph in it - the pill circle made the bar
+                     * read a size too big and, with 20px glyphs, crowded the
+                     * 44-tall row it sits in.
+                     */
                     Box(
-                        Modifier.size(36.dp).background(LocalPill.current, CircleShape).clickable(enabled = enabled) { plusMenu = true },
+                        /*
+                         * 35.2, the size Claude's own plus is. On #F0EFEC with a
+                         * 19dp plus in ink; 22.5 made it a chip beside a button.
+                         */
+                        Modifier.size(35.2.dp).clip(CircleShape).background(LocalPill.current).clickable(enabled = enabled) { plusMenu = true },
                         contentAlignment = Alignment.Center,
                     ) {
-                        Icon(Icons.Filled.Add, contentDescription = "更多", tint = LocalText.current, modifier = Modifier.size(20.dp))
+                        Icon(Icons.Filled.Add, contentDescription = "更多", tint = LocalText.current, modifier = Modifier.size(19.dp))
                         /*
                          * The desktop's plus menu, in the same order: files,
                          * then the terminal, then 追求目标 as a switch rather
@@ -8763,10 +12893,23 @@ fun InputCapsule(
                          * a turn at a goal, and reaching a skill by name - were
                          * unreachable from a tablet.
                          */
+                        /*
+                         * An opaque panel, drawn rather than left to
+                         * `DropdownMenu`'s own surface.
+                         *
+                         * On this build the menu came up with the reply showing
+                         * through it - text over text - because the material
+                         * container's alpha is not the colour this app sets.
+                         * The popup sits in a card of the same #FEFEFE with a
+                         * hairline and a shadow, which is what Claude's own plus
+                         * menu looks like, and nothing behind it reads through.
+                         */
                         DropdownMenu(
                             expanded = plusMenu,
                             onDismissRequest = { plusMenu = false },
-                            modifier = Modifier.width(272.dp).background(MaterialTheme.colorScheme.surface),
+                            modifier = Modifier
+                                .width(272.dp)
+                                .background(Color(0xFFFEFEFE), RoundedCornerShape(14.dp)),
                         ) {
                             // The desktop's row opens the system file dialog and
                             // attaches what is picked. This one opened the
@@ -8814,6 +12957,23 @@ fun InputCapsule(
                                 pathViewBox = 12f,
                                 chevron = true,
                             ) { plusMenu = false; skillPicker = true }
+                            /*
+                             * The access switch lives here now.
+                             *
+                             * Claude's composer has one pill and nothing else,
+                             * so this cannot sit in that row; putting it in the
+                             * plus menu keeps it one tap from the box for a
+                             * reader being asked too often, which was the reason
+                             * it was promoted to the row in the first place.
+                             */
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text("权限", fontSize = 13.sp, color = LocalText.current)
+                                Spacer(Modifier.weight(1f))
+                                AccessPill(access0, onAccess, fullAllowed)
+                            }
                         }
                     }
                     if (skillPicker) {
@@ -8826,60 +12986,36 @@ fun InputCapsule(
                             },
                         )
                     }
-                    Spacer(Modifier.width(8.dp))
-                    // The desktop's middle pill. It sat only in the settings
-                    // sheet here, so a reader being asked too often had to leave
-                    // the words they were writing to change it.
-                    AccessPill(access0, onAccess, fullAllowed)
-                    Spacer(Modifier.width(8.dp))
                     /*
-                     * The ring, left of the model the way the desktop has it.
-                     * Like the desktop, nothing is drawn until a turn has spent
-                     * something: an empty conversation has nothing to measure.
+                     * No permission pill here.
+                     *
+                     * Claude's composer carries exactly one pill - the model
+                     * and its effort as one word - and puts every other switch
+                     * behind the plus. Measured on the pad: from the plus to the
+                     * microphone it is a single pill, nothing between. The
+                     * access pill was put here so a reader being asked too often
+                     * would not have to leave what they were writing, which is a
+                     * real cost - so it moves into the plus menu rather than
+                     * disappearing, and the row is the reference's shape again.
                      */
-                    if (contextUsed > 0) {
-                        /*
-                         * Pressing the ring keeps the figures up, as the
-                         * desktop's tooltip does on a click: the ring alone
-                         * says "somewhere here" and never how much.
-                         */
-                        var ctxCard by remember { mutableStateOf(false) }
-                        Box {
-                            Row(
-                                Modifier.clip(RoundedCornerShape(9.dp)).clickable { ctxCard = true }.padding(3.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) { ContextRing(contextUsed, contextLimit, 18.dp) }
-                            DropdownMenu(
-                                expanded = ctxCard,
-                                onDismissRequest = { ctxCard = false },
-                                modifier = Modifier.width(220.dp).background(MaterialTheme.colorScheme.surface),
-                            ) {
-                                Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                                    Text("上下文用量", fontSize = 12.sp, color = LocalMuted.current)
-                                    Spacer(Modifier.height(4.dp))
-                                    val pct = if (contextLimit > 0) Math.round(contextUsed * 100.0 / contextLimit).toInt() else 0
-                                    Text(
-                                        if (contextLimit > 0) "已用 $pct%（剩余 ${100 - pct}%）" else "已用 ${compactTokens(contextUsed)}",
-                                        fontSize = 14.sp,
-                                        color = LocalText.current,
-                                    )
-                                    if (contextLimit > 0) {
-                                        Spacer(Modifier.height(2.dp))
-                                        Text("已用 ${compactTokens(contextUsed)}，共 ${compactTokens(contextLimit)}", fontSize = 12.sp, color = LocalMuted.current)
-                                    }
-                                }
-                            }
-                        }
-                        Spacer(Modifier.width(8.dp))
-                    }
+                    /*
+                     * `.pill`: 28 tall on a `--radius-md` (6) corner with 11px of
+                     * inline padding, its text 13 on a 20 line. This was a 17
+                     * corner with 14/8 of padding, which made it a lozenge a
+                     * size taller than the buttons beside it and pushed the row
+                     * past its 44.
+                     */
                     Surface(
-                        shape = RoundedCornerShape(17.dp),
+                        shape = RoundedCornerShape(50),
                         color = LocalPill.current,
-                        modifier = Modifier.clickable(enabled = enabled && onModel != {}) { onModel() },
+                        modifier = Modifier.height(35.2.dp).clickable(enabled = enabled && onModel != {}) { onModel() },
                     ) {
                         // Claude's pill names the model and its effort
                         // ("Sonnet 5.5 中等"); ours names what this app has.
-                        Text(modelLabel, fontSize = 13.sp, color = LocalText.current, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp))
+                        // Measured 124.8 x 35.2 with the label 14sp inset 16.8.
+                        Box(Modifier.padding(horizontal = 16.8.dp), contentAlignment = Alignment.Center) {
+                            Text(modelLabel, fontSize = 14.sp, lineHeight = 20.sp, color = LocalText.current, maxLines = 1)
+                        }
                     }
                     Spacer(Modifier.weight(1f))
                     // Listening and transcribing own the round button: Claude
@@ -8894,17 +13030,26 @@ fun InputCapsule(
                         Spacer(Modifier.width(14.dp))
                     }
                     Box(
-                        Modifier.size(36.dp).background(if (listening) Color(0x1FE0574A) else LocalPill.current, CircleShape).clickable(enabled = !transcribing) { onMic() },
+                        /*
+                         * 35.2, matching the plus and the send. The mic's glyph
+                         * in the reference is a 17.6dp outline in #6B6862 - the
+                         * same muted ink as the placeholder - on #F0EFEC.
+                         */
+                        Modifier.size(35.2.dp).clip(CircleShape).background(if (listening) Color(0x1FE0574A) else LocalPill.current).clickable(enabled = !transcribing) { onMic() },
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
                             if (listening) Icons.Filled.Stop else Icons.Outlined.Mic,
                             contentDescription = if (listening) "结束录音" else "语音输入",
                             tint = if (listening) Color(0xFFE0574A) else LocalMuted.current,
-                            modifier = Modifier.size(20.dp),
+                            modifier = Modifier.size(17.6.dp),
                         )
                     }
-                    Spacer(Modifier.width(8.dp))
+                    /*
+                     * 8.8 between the mic and the send, which is wider than the
+                     * row's own 6.4 - measured, not a round number.
+                     */
+                    Spacer(Modifier.width(2.4.dp))
                     // Claude's round button is ink while the box is empty (a waveform on
                     // black) and takes the accent once there is something to send.
                     // The dark theme flips the ink to the paper colour; measured
@@ -8925,18 +13070,19 @@ fun InputCapsule(
                      * sending, which read as "press to send" while there was
                      * nothing to send.
                      */
-                    val sendBg = when {
-                        running -> LocalPill.current
-                        hasWords && !dark -> Color(0xFFE1C0B3)
-                        dark -> Color(0xFFF9F9F7)
-                        else -> LocalText.current
-                    }
-                    val sendFg = when {
-                        running -> LocalText.current
-                        hasWords && !dark -> Color.White
-                        dark -> Color(0xFF151515)
-                        else -> LocalBg.current
-                    }
+                    /*
+                     * The last of the two: an ink capsule with a pale mark.
+                     *
+                     * I had this wrong twice. The Code screen's composer - the
+                     * only one this pad will open - shows a soft grey disc, and
+                     * I copied that; but that screen has no send disc, only a
+                     * voice one. This is Claude's chat composer, and its send is
+                     * 87 x 46px of #1A1A18 - a capsule, not a circle, 27.6 wide
+                     * by 14.6 - with a pale waveform inside. Empty or not, that
+                     * is what it is: the capsule is the microphone's target.
+                     */
+                    val sendBg = LocalText.current
+                    val sendFg = LocalBg.current
                     Box(
                         /*
                          * `.send` is a 28 square with a 6 corner, not a circle:
@@ -8946,7 +13092,14 @@ fun InputCapsule(
                          * The touch target stays 44 through the padding-free
                          * box; only the painted shape follows the desktop.
                          */
-                        Modifier.size(44.dp).clickable(enabled = enabled && !transcribing) {
+                        /*
+                         * 35.2, the same as every other control in the row, and
+                         * the disc fills it - Claude's send is a filled circle
+                         * with no padding around it, 35.2 across, not a 28.2
+                         * disc inside a 44 touch target. A 44 box with a small
+                         * disc inside left the row's right edge looking empty.
+                         */
+                        Modifier.size(35.2.dp).clickable(enabled = enabled && !transcribing) {
                             if (running) onStop()
                             else if (listening) onMic()
                             else if (text.isNotBlank() || attachments.isNotEmpty()) { onSend(text, attachments); text = "" }
@@ -8954,15 +13107,21 @@ fun InputCapsule(
                         contentAlignment = Alignment.Center,
                     ) {
                         /*
-                         * The painted tile: 28 square with a 6 corner, the
-                         * desktop's `.send`, with the mark at 16 - which is
-                         * what the icon sizes on the reference row come to
-                         * against a 28 box.
+                         * A 28.2 disc of ink.
+                         *
+                         * Measured at the widest row and the tallest column of
+                         * the reference's mark: 89px each way, so it is round -
+                         * a capsule was a mis-read of a run that crossed the
+                         * waveform's own gaps. The fill is near-black with a
+                         * pale waveform inside, and it is that in every state;
+                         * the soft grey disc I copied earlier comes from the
+                         * Code screen, whose composer has a voice button there
+                         * and no send at all.
                          */
                         Box(
                             Modifier
-                                .size(28.dp)
-                                .background(sendBg, RoundedCornerShape(6.dp)),
+                                .size(35.2.dp)
+                                .background(sendBg, CircleShape),
                             contentAlignment = Alignment.Center,
                         ) {
                         if (running) {
@@ -8983,10 +13142,43 @@ fun InputCapsule(
                             // MiMo's live capsule: the button becomes the stop
                             // square while a recording is in flight.
                             Box(Modifier.size(16.dp).background(sendFg, RoundedCornerShape(3.dp)))
-                        } else if (text.isBlank() && attachments.isEmpty()) {
-                            Icon(Icons.Outlined.GraphicEq, contentDescription = "语音输入", tint = sendFg, modifier = Modifier.size(20.dp))
                         } else {
-                            Icon(Icons.Filled.ArrowUpward, contentDescription = "发送", tint = sendFg, modifier = Modifier.size(16.dp))
+                            /*
+                             * The same five bars in both states.
+                             *
+                             * This used to be an arrow once there were words to
+                             * send, and a waveform only while the box was empty.
+                             * Claude's disc carries the waveform whatever is in
+                             * the box - measured on its own composer with text
+                             * typed, and on its chat screen with the box empty:
+                             * eight white runs, two of which are the disc's own
+                             * rim, leaving five bars.
+                             *
+                             * Their heights, in dp, at a 3.2 pitch: 4.0, 8.0,
+                             * 13.6, 12.0, 4.0. Not symmetric, and not the four
+                             * I had drawn; the middle bar is the tallest and the
+                             * fourth is a shade shorter, which is what makes it
+                             * read as a voice rather than as an equaliser.
+                             */
+                            Canvas(Modifier.size(17.6.dp)) {
+                                val barW = 0.8.dp.toPx()
+                                val h = size.height
+                                // Each bar's own fraction of the 13.6dp tallest,
+                                // centred on the disc's middle.
+                                val bars = floatArrayOf(4.0f / 17.6f, 8.0f / 17.6f, 13.6f / 17.6f, 12.0f / 17.6f, 4.0f / 17.6f)
+                                val pitch = size.width / 5f
+                                bars.forEachIndexed { i, frac ->
+                                    val barH = h * frac
+                                    val cx = pitch * (i + 0.5f)
+                                    drawLine(
+                                        sendFg,
+                                        androidx.compose.ui.geometry.Offset(cx, (h - barH) / 2),
+                                        androidx.compose.ui.geometry.Offset(cx, (h + barH) / 2),
+                                        strokeWidth = barW,
+                                        cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                    )
+                                }
+                            }
                         }
                         }
                     }
@@ -9044,12 +13236,23 @@ private fun RunRow(item: ToolRun) {
                 modifier = Modifier.size(14.dp).graphicsLayer { rotationZ = if (open) 90f else 0f },
             )
         }
-        if (open) for (call in item.items) ToolRow(call)
+        if (open) for (call in item.items) ToolRow(call, indent = true)
     }
 }
 
 @Composable
-fun ToolRow(item: Item.Tool) {
+fun ToolRow(
+    item: Item.Tool,
+    /**
+     * Where a delivered file opens, when this row may draw the cards. A row
+     * drawn inside a folded run or a sheet passes nothing, so the card appears
+     * once - under the reply, where the desktop puts it.
+     */
+    onOpenDelivered: ((String, String) -> Unit)? = null,
+    root: String = "",
+    /** True when this row hangs under a group's summary - see the padding below. */
+    indent: Boolean = false,
+) {
     var open by remember { mutableStateOf(false) }
     // A call that is still going and one that broke read differently from one
     // that finished quietly.
@@ -9061,23 +13264,32 @@ fun ToolRow(item: Item.Tool) {
         else -> LocalMuted.current
     }
     /*
-     * `.hstep`: 14 over a 22.4 line, 5 above and below, indented 23 from the
-     * step's rail. This drew 13 with 3 of padding and a 10 indent, which is
-     * both a size and a rhythm off - the rows sat tighter than the prose they
-     * sit between.
+     * No indent, and the mark is back.
+     *
+     * This carried an unconditional 23 of start padding, on a note that said
+     * Claude's own tool row is words and a chevron only. The desktop says
+     * otherwise, and it is the source of truth for this row: `steps.css` gives
+     * `.hstep` `padding: 5px 0` for a lone row, and only `.hstep.indent` -
+     * which `ToolPart` sets when the row sits under a group's summary - the
+     * `padding-inline-start: 23px`. Applying it to every row put a lone
+     * 「已执行命令」 23 to the right of the prose it belongs to; the reference's
+     * lone rows start on the text's own left edge.
+     *
+     * `hs-ic` is a real column as well: 14 wide, `flex: none`, a 6 gap before
+     * the words, one mark per tool family (read / edit / write / bash / search
+     * / globe / todo). It had been dropped here on the same misreading, which
+     * left a transcript of identical rows where the reference lets a reader
+     * find the three file reads at a glance.
      */
-    Column(Modifier.padding(start = 23.dp)) {
+    Column(if (indent) Modifier.padding(start = 23.dp) else Modifier) {
         Row(
             Modifier.fillMaxWidth().clickable { open = !open }.padding(vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            /*
-             * No icon: Claude's own tool row is words and a chevron -
-             * 「已使用 PowerShell ›」, 「正在读取 ›」 - at 53px of line height. A
-             * glyph per call added a column of little pictures down the
-             * transcript the original never had, and pushed the words away from
-             * where they are read from.
-             */
+            Box(Modifier.width(14.dp), contentAlignment = Alignment.CenterStart) {
+                StepMark(item.name, rowTint, Modifier.size(14.dp))
+            }
+            Spacer(Modifier.width(6.dp))
             Text(
                 toolVerbOf(item.name, item.status) + if (item.title.isNotBlank()) " ${item.title}" else "",
                 fontSize = 14.sp,
@@ -9125,5 +13337,1425 @@ fun ToolRow(item: Item.Tool) {
                 boxed = false,
             )
         }
+        /*
+     * What the call handed over is drawn at the turn's end, with the edited
+     * card (`DeliveredCards` from the row loop), not here.
+     *
+     * This used to paint them inside the row, behind an `onOpenDelivered`
+     * argument. That argument was only passed to the bare `is Item.Tool ->`
+     * branch - and a tool call almost never reaches it, because `rowsOf` folds
+     * neighbouring calls into a `ToolRun` and `stepsOf` folds those into the
+     * `Step` above them. So a reply that presented a document showed the words
+     * 「展示文件」 and no card at all. Drawing them per turn is also where the
+     * desktop puts them: after the edited card, under the same reply.
+     */
+    }
+}
+
+/**
+ * The mark in front of a tool row, one per family.
+ *
+ * A port of the desktop's `StepIcon.vue`, on the same 24 grid at stroke 2, so
+ * the two transcripts cannot drift. The families and their members are copied
+ * from `tool-meta.ts`'s `ICONS` map rather than guessed: a `grep` is a
+ * magnifier because the desktop says so, not because a search sounds like one.
+ *
+ * A tool outside the map gets the wrench, which is what the desktop falls back
+ * to as well.
+ */
+@Composable
+fun StepMark(name: String, tint: Color, modifier: Modifier = Modifier) {
+    val kind = when (name.lowercase()) {
+        "read" -> "read"
+        "edit", "apply_patch", "patch" -> "edit"
+        "write" -> "write"
+        "bash", "exec_command", "execute" -> "bash"
+        "grep", "glob", "codesearch" -> "search"
+        "list" -> "list"
+        "webfetch", "websearch" -> "globe"
+        "app" -> "browser"
+        "todowrite" -> "todo"
+        "skill" -> "skill"
+        "memory" -> "memory"
+        else -> "fallback"
+    }
+    MiIcon(
+        STEP_MARKS.getValue(kind),
+        contentDescription = null,
+        modifier = modifier,
+        viewBox = 24f,
+        strokeWidth = 2f,
+        tint = tint,
+    )
+}
+
+/** The 24-grid paths of [StepMark], one line each as the desktop draws them. */
+private val STEP_MARKS = mapOf(
+    "read" to "M6 3h8.5L19 7.5V21H6zM9.5 11.5h6M9.5 15h6M9.5 18.5h3",
+    "edit" to "M16.9 4.1c.9-.9 2.4-.9 3.3 0 .9.9.9 2.4 0 3.3L8 18.6l-4 1.2 1.2-4zM13 20h7",
+    "write" to "M12 4H6.5C5.1 4 4 5.1 4 6.5v11C4 18.9 5.1 20 6.5 20h11c1.4 0 2.5-1.1 2.5-2.5V12M19.4 3c.8.8.8 2 0 2.8L13 14.2l-3.6.9.9-3.6z",
+    "bash" to "M5.5 4h13c1.4 0 2.5 1.1 2.5 2.5v11c0 1.4-1.1 2.5-2.5 2.5h-13C4.1 20 3 18.9 3 17.5v-11C3 5.1 4.1 4 5.5 4zM3 8.5h18M7.5 12l2.8 2.5-2.8 2.5",
+    /*
+     * Drawn with cubics rather than the `a` command the desktop's SVG uses.
+     *
+     * `PathParser` accepts arcs, but this path's `a6.5 6.5 0 1 0 0 13` -
+     * a lopsided large-arc pair - came out as two overlapping rectangles on
+     * the pad, which is what a mis-signed sweep does. Two half-circles of
+     * cubics have no such ambiguity, and the ink is identical at 14 dp.
+     */
+    "search" to "M10.5 4c3.59 0 6.5 2.91 6.5 6.5S14.09 17 10.5 17 4 14.09 4 10.5 6.91 4 10.5 4zM15.7 15.7 20.5 20.5",
+    "list" to "M9 6.5h11M9 12h11M9 17.5h11M4.5 5.5h1v2h-1zM4.5 11h1v2h-1zM4.5 16.5h1v2h-1z",
+    "globe" to "M12 3c5 0 9 4 9 9s-4 9-9 9-9-4-9-9 4-9 9-9zM3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z",
+    "todo" to "M4.7 4.5h4.6c.7 0 1.2.5 1.2 1.2v4.6c0 .7-.5 1.2-1.2 1.2H4.7c-.7 0-1.2-.5-1.2-1.2V5.7c0-.7.5-1.2 1.2-1.2zM4.8 17l1.6 1.6 3-3.2M13 7.5h7.5M13 17h7.5",
+    "browser" to "M5.5 4h13C19.9 4 21 5.1 21 6.5v11c0 1.4-1.1 2.5-2.5 2.5h-13C4.1 20 3 18.9 3 17.5v-11C3 5.1 4.1 4 5.5 4zM3 9h18M6.5 6.5h.01M9 6.5h.01M11.5 6.5h.01",
+    "skill" to "M19.5 4.5c-5.8.4-10.4 4.4-12 10.6L6 20M19.5 4.5c.3 5.6-3.4 10-9.9 10.9M10.2 11.2 13 8.4",
+    "memory" to "M12 5.5a3.5 3.5 0 0 0-6.6 1.6A3.3 3.3 0 0 0 4 13a3.4 3.4 0 0 0 3 5 3 3 0 0 0 5 .5zM12 5.5a3.5 3.5 0 0 1 6.6 1.6A3.3 3.3 0 0 1 20 13a3.4 3.4 0 0 1-3 5 3 3 0 0 1-5 .5zM12 5.5v13",
+    "fallback" to "M14.5 5.5a4.2 4.2 0 0 0-5.3 5.3L4 16a1.9 1.9 0 0 0 2.7 2.7l5.2-5.2a4.2 4.2 0 0 0 5.3-5.3l-2.5 2.5-2.4-.5-.5-2.4z",
+)
+
+/**
+ * 定时任务, drawn as the reference draws it.
+ *
+ * A burger, the title centred on the 360 column, a clock and two lines when
+ * there is nothing, and 新建任务 as a right-hand capsule - every figure read off
+ * the reference at 2.5 px per dp. What it lists is real: `automation.tasks`
+ * pushes (id, title, nextAt) and the page shows the next run in the reader's
+ * own clock, so a scheduled task stops being something the phone receives and
+ * then forgets.
+ */
+@Composable
+fun ScheduledScreen(
+    tasks: List<Triple<String, String, Long>>,
+    onNew: () -> Unit,
+    onClose: () -> Unit,
+    /*
+     * True when the caller already owns the window: on a wide screen these
+     * pages are the left column's content, so they must not paint the page
+     * colour under the whole screen or add a status-bar spacer for a bar the
+     * column has already cleared.
+     */
+    embedded: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
+    /*
+     * fillMaxWidth when embedded - never fillMaxSize over the caller's weight.
+     *
+     * Same fault as 项目 and 设置: the wide layout hands these pages
+     * `Modifier.weight(1f)` inside a Column, and wrapping that in fillMaxSize
+     * gives one node two size constraints. The layout resolved it by halving the
+     * page, so the empty block centred on 486 instead of 908 and its clock landed
+     * at y 243 where the reference puts it at 449.6.
+     */
+    Column(
+        /*
+         * fillMaxHeight, not fillMaxWidth.
+         *
+         * Proved with a marker that the embedded branch does run - it drew at
+         * y 51.2 - so the fault is the size modifier, not the call path. With
+         * fillMaxWidth the column has no height constraint of its own: the
+         * caller's `weight(1f)` allocates the space, the column then measures to
+         * its children, and the empty state's own `weight(1f)` finds nothing to
+         * divide. The block centred at 486 on a page whose ink runs to 880.
+         *
+         * fillMaxHeight asks for the height the weight already granted; it does
+         * not claim a second one.
+         */
+        modifier.then(
+            if (embedded) Modifier.fillMaxHeight()
+            else Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
+        ),
+    ) {
+        if (!embedded) Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+        Box(Modifier.fillMaxWidth().height(63.2.dp)) {
+            Text(
+                "定时任务",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
+                color = LocalText.current,
+                maxLines = 1,
+                softWrap = false,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(63.2.dp)
+                    .align(Alignment.Center)
+                    .wrapContentHeight(Alignment.CenterVertically)
+                    .offset(x = (-5.2).dp),
+            )
+            Row(
+                Modifier.fillMaxWidth().height(63.2.dp).padding(start = 1.6.dp, end = 4.4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(Modifier.size(44.dp).clickable { onClose() }, contentAlignment = Alignment.Center) {
+                    MiIcon(
+                        "M0.95 2.6h22.1M0.95 12h22.1M0.95 21.4h11.05",
+                        contentDescription = "菜单",
+                        modifier = Modifier.size(16.4.dp),
+                        viewBox = 24f,
+                        strokeWidth = 1.9f,
+                        tint = LocalText.current,
+                    )
+                }
+            }
+        }
+        if (tasks.isEmpty()) {
+            /*
+             * Centred in the page, both ways.
+             *
+             * The reference's whole empty state - clock, 「暂无定时任务」 and the
+             * sentence - sits inside 449.6..473.2 dp of a 908.8 dp screen, and
+             * its horizontal centre measures 681.4 against the screen's 681.6.
+             * So it is the middle of the page, not a distance from the header.
+             *
+             * This was `padding(top = 393.dp)`, a number measured on the full
+             * screen and then reused inside a column that is already offset by
+             * its own header - which put the block 60 dp low and, because the
+             * column was only as wide as the pane, left of centre as well. A
+             * weight plus Centre fills whatever box it is given.
+             */
+            /*
+             * An explicit top pad, because weight will not centre here.
+             *
+             * Tried three ways - `weight(1f)` with Arrangement.Center, the same
+             * with fillMaxHeight, and the same with fillMaxSize - and the block
+             * landed at the identical y 243.2 every time, 206 above where the
+             * reference puts it. The column evidently is not being given the
+             * page's height, and rather than keep guessing at what is upstream,
+             * the pad states the answer: the reference's disc tops at 429.4 on a
+             * 908.8 page whose header ends at 95.6, so the space above the block
+             * is 333.8.
+             */
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(start = 24.dp, end = 24.dp, top = 327.8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                /*
+                 * A 64 dp disc behind the clock, which the reference has and
+                 * this did not.
+                 *
+                 * Measured on Claude's own page: a filled circle of #F0EFEC,
+                 * 64 dp across, with the clock mark centred in it at 20 dp. Two
+                 * bare glyphs floating on the page read as decoration; the disc
+                 * is what makes the pair read as one object.
+                 */
+                Box(
+                    Modifier
+                        .size(64.dp)
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .background(if (LocalBg.current == DarkBg) Color(0xFF2A2A29) else Color(0xFFF0EFEC)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    MiIcon(
+                        "M12 3.6c4.64 0 8.4 3.76 8.4 8.4s-3.76 8.4-8.4 8.4S3.6 16.64 3.6 12 7.36 3.6 12 3.6zM12 7.8V12l3 1.8",
+                        contentDescription = null,
+                        /*
+                         * 31.9, because a 20 dp box draws 14.8 of ink.
+                         *
+                         * The reference's clock measures 23.6 across, and a
+                         * stroked ring stops at its radius, so the box has to be
+                         * 20 x 23.6/14.8. Measured off the build: the mark's ink
+                         * ran 14.8 in a 20 box.
+                         */
+                        modifier = Modifier.size(31.9.dp),
+                        viewBox = 24f,
+                        strokeWidth = 1.7f,
+                        tint = LocalMuted.current,
+                    )
+                }
+                /*
+                 * 3.8, not 14.
+                 *
+                 * The reference's disc bottoms at 493.4 and its title's ink
+                 * starts at 497.2. This had 14 of spacer on top of a 64 dp disc,
+                 * which put 19 between them - the block read as three loose
+                 * parts rather than one notice.
+                 */
+                Spacer(Modifier.height(0.dp))
+                Text("暂无定时任务", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "让 Claude 按计划运行任务。",
+                    fontSize = 13.sp,
+                    lineHeight = 21.2.sp,
+                    color = LocalMuted.current,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                )
+            }
+            /*
+             * The page's own way in, at the foot.
+             *
+             * The reference puts a 「+ 新建任务」 capsule at y 832.8, x
+             * 220.8..343.6 - 122.8 wide, the same box and the same right edge as
+             * the list pages' 新建会话. This page had no such control at all: the
+             * only way to make an automation was to leave for the conversation
+             * list first, which is a door out of a page that had none in.
+             */
+            /*
+             * 122.8 and 38 as measured: this landed 110.4 wide at y 838.4, so
+             * the box was being squeezed and sat 5.6 low. The end pad drops to
+             * 16.4 - 12 = 4.4 and the bottom pad to 32.4 - 5.6.
+             */
+            Box(Modifier.fillMaxWidth().padding(end = 4.4.dp, bottom = 26.8.dp), contentAlignment = Alignment.CenterEnd) {
+                Row(
+                    Modifier
+                        .width(122.8.dp)
+                        .height(43.6.dp)
+                        .clip(RoundedCornerShape(21.8.dp))
+                        .background(if (LocalBg.current == DarkBg) Color(0xFF2A2A29) else Color(0xFF1A1A19))
+                        .clickable { onNew() },
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "+ 新建任务",
+                        fontSize = 13.6.sp,
+                        color = if (LocalBg.current == DarkBg) Color(0xFFF9F9F7) else Color(0xFFF9F9F7),
+                    )
+                }
+            }
+        } else {
+            LazyColumn(
+                Modifier.fillMaxWidth().weight(1f),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 18.dp, end = 18.dp, top = 8.dp, bottom = 16.dp),
+            ) {
+                items(tasks.size) { index ->
+                    val (id, title, nextAt) = tasks[index]
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 6.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surface)
+                            .border(1.dp, if (LocalBg.current == DarkBg) Color(0xFF2C2C2B) else Color(0xFFE4E1D8), RoundedCornerShape(12.dp))
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        MiIcon(
+                            "M12 3.6c4.64 0 8.4 3.76 8.4 8.4s-3.76 8.4-8.4 8.4S3.6 16.64 3.6 12 7.36 3.6 12 3.6zM12 7.8V12l3 1.8",
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            viewBox = 24f,
+                            strokeWidth = 1.7f,
+                            tint = LocalMuted.current,
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                title.ifBlank { id },
+                                fontSize = 15.sp,
+                                color = LocalText.current,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            if (nextAt > 0) {
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    "下次 " + relTime(nextAt),
+                                    fontSize = 12.sp,
+                                    color = LocalMuted.current,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        /*
+         * The capsule stays at the foot.
+         *
+         * Without this spacer the empty block above - which is a fixed 393 of
+         * top padding rather than a weighted region - pushed the capsule up to
+         * sit directly under its sentence, where the reference has it 300 dp
+         * lower on the column's own floor.
+         */
+        Spacer(Modifier.weight(1f))
+        Row(
+            Modifier.fillMaxWidth().padding(start = 18.dp, end = 16.4.dp, top = 10.dp, bottom = 10.dp),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            Row(
+                Modifier
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(LocalText.current)
+                    .clickable { onNew() }
+                    .padding(horizontal = 16.dp, vertical = 10.5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Filled.Add, contentDescription = null, tint = LocalBg.current, modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("新建任务", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = LocalBg.current)
+            }
+        }
+        Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
+    }
+}
+
+/**
+ * A PDF, page by page.
+ *
+ * Android ships `PdfRenderer`, which turns a page into a bitmap; there is no
+ * viewer widget, so the pages are drawn into a lazily-built column and scrolled.
+ * That is what the desktop's pdf.js tab shows as well - the document, whole, one
+ * page under the next - so the shape is the same even though the engine is not.
+ *
+ * The renderer and its parcel file are closed when the sheet goes: both hold a
+ * file descriptor, and a tablet that opens three documents would otherwise run
+ * out of them.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PdfViewer(name: String, file: java.io.File, onClose: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var pages by remember(file) { mutableStateOf(0) }
+    var error by remember(file) { mutableStateOf<String?>(null) }
+
+    // One renderer for the life of the sheet; each page is rendered on demand.
+    val holder = remember(file) { arrayOfNulls<Any>(2) } // [PdfRenderer, ParcelFileDescriptor]
+    DisposableEffect(file) {
+        onDispose {
+            runCatching { (holder[0] as? android.graphics.pdf.PdfRenderer)?.close() }
+            runCatching { (holder[1] as? android.os.ParcelFileDescriptor)?.close() }
+        }
+    }
+    LaunchedEffect(file) {
+        runCatching {
+            val pfd = android.os.ParcelFileDescriptor.open(file, android.os.ParcelFileDescriptor.MODE_READ_ONLY)
+            val renderer = android.graphics.pdf.PdfRenderer(pfd)
+            holder[0] = renderer
+            holder[1] = pfd
+            pages = renderer.pageCount
+        }.onFailure { error = it.message ?: "无法打开" }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onClose,
+        containerColor = MaterialTheme.colorScheme.background,
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    name,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = LocalText.current,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                if (pages > 0) {
+                    Text("$pages 页", fontSize = 12.sp, color = LocalMuted.current)
+                    Spacer(Modifier.width(10.dp))
+                }
+                Box(Modifier.size(34.dp).clickable { onClose() }, contentAlignment = Alignment.Center) {
+                    Icon(Icons.Filled.Close, contentDescription = "关闭", tint = LocalMuted.current, modifier = Modifier.size(16.dp))
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            when {
+                error != null -> Text("打不开这个 PDF：$error", fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
+                pages == 0 -> Text("正在读取…", fontSize = 13.sp, color = LocalMuted.current)
+                else -> LazyColumn(Modifier.fillMaxWidth().heightIn(max = 620.dp)) {
+                    items(pages) { index ->
+                        PdfPage(holder[0] as? android.graphics.pdf.PdfRenderer, index)
+                        Spacer(Modifier.height(10.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * One page, drawn at the pane's width.
+ *
+ * The bitmap is built once per index and remembered by it; a page that scrolls
+ * out is dropped and rebuilt from its index when it comes back, which keeps a
+ * long document's memory bounded by what is on screen rather than by its length.
+ */
+@Composable
+fun PdfPage(renderer: android.graphics.pdf.PdfRenderer?, index: Int) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val widthPx = with(density) { 340.dp.toPx() }.toInt()
+    val bitmap = remember(renderer, index) {
+        runCatching {
+            renderer?.openPage(index)?.use { page ->
+                val ratio = page.height.toFloat() / page.width.toFloat().coerceAtLeast(1f)
+                val h = (widthPx * ratio).toInt().coerceIn(1, 4000)
+                val image = android.graphics.Bitmap.createBitmap(widthPx, h, android.graphics.Bitmap.Config.ARGB_8888)
+                val canvas = android.graphics.Canvas(image)
+                canvas.drawColor(android.graphics.Color.WHITE)
+                page.render(image, null, null, android.graphics.pdf.PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                image
+            }
+        }.getOrNull()
+    }
+    if (bitmap != null) {
+        androidx.compose.foundation.Image(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = "第 ${index + 1} 页",
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color.White),
+            contentScale = ContentScale.FillWidth,
+        )
+    } else {
+        Text("第 ${index + 1} 页读不出来", fontSize = 12.sp, color = LocalMuted.current)
+    }
+}
+
+/**
+ * An Office document, drawn by the WebView.
+ *
+ * The document was turned into one HTML page where the file is (see
+ * `src/server/office/html.ts`), so this side has nothing to parse: a WebView
+ * shows the page, which is the same arrangement the desktop has - a viewer that
+ * renders, and a document turned into something renderable.
+ *
+ * The view is given the page as a string rather than a URL, and JavaScript is
+ * off: the page is the converter's own output, it needs no script, and a reader
+ * that never runs one cannot be made to by a document.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun OfficeViewer(name: String, kind: String, html: String, onClose: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val dark = LocalBg.current == DarkBg
+    ModalBottomSheet(onDismissRequest = onClose, containerColor = MaterialTheme.colorScheme.background) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 20.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    name,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = LocalText.current,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    kind.uppercase(),
+                    fontSize = 11.sp,
+                    color = LocalMuted.current,
+                    modifier = Modifier
+                        .background(LocalPill.current, RoundedCornerShape(6.dp))
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Box(Modifier.size(34.dp).clickable { onClose() }, contentAlignment = Alignment.Center) {
+                    Icon(Icons.Filled.Close, contentDescription = "关闭", tint = LocalMuted.current, modifier = Modifier.size(16.dp))
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            androidx.compose.ui.viewinterop.AndroidView(
+                factory = { ctx ->
+                    android.webkit.WebView(ctx).apply {
+                        setBackgroundColor(if (dark) 0xFF151515.toInt() else 0xFFFFFEFD.toInt())
+                        settings.javaScriptEnabled = false
+                        settings.loadWithOverviewMode = true
+                        settings.useWideViewPort = true
+                        isVerticalScrollBarEnabled = false
+                        // The page is handed over as a string with no base URL, so
+                        // nothing it asks for can reach the network: its images are
+                        // already data URLs.
+                        loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().heightIn(max = 640.dp),
+            )
+        }
+    }
+}
+
+/**
+ * What a reply handed over, as cards under it.
+ *
+ * `DeliveredFilesCard.vue`: a 38 tile in the file's own colour at a 9 corner,
+ * the name at 14 over a 12 sub-line that carries the size, the whole row a
+ * 12-cornered card on the raised surface with 11/14 of inset. Tapping one opens
+ * the file the same way the artifacts page does.
+ */
+@Composable
+fun DeliveredCards(files: List<DeliveredFile>, root: String, onOpen: (String, String) -> Unit) {
+    if (files.isEmpty()) return
+    val context = androidx.compose.ui.platform.LocalContext.current
+    for (file in files) {
+        val web = file.url.isNotBlank()
+        val badge = badgeOf(file.path)
+        /*
+         * A web address gets the desktop's web card: its own blue on the tile
+         * and 「网页 · HTML · 地址」 under the name, and a tap hands it to the
+         * system browser rather than to the file reader - there is no file.
+         */
+        val ink = if (web) Color(0xFF2F6FED) else badge.fg
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(top = 6.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .border(
+                    1.dp,
+                    if (LocalBg.current == DarkBg) Color(0xFF2C2C2B) else Color(0xFFE4E1D8),
+                    RoundedCornerShape(12.dp),
+                )
+                .clickable {
+                    if (web) {
+                        runCatching {
+                            context.startActivity(
+                                android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(file.url))
+                                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                            )
+                        }.onFailure { Toast.makeText(context, "打不开这个地址", Toast.LENGTH_SHORT).show() }
+                    } else {
+                        onOpen(root, file.path)
+                    }
+                }
+                .padding(horizontal = 14.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                Modifier
+                    .size(38.dp)
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(ink.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (web) {
+                    MiIcon(
+                        "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M3.6 9h16.8M3.6 15h16.8M12 3c2.5 2.4 3.8 5.4 3.8 9S14.5 18.6 12 21c-2.5-2.4-3.8-5.4-3.8-9S9.5 5.4 12 3",
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 1.7f,
+                        tint = ink,
+                    )
+                } else {
+                    Canvas(Modifier.size(20.dp)) { badge.glyph(this) }
+                }
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    file.name,
+                    fontSize = 14.sp,
+                    color = LocalText.current,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    if (web) {
+                        file.url
+                    } else {
+                        listOfNotNull(badge.label, sizeLabel(file.size).takeIf { it.isNotBlank() }).joinToString(" · ")
+                    },
+                    fontSize = 12.sp,
+                    color = LocalMuted.current,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Icon(
+                Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                contentDescription = null,
+                tint = LocalMuted.current,
+                modifier = Modifier.size(16.dp),
+            )
+        }
+    }
+}
+
+/** A file's size the way the desktop writes it: bytes, then KB and MB to one place. */
+fun sizeLabel(bytes: Long): String = when {
+    bytes <= 0L -> ""
+    bytes < 1024 -> "$bytes B"
+    bytes < 1024 * 1024 -> "%.1f KB".format(bytes / 1024.0)
+    else -> "%.1f MB".format(bytes / (1024.0 * 1024.0))
+}
+
+/** One file a turn wrote, and how it changed. */
+data class EditedFile(val path: String, val add: Int, val del: Int, val created: Boolean)
+
+/** The tools whose calls change a file; the desktop's `EDITING` set. */
+private val EDITING_TOOLS = setOf("edit", "write", "notebook_edit", "patch")
+
+private val HUNK_HEADER = Regex("^@@ -(\\d+)(?:,(\\d+))? \\+(\\d+)(?:,(\\d+))? @@")
+
+/** One file's share of a patch, as the header and the hunk counts give it. */
+private data class DiffCount(val file: String, val oldFile: String, val add: Int, val del: Int)
+
+/**
+ * Splits a unified diff and counts each file's lines the way
+ * `src/shared/unified-diff.ts` does.
+ *
+ * Hunks are read by their own line counts rather than by the `+`/`-` prefixes:
+ * a removed line that happens to read `-- x` is written `--- x`, and when the
+ * added line after it reads `++ y` the pair looks exactly like the header of
+ * the next file. Only the counts say it is still inside the hunk - which is
+ * why the naive prefix tally this replaced produced a phantom file per such
+ * line, and why the desktop's parser is written this way.
+ */
+private fun countDiff(diff: String): List<DiffCount> {
+    val lines = diff.split("\n")
+    val out = ArrayList<DiffCount>()
+    var file: String? = null
+    var oldFile = ""
+    var add = 0
+    var del = 0
+    fun flush() {
+        val name = file
+        if (name != null && name.isNotBlank()) out.add(DiffCount(name, oldFile, add, del))
+        add = 0
+        del = 0
+    }
+    var index = 0
+    while (index < lines.size) {
+        val line = lines[index]
+        if (line.startsWith("--- ") && lines.getOrNull(index + 1)?.startsWith("+++ ") == true) {
+            flush()
+            oldFile = line.substring(4).removePrefix("a/").trim()
+            file = lines[index + 1].substring(4).removePrefix("b/").trim()
+            index += 2
+            continue
+        }
+        val match = HUNK_HEADER.find(line)
+        if (match == null || file == null) {
+            index++
+            continue
+        }
+        val groups = match.groupValues
+        var oldLeft = if (groups[2].isEmpty()) 1 else groups[2].toInt()
+        var newLeft = if (groups[4].isEmpty()) 1 else groups[4].toInt()
+        index++
+        while (index < lines.size && (oldLeft > 0 || newLeft > 0)) {
+            val body = lines[index]
+            if (body.startsWith(" ")) {
+                oldLeft--
+                newLeft--
+            } else if (body.startsWith("-")) {
+                del++
+                oldLeft--
+            } else if (body.startsWith("+")) {
+                add++
+                newLeft--
+            } else if (!body.startsWith("\\")) {
+                break
+            }
+            index++
+        }
+    }
+    flush()
+    return out
+}
+
+/**
+ * The files a call's recorded patch changed.
+ *
+ * `metadata.diff` is where the desktop reads them (`src/renderer/src/lib/
+ * edited-files.ts`), and the phone used to look in `state.output` instead -
+ * which carries the tool's one-line reply, not the change. Measured over the
+ * 18 conversations on this machine: 1306 tool calls, 244 of them with a
+ * `metadata.diff`, and not one with a patch in its output. That mismatch is
+ * why the card never appeared at all rather than merely being miscounted.
+ *
+ * A call that ended in error is left out, the same test the desktop's card and
+ * its undo both make: a row drawn here that the undo then skipped reported
+ * fewer files than the reader had just been shown.
+ */
+fun editedOf(part: JSONObject): List<EditedFile> {
+    if (part.optString("name") !in EDITING_TOOLS) return emptyList()
+    val state = part.optJSONObject("state")
+    val status = state?.optString("status").orEmpty().ifBlank { part.optString("status") }
+    if (status == "error") return emptyList()
+    val metadata = state?.optJSONObject("metadata") ?: part.optJSONObject("metadata") ?: return emptyList()
+    val diff = metadata.optString("diff")
+    if (diff.isBlank()) return emptyList()
+    // What the call recorded about creating the file beats what the patch looks like.
+    val recorded = if (metadata.has("created")) metadata.optBoolean("created") else null
+    return countDiff(diff).map { section ->
+        EditedFile(section.file, section.add, section.del, recorded ?: (section.oldFile == "/dev/null"))
+    }
+}
+
+/**
+ * Each turn's edits, gathered into one card the way `EditedFilesCard.vue` has
+ * it - keyed by the key of the item that ends the turn.
+ *
+ * The desktop counts a turn, not a call: three edits in one reply are one card
+ * saying 「已编辑 3 个文件」, and the phone drawing one per call was three cards
+ * stacked under the same paragraph. A turn starts at the reader's own message,
+ * which is also where the desktop's `turns` starts one.
+ *
+ * Only the words and the calls move the turn's end, because that is where the
+ * desktop puts the card: ahead of the error card, the delivered files and the
+ * media strip that follow the same reply. Letting a gap or a failure set it too
+ * put the card after the failure notice, which reads as if the files had been
+ * edited by the thing that broke.
+ */
+/**
+ * A turn's edits, plus what the server needs to take them back.
+ *
+ * `messages` is the turn's assistant message ids, which is what
+ * `session.revertTurn` names the turn by (`EditedFilesCard.vue` passes
+ * `turn.messageIDs`); `reverted` is the flag the server writes on the turn's
+ * last message once 撤销 has actually moved something.
+ */
+data class TurnEdit(
+    val files: List<EditedFile>,
+    val messages: List<String>,
+    val reverted: Boolean,
+    /**
+     * The patches the turn's own calls recorded, joined - what 审阅 shows.
+     *
+     * The desktop prefers the repository's current diff and falls back to this
+     * (`recordedPatch`), because a turn's own record survives a later commit.
+     * The phone asks git for nothing here: `git.diffFiles` is a second round
+     * trip per card, and the recorded patch is the change the reader is looking
+     * at anyway.
+     */
+    val patch: String,
+    /**
+     * What the turn's `present_files` calls handed over, in order, each once.
+     *
+     * The desktop collects these the same way (`deliveredFiles`), across all of
+     * a turn's calls rather than one call's - a turn that presents three
+     * documents presents them as three cards under the same reply.
+     */
+    val delivered: List<DeliveredFile>,
+)
+
+fun turnEdits(items: List<Item>): Map<String, TurnEdit> {
+    val out = LinkedHashMap<String, TurnEdit>()
+    val byPath = LinkedHashMap<String, EditedFile>()
+    val messages = mutableListOf<String>()
+    val patches = mutableListOf<String>()
+    val delivered = ArrayList<DeliveredFile>()
+    val deliveredSeen = HashSet<String>()
+    var last = ""
+    var reverted = false
+    fun flush() {
+        if (last.isNotEmpty() && (byPath.isNotEmpty() || delivered.isNotEmpty())) {
+            out[last] = TurnEdit(
+                byPath.values.toList(),
+                messages.toList(),
+                reverted,
+                patches.joinToString("\n"),
+                delivered.toList(),
+            )
+        }
+        byPath.clear()
+        messages.clear()
+        patches.clear()
+        delivered.clear()
+        deliveredSeen.clear()
+        reverted = false
+    }
+    for (item in items) {
+        if (item is Item.Msg && item.role == "user") {
+            flush()
+            continue
+        }
+        if (item is Item.Msg || item is Item.Tool) last = item.key
+        if (item is Item.Msg && item.role != "user") {
+            messages.add(item.id)
+            if (item.reverted) reverted = true
+        }
+        if (item is Item.Tool) {
+            for (file in editedOf(item.raw)) {
+                val known = byPath[file.path]
+                byPath[file.path] = if (known == null) file else known.copy(add = known.add + file.add, del = known.del + file.del)
+            }
+            if (item.name in EDITING_TOOLS && item.status != "error") {
+                val metadata = item.raw.optJSONObject("state")?.optJSONObject("metadata")
+                    ?: item.raw.optJSONObject("metadata")
+                metadata?.optString("diff")?.takeIf { it.isNotBlank() }?.let { patches.add(it) }
+            }
+            for (file in item.delivered) {
+                val key = if (file.url.isNotBlank()) file.url else file.path.replace('\\', '/').lowercase()
+                if (deliveredSeen.add(key)) delivered.add(file)
+            }
+        }
+    }
+    flush()
+    return out
+}
+
+/** The item keys each folded row covers, so a card finds the row its turn ends on. */
+private fun keysByRow(rows: List<Any>): List<Set<String>> {
+    fun keysOf(value: Any): Set<String> = when (value) {
+        is Item -> setOf(value.key)
+        is ToolRun -> value.items.map { it.key }.toSet()
+        is Step -> buildSet {
+            (value.body as? Item)?.let { add(it.key) }
+            for (call in value.calls) addAll(keysOf(call))
+        }
+        else -> emptySet()
+    }
+    return rows.map { keysOf(it) }
+}
+
+/**
+ * The turn's edits as one card, the way the desktop draws them.
+ *
+ * `EditedFilesCard.vue`: a 10 corner on the page's own fill, a 40 plate holding
+ * a 19 mark - a sheet with a plus over a minus when several files changed, a
+ * plus when one was created, a pencil otherwise - then the title and the two
+ * counts. Several files also list their rows under a hairline, three at a time
+ * with the rest behind 「再显示 N 个文件」.
+ *
+ * The counts here are fixed greens and reds whatever the theme, which is what
+ * MiMo does on this card - not the diff view's theme-aware inks.
+ */
+@Composable
+fun EditedCard(
+    turn: TurnEdit,
+    root: String,
+    onOpen: ((String, String) -> Unit)?,
+    /** Offered only where the server can act on it, and not in a side conversation. */
+    onRevert: (() -> Unit)? = null,
+    onReview: (() -> Unit)? = null,
+) {
+    val files = turn.files
+    if (files.isEmpty()) return
+    val dark = LocalBg.current == DarkBg
+    val surface = if (dark) Color(0xFF181818) else Color(0xFFFFFEFD)
+    val line = if (dark) Color(0xFF2E2E2E) else Color(0xFFF0EBE5)
+    val plate = if (dark) Color(0xFF2E2E2E) else Color(0xFFF0F0F2)
+    val statMuted = if (dark) Color(0xFFB8B8B8) else Color(0x99151C13)
+    /*
+     * Taken back: the transcript stays and only the files moved, so the card
+     * says so in place of its counts. It keeps its own surface, dimmed.
+     */
+    if (turn.reverted) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(top = 12.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(plate)
+                .alpha(0.85f)
+                .padding(horizontal = 14.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            MiIcon(
+                "M3 7v6h6M3 13a9 9 0 1 0 3-7.7L3 8",
+                modifier = Modifier.size(16.dp),
+                strokeWidth = 1.7f,
+                tint = statMuted,
+            )
+            Spacer(Modifier.width(9.dp))
+            Text("已撤销 ${files.size} 个文件的改动", fontSize = 14.sp, color = statMuted)
+        }
+        return
+    }
+    val add = files.sumOf { it.add }
+    val del = files.sumOf { it.del }
+    val single = files.singleOrNull()
+    var expanded by remember(files.size) { mutableStateOf(false) }
+    var confirming by remember(files.size) { mutableStateOf(false) }
+    val shown = if (expanded) files else files.take(3)
+    fun relative(path: String): String {
+        val base = root.trimEnd('/', '\\')
+        if (base.isEmpty()) return path
+        if (!path.lowercase().startsWith(base.lowercase())) return path
+        val next = path.getOrNull(base.length)
+        return if (next == '/' || next == '\\') path.substring(base.length + 1) else path
+    }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 12.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(surface)
+            .border(1.dp, line, RoundedCornerShape(10.dp)),
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .then(
+                    if (single != null && onOpen != null) {
+                        Modifier.clickable { onOpen(root, single.path) }
+                    } else {
+                        Modifier
+                    },
+                )
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)).background(plate),
+                contentAlignment = Alignment.Center,
+            ) {
+                MiIcon(
+                    when {
+                        files.size > 1 -> "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8ZM12 7.5v5M9.5 10h5M9.5 16h5"
+                        single!!.created -> "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8ZM14 3v5h5M12 11v6M9 14h6"
+                        else -> "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4M14 3v5h5v2M19.4 13.6a1.9 1.9 0 0 1 0 2.7L15 20.7l-3 .8.8-3 4.4-4.4a1.9 1.9 0 0 1 2.2-.5Z"
+                    },
+                    modifier = Modifier.size(19.dp),
+                    strokeWidth = 1.7f,
+                    tint = LocalMuted.current,
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                if (single != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("已编辑 ", fontSize = 14.sp, lineHeight = 20.sp, color = LocalText.current)
+                        Text(
+                            single.path.substringAfterLast('/').substringAfterLast('\\'),
+                            fontSize = 14.sp,
+                            lineHeight = 20.sp,
+                            color = LocalText.current,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                } else {
+                    Text(
+                        "已编辑 ${files.size} 个文件",
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                        color = LocalText.current,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            if (add > 0 || del > 0) {
+                Spacer(Modifier.width(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("+$add", fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = Color(0xFF1A7F37))
+                    Text("-$del", fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = Color(0xFFE5484D))
+                }
+            }
+            /*
+             * 撤销 and 审阅, as the desktop offers them behind the counts. The
+             * revert asks first: it cannot be undone, and the question is the
+             * desktop's own sentence (`stream.confirmRevert`).
+             */
+            if (onRevert != null || onReview != null) {
+                Spacer(Modifier.width(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (onRevert != null) {
+                        Row(
+                            Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { confirming = true }
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("撤销", fontSize = 14.sp, lineHeight = 20.sp, color = LocalText.current)
+                            Spacer(Modifier.width(5.dp))
+                            MiIcon(
+                                "M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11",
+                                modifier = Modifier.size(14.dp),
+                                strokeWidth = 1.8f,
+                                tint = LocalText.current,
+                            )
+                        }
+                    }
+                    if (onReview != null) {
+                        Box(
+                            Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (dark) Color(0xFF181818) else Color(0xFFFFFEFD))
+                                .border(1.dp, line, RoundedCornerShape(8.dp))
+                                .clickable { onReview() }
+                                .padding(horizontal = 11.dp, vertical = 4.dp),
+                        ) {
+                            Text("审阅", fontSize = 14.sp, lineHeight = 20.sp, color = LocalText.current)
+                        }
+                    }
+                }
+            }
+        }
+        /*
+         * The question before taking a turn back - the desktop's own card, in
+         * its orange tint: an orange edge on both themes, since what it asks
+         * cannot be undone.
+         */
+        if (confirming) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(0x0FFF6A2B))
+                    .border(1.dp, Color(0x59FF6A2B), RoundedCornerShape(12.dp))
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+            ) {
+                Row {
+                    MiIcon(
+                        "M12 2 3 7v6c0 5 3.8 8.5 9 9 5.2-.5 9-4 9-9V7ZM12 8v4M12 16h.01",
+                        modifier = Modifier.padding(top = 1.dp).size(18.dp),
+                        strokeWidth = 1.8f,
+                        tint = Color(0xFFFF6A2B),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "确定撤销 ${files.size} 个文件的改动？已跟踪文件仅撤销本回合的编辑（保留之前几轮的改动），新增文件将被删除，不可恢复。",
+                        fontSize = 14.sp,
+                        lineHeight = 21.7.sp,
+                        color = LocalText.current,
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Box(
+                        Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (dark) Color(0xFFECECEC) else Color(0xFF151C13))
+                            .clickable { confirming = false; onRevert?.let { it() } }
+                            .padding(horizontal = 18.dp, vertical = 7.dp),
+                    ) {
+                        Text(
+                            "确定撤销",
+                            fontSize = 13.sp,
+                            color = if (dark) Color(0xFF151C13) else Color.White,
+                        )
+                    }
+                    Box(
+                        Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (dark) Color(0xFF181818) else Color(0xFFFFFEFD))
+                            .border(1.dp, line, RoundedCornerShape(8.dp))
+                            .clickable { confirming = false }
+                            .padding(horizontal = 18.dp, vertical = 7.dp),
+                    ) {
+                        Text("取消", fontSize = 13.sp, color = LocalText.current)
+                    }
+                }
+            }
+        }
+        if (files.size > 1) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+                Box(Modifier.fillMaxWidth().height(1.dp).background(line))
+                Spacer(Modifier.height(2.dp))
+                for (file in shown) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .then(if (onOpen != null) Modifier.clickable { onOpen(root, file.path) } else Modifier)
+                            .padding(horizontal = 9.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            relative(file.path),
+                            fontSize = 14.sp,
+                            lineHeight = 20.sp,
+                            color = statMuted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("+${file.add}", fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = Color(0xFF1A7F37))
+                            Text("-${file.del}", fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = Color(0xFFE5484D))
+                        }
+                    }
+                }
+                if (files.size > 3) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable { expanded = !expanded }
+                            .padding(horizontal = 1.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            if (expanded) "收起" else "再显示 ${files.size - 3} 个文件",
+                            fontSize = 14.sp,
+                            lineHeight = 20.sp,
+                            color = LocalText.current,
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        MiIcon(
+                            if (expanded) "m6 15 6-6 6 6" else "m6 9 6 6 6-6",
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 1.8f,
+                            tint = LocalText.current,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(2.dp))
+            }
+        }
+    }
+}
+
+/**
+ * One section of the info card, measured off MiMo's (`InfoSection.vue`): a 14
+ * medium title with a 13 chevron that points down while open and right while
+ * folded, and a count pill at the end. Sections are parted by a hairline with
+ * 13 above and 13 below it.
+ */
+@Composable
+fun InfoSection(
+    name: String,
+    title: String,
+    open: Boolean,
+    count: String? = null,
+    complete: Boolean = false,
+    onToggle: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier.fillMaxWidth().clickable { onToggle() }.padding(vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(title, fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
+            Spacer(Modifier.width(6.dp))
+            MiIcon(
+                if (open) "M4.5 6.5 8 10l3.5-3.5" else "M6.5 4.5 10 8l-3.5 3.5",
+                viewBox = 16f,
+                modifier = Modifier.size(13.dp),
+                strokeWidth = 1.3f,
+                tint = LocalMuted.current,
+            )
+            if (!count.isNullOrBlank()) {
+                Spacer(Modifier.width(6.dp))
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(if (complete) Color(0x1F21A366) else LocalMuted.current.copy(alpha = 0.12f))
+                        .padding(horizontal = 6.dp),
+                ) {
+                    Text(
+                        count,
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp,
+                        color = if (complete) Color(0xFF21A366) else LocalMuted.current,
+                        modifier = Modifier.align(Alignment.Center),
+                    )
+                }
+            }
+        }
+        if (open) {
+            Spacer(Modifier.height(6.dp))
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) { content() }
+        }
+    }
+}
+
+/** A file row inside a section: its name, the folder it came from, and nothing else. */
+@Composable
+private fun InfoFileRow(path: String, onClick: (() -> Unit)? = null) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
+            .padding(horizontal = 2.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        MiIcon(
+            "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8ZM14 3v5h5",
+            modifier = Modifier.size(14.dp),
+            strokeWidth = 1.6f,
+            tint = LocalMuted.current,
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            path,
+            fontSize = 13.sp,
+            lineHeight = 18.sp,
+            color = LocalText.current,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+/**
+ * The conversation's own record: what it touched, and where it worked.
+ *
+ * `InfoPanel.vue` has four sections - the environment, the task list, the
+ * outputs and the sources - and the phone had none of them, so there was no
+ * way to answer "which files did this conversation read" without scrolling the
+ * whole transcript. The two that the transcript itself can answer are here:
+ *
+ *   - 产物: the files the turn's tools wrote, and anything present_files
+ *     handed over, which is `sessionArtifacts` in `shared/session-files.ts`.
+ *   - 来源: the files the call's tools read and the reader's own attachments,
+ *     which is `sessionReferences` there.
+ *
+ * 环境信息 and 任务清单 are left off rather than faked. The first needs
+ * `git.summary` and a commit flow the phone has no screen for yet; the second
+ * needs `infoTasks`, which reads a task registry the gateway does not publish.
+ * A section that always read "0" would be worse than no section.
+ */
+@Composable
+fun InfoCard(
+    items: List<Item>,
+    root: String,
+    onOpen: (String) -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val dark = LocalBg.current == DarkBg
+    val surface = if (dark) Color(0xFF181818) else Color(0xFFFFFEFD)
+    val line = if (dark) Color(0xFF2E2E2E) else Color(0xFFF0EBE5)
+    var outputsOpen by remember { mutableStateOf(true) }
+    var sourcesOpen by remember { mutableStateOf(false) }
+    /*
+     * What the conversation produced: a file a call wrote, and every file a
+     * `present_files` handed over. A path outside the project is left out on
+     * the desktop (`projectRelative` returns nothing), and so here.
+     */
+    val outputs = remember(items.toList(), root) {
+        val base = root.trimEnd('/', '\\')
+        fun inside(path: String): Boolean {
+            if (base.isEmpty()) return true
+            val full = path.replace('\\', '/')
+            val normal = base.replace('\\', '/')
+            return full.lowercase().startsWith(normal.lowercase() + "/")
+        }
+        val seen = LinkedHashSet<String>()
+        for (item in items) {
+            if (item !is Item.Tool) continue
+            for (file in item.delivered) {
+                if (file.path.isNotBlank() && inside(file.path)) seen.add(file.path)
+            }
+            if (item.name == "write" && item.status != "error") {
+                val raw = item.raw.optJSONObject("input")
+                val path = raw?.optString("file_path").orEmpty().ifBlank { raw?.optString("path").orEmpty() }
+                val created = item.raw.optJSONObject("metadata")?.optString("created") == "true" ||
+                    item.raw.optJSONObject("metadata")?.optBoolean("created") == true
+                if (path.isNotBlank() && created && inside(path)) seen.add(path)
+            }
+        }
+        seen.toList()
+    }
+    /*
+     * What it read: the paths a call's read or list named, less anything it
+     * wrote or handed over - the desktop's rule, because a file that came out
+     * of the turn is not also a source for it.
+     *
+     * `grep` and `glob` are left out on purpose. Their input carries a
+     * `pattern`, not a file: taking it as a path listed 「*(HANDOVER,handover,
+     * HANDOFF,ha...」 and 「交接」 as sources, which is not a file at all. The
+     * desktop's `sessionFiles` counts them among what was read, but it looks at
+     * the results; the phone has only the one-line summary here.
+     */
+    val sources = remember(items.toList(), outputs) {
+        val out = LinkedHashSet<String>()
+        val produced = outputs.map { it.replace('\\', '/').lowercase() }.toSet()
+        for (item in items) {
+            if (item !is Item.Tool || item.status == "error") continue
+            if (item.name !in setOf("read", "list")) continue
+            val raw = item.raw.optJSONObject("input") ?: continue
+            val path = raw.optString("file_path").orEmpty()
+                .ifBlank { raw.optString("path").orEmpty() }
+            if (path.isBlank()) continue
+            if (path.replace('\\', '/').lowercase() in produced) continue
+            out.add(path)
+        }
+        out.toList()
+    }
+    Column(
+        modifier
+            .width(300.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(surface)
+            .border(1.dp, line, RoundedCornerShape(14.dp))
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("对话信息", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
+            Spacer(Modifier.weight(1f))
+            Box(Modifier.size(26.dp).clickable { onClose() }, contentAlignment = Alignment.Center) {
+                Icon(Icons.Filled.Close, contentDescription = "关闭", tint = LocalMuted.current, modifier = Modifier.size(15.dp))
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        InfoSection(
+            "artifacts",
+            "产物",
+            outputsOpen,
+            count = outputs.size.toString(),
+            onToggle = { outputsOpen = !outputsOpen },
+        ) {
+            if (outputs.isEmpty()) {
+                Text("这一轮还没有产物", fontSize = 13.sp, color = LocalMuted.current)
+            } else {
+                for (path in outputs.take(20)) {
+                    InfoFileRow(path.substringAfterLast('/').substringAfterLast('\\')) { onOpen(path) }
+                }
+                if (outputs.size > 20) {
+                    Text("还有 ${outputs.size - 20} 个", fontSize = 12.sp, color = LocalMuted.current)
+                }
+            }
+        }
+        Box(Modifier.padding(vertical = 13.dp).fillMaxWidth().height(1.dp).background(line))
+        InfoSection(
+            "sources",
+            "来源",
+            sourcesOpen,
+            count = sources.size.toString(),
+            onToggle = { sourcesOpen = !sourcesOpen },
+        ) {
+            if (sources.isEmpty()) {
+                Text("这一轮还没有读过文件", fontSize = 13.sp, color = LocalMuted.current)
+            } else {
+                for (path in sources.take(20)) {
+                    InfoFileRow(path.substringAfterLast('/').substringAfterLast('\\')) { onOpen(path) }
+                }
+                if (sources.size > 20) {
+                    Text("还有 ${sources.size - 20} 个", fontSize = 12.sp, color = LocalMuted.current)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * A quiet line among the steps: MiMo's `ErrorStep.vue` or `NoticeRow.vue`.
+ *
+ * Both are the same row - `.hstep`'s 5 above and below, 14 over a 22.4 line,
+ * a 14-wide mark column with 9 between it and the words. The mark is a plain
+ * `!` for a failure the turn recovered from and a plain `i` for the app's own
+ * remark, monospaced, in the icon column, with no circle or box drawn round
+ * either:
+ *
+ *   .hs-error-mark / .hs-notice-mark { width: 14px; font-family: var(--font-mono);
+ *                                      font-weight: 400; text-align: center }
+ *
+ * The phone drew every failure as a card at the end of the turn, so a turn that
+ * hit a length limit, compacted and carried on still ended on a red card - the
+ * reader was told the turn broke when it had not.
+ */
+@Composable
+fun NoteRow(item: Item.Note) {
+    val error = item.kind == NoteKind.Error
+    Row(
+        Modifier.fillMaxWidth().padding(start = 23.dp, top = 5.dp, bottom = 5.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Text(
+            if (error) "!" else "i",
+            fontSize = 14.sp,
+            lineHeight = 22.4.sp,
+            fontWeight = FontWeight.Normal,
+            fontFamily = FontFamily.Monospace,
+            color = if (error) LocalText.current else LocalMuted.current,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.width(14.dp).padding(top = 2.dp),
+        )
+        Spacer(Modifier.width(9.dp))
+        Text(
+            // `stepList.errorPrefix`: 「错误：{text}」. A notice carries its own sentence.
+            if (error) "错误：${item.text}" else item.text,
+            fontSize = 14.sp,
+            lineHeight = 22.4.sp,
+            color = if (error) LocalText.current else LocalText.current.copy(alpha = 0.86f),
+            modifier = Modifier.weight(1f),
+        )
     }
 }

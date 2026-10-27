@@ -1,0 +1,25 @@
+MCode Remote: the send disc, taken from the chat screen at last
+
+Claude's app on this pad opens onto its Code screen, and that screen's composer
+has a soft grey disc where the chat composer has its send - which is how I came
+to copy a control that is not the one being copied. Reaching the chat screen
+takes one path I had not tried: the left menu, then 新建会话.
+
+Measured there, at the widest row and the tallest column:
+
+  send disc   89 x 89px = 28.2dp, round, #1A1A18, pale waveform inside
+  microphone  50px icon in a soft grey disc
+  plus        50px icon in a soft grey disc
+  empty mark  the asterisk, 103px = 32.6dp of ink, #CC7C5E
+
+So two of the last three commits were wrong in opposite directions: the send was
+a grey disc (Code screen), then a 27.6 x 14.6 capsule (a mis-read of a run that
+crossed the waveform's own gaps). It is a 28.2 disc of ink in every state.
+
+The empty pane's asterisk was 40dp against 32.6 measured - most of a size large,
+which is the same error as the list faces and the transcript body: I had been
+reading the desktop stylesheet, which describes a different design at this size.
+
+Still unmeasured from this screen: the bubbles themselves. The screen is empty -
+a fresh conversation - so there is no user turn or reply to sample. That is the
+next thing to get, and it needs a conversation with history in it.

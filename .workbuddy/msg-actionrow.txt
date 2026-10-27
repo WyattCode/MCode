@@ -1,0 +1,27 @@
+MCode Remote: six marks under every reply, and a title that is the conversation's
+
+Measured off Claude's transcript on this pad:
+
+  each mark        34px of ink = 10.8dp
+  centres          90px apart = 28.5dp
+  the row          under every reply, not only the last one
+  order            copy, share, read aloud, good, bad, retry
+
+The phone had two marks (copy, more) on the final reply alone, which made the
+controls look like they belonged to the end of the conversation rather than to
+each answer. Copy and retry work; share, read and the two votes are drawn and
+inert, because nothing in this app answers to them yet - the row's rhythm is
+what is being matched, and a gap would leave it wrong.
+
+`ThumbUp` and `ThumbDown` do not exist in Compose's icon set; the names are
+`ThumbUpAlt` and `ThumbDownAlt`, which cost a build to find.
+
+Two header corrections, both about a title that was not the conversation's:
+
+  - With no name it said 「MCode」 - the app's own name where the title goes,
+    which reads as a failed load. It says nothing now.
+
+  - With no name it also showed only the folder underneath, so the header was a
+    lone directory. Claude names a conversation after its first words and shows
+    them at once; `headerTitle` does the same when the server has not named the
+    conversation yet.
