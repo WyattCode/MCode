@@ -114,6 +114,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.text.BasicTextField
@@ -145,6 +146,28 @@ private val FieldLine = Color(0xFFCECECE)
 private val CreamLine = Color(0xFFE4E1D8)
 private val Ink = Color(0xFF1F1E1C)
 private val InkMuted = Color(0xFF6B6862)
+/*
+ * The lighter half of a tool row: what the call acted on, not what it did.
+ *
+ * Sampled off the reference's own expanded rows, where 「Read mission 28 rerun
+ * result」 measures (123,121,116) against a verb of (19,19,19). The mark before
+ * them sits between the two, at (56,56,53), so a row has three weights rather
+ * than one - which is what lets a list of a dozen calls be read down the middle
+ * for the file names.
+ *
+ * Dark values are the same relationship, lifted so they stay legible on the
+ * near-black page.
+ */
+private val ToolWhat = Color(0xFF7B7974)
+private val DarkToolWhat = Color(0xFF9A9A96)
+/* The mark before the verb: (56,56,53) on the reference, between the verb's 19
+ * and the target's 123. It was `LocalMuted` (107,104,99), which drew the icon
+ * as light as the words it introduces and lost the three-step rhythm. */
+private val ToolMark = Color(0xFF383835)
+/* The summary line's own grey: (83,82,79) on the reference, a step darker than
+ * `InkMuted` so a summary reads as part of the turn rather than as a caption. */
+private val ToolSummary = Color(0xFF53524F)
+private val DarkToolSummary = Color(0xFFB4B4B0)
 /*
  * The mark's own orange, measured off Claude's empty pane on the fold:
  * (204,124,94) where this used #D97757 = (217,119,87) - the same family but a
@@ -8432,7 +8455,12 @@ fun Timeline(
                                     runSummary(item),
                                     fontSize = 14.sp,
                                     lineHeight = 22.4.sp,
-                                    color = LocalMuted.current,
+                                    /* A step darker than the muted grey: the
+                                     * reference's summary measures (83,82,79)
+                                     * where `InkMuted` is (107,104,99), so the
+                                     * line joins the turn instead of floating
+                                     * over it like a caption. */
+                                    color = if (LocalBg.current == DarkBg) DarkToolSummary else ToolSummary,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.weight(1f, fill = false),
@@ -13206,7 +13234,7 @@ private fun RunRow(item: ToolRun) {
                 runSummary(item),
                 fontSize = 14.sp,
                 lineHeight = 22.4.sp,
-                color = LocalMuted.current,
+                color = if (LocalBg.current == DarkBg) DarkToolSummary else ToolSummary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f, fill = false),
@@ -13268,16 +13296,59 @@ fun ToolRow(
             Modifier.fillMaxWidth().clickable { open = !open }.padding(vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(Modifier.width(14.dp), contentAlignment = Alignment.CenterStart) {
-                StepMark(item.name, rowTint, Modifier.size(14.dp))
+            /*
+             * A 15.6 slot, not 14, and 16 between it and the words.
+             *
+             * The reference's mark measures 15.6 by 11.6 of ink with its words
+             * 16 further on; this drew a 14 box with a 6 gap, which came out
+             * 10.4 by 10.4 - a mark a third smaller than the one beside it, on
+             * a row whose words were already the right size. Measured off its
+             * expanded rows in their own sheet.
+             */
+            Box(Modifier.width(15.6.dp), contentAlignment = Alignment.CenterStart) {
+                /*
+                 * Between the verb and what it acted on: (56,56,53) on the
+                 * reference, against a verb of 19 and a target of 123. A state
+                 * colour still wins, so a failure and a call in flight read at
+                 * a glance down the left of the list.
+                 */
+                StepMark(
+                    item.name,
+                    if (failed || busy) rowTint else ToolMark,
+                    Modifier.size(15.6.dp),
+                )
             }
-            Spacer(Modifier.width(6.dp))
+            Spacer(Modifier.width(16.dp))
+            /*
+             * Two greys on one row, as the reference has it.
+             *
+             * Sampled off its own expanded rows: the verb 「已运行」 is the
+             * darkest mark on the line at (19,19,19) - the body text colour -
+             * while the thing it acted on, 「Read mission 28 rerun result」, is
+             * the lightest at (123,121,116), and the mark before them sits
+             * between the two at (56,56,53). This drew every part in one muted
+             * grey, so the row read as a single flat phrase and the verb lost
+             * the weight that makes a list of calls scannable.
+             *
+             * A failed or still-running row keeps its state colour on the verb,
+             * which is the part a reader looks at to see that something went
+             * wrong.
+             */
             Text(
-                toolVerbOf(item.name, item.status) + if (item.title.isNotBlank()) " ${item.title}" else "",
+                buildAnnotatedString {
+                    val verb = toolVerbOf(item.name, item.status)
+                    append(verb)
+                    if (item.title.isNotBlank()) {
+                        append(" ")
+                        withStyle(SpanStyle(color = if (LocalBg.current == DarkBg) DarkToolWhat else ToolWhat)) {
+                            append(item.title)
+                        }
+                    }
+                },
                 fontSize = 14.sp,
                 lineHeight = 22.4.sp,
                 fontWeight = FontWeight.Medium,
-                color = if (failed || busy) rowTint else LocalMuted.current,
+                color = if (failed || busy) rowTint else LocalText.current,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f, fill = false),
