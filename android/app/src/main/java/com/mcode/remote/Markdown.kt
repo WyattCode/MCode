@@ -2087,7 +2087,27 @@ private fun ListBox(
                     fontSize = 17.4.sp,
                     lineHeight = 30.sp,
                     color = if (item.task && !item.checked) LocalMuted.current else color,
-                    modifier = Modifier.width(if (block.ordered) 24.dp else 16.dp),
+                    /*
+                     * The bullet's ink starts at the prose edge, not 6 past it.
+                     *
+                     * Measured on a build with a list actually in it: this drew
+                     * the `•` ink at 414.8 while the prose above it started at
+                     * 409.6, and the reference puts its bullet's ink at 408.8
+                     * against prose at 408.8 - flush. The 6 is the empty left
+                     * side bearing the glyph carries inside its box, so the box
+                     * is pulled back by exactly that rather than the margin being
+                     * guessed at again.
+                     */
+                    modifier = Modifier
+                        .offset(x = (-6).dp)
+                        /*
+                         * 11.2 after the -6 pull-back, so the words beside the
+                         * bullet start where the reference puts them: its bullet
+                         * ink runs 408.8..415.2 and its text starts at 421.2, a
+                         * gap of 6.0; a 16 dp box pulled back 6 leaves the text
+                         * at 426.0, which is 4.8 too far. 16 - 4.8 = 11.2.
+                         */
+                        .width(if (block.ordered) 24.dp else 11.2.dp),
                 )
                 MdLine(
                     item.text,
