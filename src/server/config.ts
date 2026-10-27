@@ -1475,7 +1475,14 @@ export class Config {
      */
     const curated = this.definition(provider)?.models ?? []
     if (!discovered?.length) return curated
-    const handEntered = Boolean(this.definition(provider)?.handEntered)
+    /*
+     * A custom provider's models are the ones that were typed in: that is what
+     * `provider.discover` says when it refuses to refresh them, and what the form
+     * edits. A list fetched once and kept would otherwise keep offering a model
+     * the person had since deleted, and hide one they had since added. It is
+     * only the way in for a provider with none typed at all.
+     */
+    if (this.definition(provider)?.handEntered && curated.length) return curated
 
     /*
      * Discovery is authoritative about which models exist; the catalog is
@@ -1514,18 +1521,6 @@ export class Config {
             maxOutput: known.maxOutput ?? entry.maxOutput,
             inputs: known.inputs ?? entry.inputs,
             efforts: known.efforts ?? entry.efforts,
-            /*
-             * What a person typed into a custom model's own form: the thinking menu and
-             * its default, and the cache/interleaving words. A discovered row knows none
-             * of it, and without these the model came back with an empty menu and sent no
-             * level at all as soon as the provider's list had been refreshed once.
-             */
-            ...(known.menu ? { menu: known.menu } : {}),
-            ...(known.defaultEffort ? { defaultEffort: known.defaultEffort } : {}),
-            ...(known.cacheTTL ? { cacheTTL: known.cacheTTL } : {}),
-            ...(known.interleaved ? { interleaved: known.interleaved } : {}),
-            // The limit a person wrote is theirs; /models rarely states one, and 0 would read as "unknown".
-            ...(handEntered && known.contextWindow > 0 ? { contextWindow: known.contextWindow } : {}),
           }
         }
         // A raw id is not a name, whether or not we have heard of the model.
