@@ -165,9 +165,11 @@ export async function discoverModels(
     headers: {
       // Provider headers go on first so a custom provider cannot displace the
       // bearer token or the Accept this call depends on - the reference's own
-      // merge order at offset 22312491.
+      // merge order at offset 22312491. A header-authenticated provider has no
+      // key here, and writing `Bearer ` over its own authorization header
+      // breaks it (see the same guard in openai.ts).
       ...provider.headers,
-      authorization: `Bearer ${apiKey}`,
+      ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
       accept: "application/json",
     },
     signal: AbortSignal.timeout(TIMEOUT),

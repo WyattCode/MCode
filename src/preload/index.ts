@@ -406,6 +406,11 @@ const api = {
   },
 }
 
-contextBridge.exposeInMainWorld("mcode", api)
+// The bridge is for the app's own top frame only. Electron runs this preload
+// in every frame of the window - including the page preview's iframe - and a
+// served page that reached the bridge could drive files, dialogs and updates.
+// Subframes get nothing; the main process's frame checks stay as defense in depth.
+const isTopFrame = globalThis === (globalThis as { top?: unknown }).top
+if (isTopFrame) contextBridge.exposeInMainWorld("mcode", api)
 
 export type MCodeBridge = typeof api

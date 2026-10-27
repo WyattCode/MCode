@@ -479,7 +479,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "project.remove":
       return {
-        config: await runtime.config.set(removedProjects(runtime.config.get(), request.directories)),
+        config: await runtime.config.update((current) => removedProjects(current, request.directories)),
       } satisfies Handled<"project.remove">
 
     case "search.messages": {
@@ -805,8 +805,10 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       if (!skill) throw new Error(`There is no skill ${request.name}`)
       await uninstallSkill(skill, runtime.storage.directory)
       // A name that is gone has nothing left to switch off.
-      const disabled = runtime.config.get().disabledSkills ?? []
-      if (disabled.includes(skill.name)) await runtime.config.set({ disabledSkills: disabled.filter((name) => name !== skill.name) })
+      await runtime.config.update((current) => {
+        const disabled = current.disabledSkills ?? []
+        return disabled.includes(skill.name) ? { disabledSkills: disabled.filter((name) => name !== skill.name) } : {}
+      })
       return { ok: true } satisfies Handled<"skill.uninstall">
     }
 
@@ -1206,9 +1208,9 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
           .map(([key, value]) => [key.trim(), value.trim()])
           .filter(([key, value]) => key && value),
       )
-      await runtime.config.set({
+      await runtime.config.update((current) => ({
         customProviders: [
-          ...config.customProviders,
+          ...current.customProviders,
           {
             id,
             name: request.name.trim(),
@@ -1220,7 +1222,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
             ...(request.protocol === "anthropic" || request.protocol === "responses" ? { protocol: request.protocol } : {}),
           },
         ],
-      })
+      }))
       // A literal key is stored; an {env:...} indirection stores nothing.
       await runtime.config.setApiKey(id, environment ? "" : request.apiKey.trim())
       return { providers: runtime.config.providers() }
@@ -1248,8 +1250,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       // A credential header was shown masked; left as shown, it keeps what is stored.
       const keptHeaders = restoreHeaders(headers, existing.headers) ?? {}
       const keptEnvironment = environment ?? (!typed ? existing.environment : undefined)
-      await runtime.config.set({
-        customProviders: config.customProviders.map((entry) =>
+      await runtime.config.update((current) => ({
+        customProviders: current.customProviders.map((entry) =>
           entry.id === request.id
             ? {
                 id: entry.id,
@@ -1263,7 +1265,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
               }
             : entry,
         ),
-      })
+      }))
       if (environment) await runtime.config.setApiKey(request.id, "")
       else if (typed) await runtime.config.setApiKey(request.id, typed)
       return { providers: runtime.config.providers() } satisfies Handled<"provider.updateCustom">
@@ -1285,9 +1287,9 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       if (problem) throw providerIdRefusal(chosen ?? "", problem)
       let id = chosen || `${source.id}-copy`
       for (let n = 2; !chosen && taken(id); n++) id = `${source.id}-copy-${n}`
-      await runtime.config.set({
-        customProviders: [...config.customProviders, { ...source, id, name: request.name.trim() || source.name }],
-      })
+      await runtime.config.update((current) => ({
+        customProviders: [...current.customProviders, { ...source, id, name: request.name.trim() || source.name }],
+      }))
       if (!runtime.config.environmentKey(source.id)) {
         const stored = runtime.config.apiKey(source.id)
         if (stored) await runtime.config.setApiKey(id, stored)
@@ -1699,9 +1701,11 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "mcp.save": {
       // The window was never sent the saved secrets, so blank rows it marks as kept take the stored ones here.
-      const servers = runtime.config.get().mcpServers ?? {}
-      const entry = mergeMcpSecrets(servers[request.name], restoreServer(request.entry, servers[request.name]), request.keep)
-      const config = await runtime.config.set({ mcpServers: { ...servers, [request.name]: entry } })
+      const config = await runtime.config.update((current) => {
+        const servers = current.mcpServers ?? {}
+        const entry = mergeMcpSecrets(servers[request.name], restoreServer(request.entry, servers[request.name]), request.keep)
+        return { mcpServers: { ...servers, [request.name]: entry } }
+      })
       return { config } satisfies Handled<"mcp.save">
     }
 

@@ -19,6 +19,7 @@ import {
   themeBackground,
   watchTheme,
 } from "../../lib/diagram"
+import { writeText } from "../../lib/clipboard"
 
 /**
  * MiMo's diagram block in a reply: a mermaid fence drawn as a diagram, or an
@@ -151,7 +152,7 @@ async function copyImage() {
 
 async function copyCode() {
   try {
-    await navigator.clipboard.writeText(source.value)
+    await writeText(source.value)
     copiedCode.value = true
     setTimeout(() => (copiedCode.value = false), 2000)
   } catch {
@@ -179,7 +180,7 @@ async function pick(key: string) {
     return
   }
   if (key === "copyCode") {
-    await navigator.clipboard.writeText(source.value).catch(() => notifyFailure(t("code.copyFailed")))
+    await writeText(source.value).catch(() => notifyFailure(t("code.copyFailed")))
     return
   }
   if (key === "downloadSvg") {

@@ -17,6 +17,7 @@ import WidgetBlock from "./WidgetBlock.vue"
 import LocalMedia from "./LocalMedia.vue"
 import { mediaPath } from "../../lib/delivered"
 import { allowRemoteImage, showAllowedRemoteImages } from "../../lib/remote-images"
+import { writeText } from "./../../lib/clipboard"
 
 /**
  * A body of markdown drawn the way a reply is drawn.
@@ -237,7 +238,7 @@ async function copyTable(button: HTMLElement) {
         // Some clipboards take only text; that is tried next.
       }
     }
-    if (!written) await navigator.clipboard.writeText(text)
+    if (!written) await writeText(text)
     button.classList.add("copied")
     window.setTimeout(() => button.classList.remove("copied"), 2000)
   } catch {
@@ -352,7 +353,7 @@ async function onClick(event: MouseEvent) {
   if (!button) return
   const code = button.closest(".md-codeblock")?.querySelector("pre code")?.textContent ?? ""
   try {
-    await navigator.clipboard.writeText(code)
+    await writeText(code)
     button.classList.add("copied")
     window.setTimeout(() => button.classList.remove("copied"), 2000)
   } catch {

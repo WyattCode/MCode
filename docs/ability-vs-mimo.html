@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MCode vs MiMo-Code · 编程能力与错误率</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--ink:#16181d;--muted:#6b7280;--line:#e5e7eb;--blue:#2563eb;--purple:#7c3aed;--ok:#0f766e;--bad:#b91c1c;--warn:#b45309}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.7 -apple-system,"PingFang SC","Helvetica Neue",Arial,sans-serif}
+.wrap{max-width:1000px;margin:0 auto;padding:52px 24px 90px}
+h1{font-size:31px;margin:0 0 8px;letter-spacing:-.6px}
+.sub{color:var(--muted);margin:0 0 30px;font-size:13.5px}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 20px}
+.kpi .v{font-size:27px;font-weight:650;letter-spacing:-.6px}
+.kpi .l{color:var(--muted);font-size:12.5px;margin-top:2px}
+.kpi.a .v{color:var(--blue)} .kpi.b .v{color:var(--purple)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:24px;margin-bottom:18px}
+h2{font-size:16.5px;margin:0 0 14px}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{padding:9px 8px;border-bottom:1px solid var(--line);text-align:center}
+th{color:var(--muted);font-weight:600;font-size:12px;letter-spacing:.3px;text-transform:uppercase}
+td.task{text-align:left;font-weight:500}
+td.pass{color:var(--ok);font-weight:600} td.fail{color:var(--bad);font-weight:600} td.na{color:#c8ccd4}
+.s{display:block;font-size:11px;font-weight:400;color:var(--muted)}
+.st{display:block;font-size:10.5px;font-style:normal;color:var(--warn)}
+.note{font-size:13.8px;color:#374151} .note li{margin-bottom:7px}
+.hl{background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:15px 18px;font-size:13.6px;color:#78350f}
+.good{background:#ecfdf5;border:1px solid #a7f3d0;border-radius:12px;padding:15px 18px;font-size:13.6px;color:#065f46}
+.info{background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:15px 18px;font-size:13.6px;color:#1e3a8a}
+canvas{max-height:250px}
+code{background:#f1f3f5;padding:1px 5px;border-radius:4px;font-size:12.5px}
+</style></head><body><div class="wrap">
+<h1>MCode vs MiMo-Code：编程能力与错误率</h1>
+<p class="sub">同一模型 DeepSeek-V4.1-Flash（192.168.10.233:8888，1M 上下文）· 8 个任务 × 2 轮 = 每方 16 个会话 · 隐藏测试判分（原始测试、洁净目录）</p>
+
+<div class="kpis">
+  <div class="kpi a"><div class="v">100%</div><div class="l">MCode 正确率 16/16</div></div>
+  <div class="kpi b"><div class="v">94%</div><div class="l">MiMo-Code 正确率 15/16</div></div>
+  <div class="kpi a"><div class="v">21s</div><div class="l">MCode 中位完成耗时</div></div>
+  <div class="kpi b"><div class="v">46s</div><div class="l">MiMo-Code 中位完成耗时</div></div>
+</div>
+
+<div class="card"><h2>逐任务结果</h2>
+<table><thead><tr><th style="text-align:left">任务</th><th>MCode #1</th><th>MCode #2</th><th>MiMo #1</th><th>MiMo #2</th></tr></thead>
+<tbody><tr><td class='task'>解析时长</td><td class="pass">✓<span class="s">65s</span></td><td class="pass">✓<span class="s">54s</span></td><td class="pass">✓<span class="s">111s</span></td><td class="pass">✓<span class="s">58s</span></td></tr><tr><td class='task'>修二分查找</td><td class="pass">✓<span class="s">13s</span></td><td class="pass">✓<span class="s">73s</span></td><td class="pass">✓<span class="s">48s</span></td><td class="pass">✓<span class="s">52s</span></td></tr><tr><td class='task'>LRU 缓存</td><td class="pass">✓<span class="s">14s</span></td><td class="pass">✓<span class="s">14s</span></td><td class="pass">✓<span class="s">69s</span></td><td class="pass">✓<span class="s">25s</span></td></tr><tr><td class='task'>CSV→JSON</td><td class="pass">✓<span class="s">25s</span></td><td class="pass">✓<span class="s">42s</span></td><td class="pass">✓<span class="s">59s</span></td><td class="pass">✓<span class="s">29s</span></td></tr><tr><td class='task'>修防抖</td><td class="pass">✓<span class="s">59s</span></td><td class="pass">✓<span class="s">101s</span></td><td class="fail">✗<span class="s">209s</span></td><td class="pass">✓<span class="s">90s</span></td></tr><tr><td class='task'>重试退避</td><td class="pass">✓<span class="s">21s</span></td><td class="pass">✓<span class="s">16s</span></td><td class="pass">✓<span class="s">24s</span></td><td class="pass">✓<span class="s">25s</span></td></tr><tr><td class='task'>扁平化键</td><td class="pass">✓<span class="s">21s</span></td><td class="pass">✓<span class="s">17s</span></td><td class="pass">✓<span class="s">44s</span></td><td class="pass">✓<span class="s">36s</span></td></tr><tr><td class='task'>区间重叠</td><td class="pass">✓<span class="s">20s</span></td><td class="pass">✓<span class="s">17s</span></td><td class="pass">✓<span class="s">29s</span></td><td class="pass">✓<span class="s">24s</span></td></tr></tbody></table>
+<p class="note" style="margin:12px 0 0;color:#6b7280">✓ 通过 · ✗ 未通过 · 数据为题目修正后的重跑结果（MCode 的 3 个会话已重跑，不再上报题目缺陷）</p>
+</div>
+
+<div class="card"><h2>正确率</h2><canvas id="c"></canvas></div>
+
+<div class="card"><h2>结论</h2>
+<div class="good"><b>一句话：</b>同一个 DeepSeek-V4.1-Flash 下，两个 agent 的编程能力没有代际差距——MCode 16/16（100%），MiMo-Code 15/16（94%）；MCode 中位耗时 21s、MiMo 46s，MCode 快约 2.2 倍。</div>
+
+<div class="info" style="margin-top:16px"><b>最重要的一条差异（此前被误读）：</b>在第一轮评测中（题目本身有 bug 时），MCode 有 <b>3 个会话没有直接交卷</b>，而是<b>发现评测题目本身有错，主动调用 <code>question</code> 工具向用户报告并等待决策</b>。它指出的问题与我事后手动修复的完全一致：<br>
+① 「<code>test/solution.test.js</code> 里没有 <code>import { debounce }</code>，每个用例都抛 ReferenceError，<b>任何 solution.js 的写法都不可能通过</b>」<br>
+② 「用例 <code>1m1d</code> 的期望值 87060 与其它用例矛盾，应为 86460」<br>
+这不是卡死，是<b>正确的工程行为</b>——遇到不可能满足的题目时停下来问，而不是硬编一个假答案骗过判分。MiMo 在同一批任务里也读到了这些错误（bash 输出里有同样的 ReferenceError），但它的工具集只有 bash/read/write/glob/edit，<b>没有向用户提问的通道</b>，于是只能自行绕过。<br>
+题目修好后重跑这 3 个会话，MCode 全部直接完成（54s / 59s / 101s），不再需要提问——说明它提问是因为<b>题目真的有问题</b>，而不是偷懒。</div>
+
+<ul class="note" style="margin-top:16px">
+<li><b>能力层面：</b>唯一失败样本是 MiMo 的 T5#1 防抖 leading 模式（同一任务第二轮就通过了），属单点失误而非系统性缺陷。</li>
+<li><b>速度层面：</b>MCode 大多数任务 13–25 秒收工；MiMo 普遍 24–209 秒，倾向反复自查、跑测试后才收尾。同样交付正确结果，MCode 的交互响应更干脆。</li>
+<li><b>工程素养层面：</b>MCode 会识别「题目本身不可能通过」并上报，MiMo 不会。在真实项目里这意味着——需求写错时，MCode 会来问你，MiMo 会默默猜一个方向做完。</li>
+<li><b>推理服务本身是干净的：</b>此前观察到的 1500+ 次「连接拒绝/断流」根因是我这边的评测通道——环境里的 <code>HTTP_PROXY</code> 让 MiMo 发出绝对 URL 请求、被本地重试代理拼成非法地址。去掉代理变量直连后，MiMo 16 个会话零故障、最快 24 秒完成。</li>
+</ul>
+
+<div class="hl" style="margin-top:16px"><b>评测工装修正（4 处，均已验证）：</b>① 任务里的 <code>npm test</code> 原为 <code>node --test test/</code>，在 Node 22.22/25.9 上把目录当模块解析直接报错，导致任何解法都判 FAIL；② T1 隐藏测试把 <code>1m1d</code> 的期望值写成 87060（正确为 86460）——MCode 自己发现了这条；③ T5 测试缺少 <code>import { debounce }</code>，导致永远失败——MCode 也发现了这条；④ 判分改为「洁净目录 + 原始测试」，避免 agent 改动测试文件骗过判分。修正后 stub 基线全部失败、参考实现全部通过，判分有区分度。</div>
+
+<div class="info" style="margin-top:16px"><b>顺带修掉的一个真实缺陷：</b>既然 MCode 会在题目有错时提问，那么「没人回答」就必须有出路。此前 <code>question</code> 工具会无限期等待——窗口关掉、崩溃、或无人值守跑批时，整个 turn 永久挂住。现在加了 30 分钟上限，超时按「用户跳过」处理（返回 Unanswered 让模型继续），不再挂死。</div>
+</div>
+
+<script>
+new Chart(document.getElementById('c'),{
+ type:'bar',
+ data:{labels:['MCode','MiMo-Code'],datasets:[
+  {label:'正确率 %',data:[100.0,93.8],backgroundColor:['#2563eb','#7c3aed'],borderRadius:8,maxBarThickness:90}
+ ]},
+ options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,max:100,grid:{color:'#eef0f3'},ticks:{callback:v=>v+'%'}},x:{grid:{display:false}}}}
+});
+</script>
+</div></body></html>

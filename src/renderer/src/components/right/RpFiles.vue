@@ -20,6 +20,7 @@ import { centreRange, clearPaint, paintRanges, textRanges } from "../../lib/dom-
 import { notify, notifyFailure } from "../../lib/toast"
 import { t } from "../../lib/i18n"
 import { modHeld } from "../../lib/keys"
+import { writeText } from "./../../lib/clipboard"
 
 /**
  * MiMo's files tab: the project's tree down the start, the chosen file beside
@@ -322,7 +323,7 @@ function openInBrowser(rel: string | undefined) {
 
 async function copyText(text: string) {
   try {
-    await navigator.clipboard.writeText(text)
+    await writeText(text)
     notify(t("rp.files.pathCopied"))
   } catch {
     notifyFailure(t("rp.files.copyPathFailed"))

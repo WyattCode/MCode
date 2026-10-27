@@ -50,6 +50,10 @@ function toolSchemas(tools: ToolDefinition[], model: ModelRef): Anthropic.Tool[]
  */
 export function toProviderMessages(messages: Message[], inputs?: Partial<ModelModalities>, model?: ModelRef): Anthropic.MessageParam[] {
   const out: Anthropic.MessageParam[] = []
+  // True while the last message pushed is a tool-result user turn: a real user
+  // message that follows (the loop was interrupted and the user typed) must be
+  // merged into it - the API rejects consecutive same-role messages.
+  let pendingResults = false
 
   for (const message of requestHistory(messages)) {
     if (message.role === "user") {
@@ -62,7 +66,15 @@ export function toProviderMessages(messages: Message[], inputs?: Partial<ModelMo
       }
       const text = userText(message)
       if (text) content.push({ type: "text", text })
-      if (content.length) out.push({ role: "user", content })
+      if (content.length) {
+        const last = out[out.length - 1]
+        if (pendingResults && last?.role === "user") {
+          // pendingResults is only true when the last push was a
+          // tool-result turn, whose content is always the block array.
+          last.content = [...(last.content as Anthropic.ContentBlockParam[]), ...content]
+        } else out.push({ role: "user", content })
+      }
+      pendingResults = false
       continue
     }
 
@@ -114,7 +126,10 @@ export function toProviderMessages(messages: Message[], inputs?: Partial<ModelMo
     }
 
     if (assistant.length || calls.length) out.push({ role: "assistant", content: [...assistant, ...calls] })
-    if (results.length) out.push({ role: "user", content: results })
+    if (results.length) {
+      out.push({ role: "user", content: results })
+      pendingResults = true
+    }
   }
 
   return out
@@ -162,11 +177,15 @@ export interface AnthropicReasoning {
 /**
  * MiMo's thinking budgets, cut from the model's own output limit: high is
  * min(16000, limit / 2 - 1) and max is min(31999, limit - 1). The API also
- * wants the budget under `max_tokens`, so it is kept below that too.
+ * wants the budget under `max_tokens`, so it is kept below that too. A limit
+ * too small to hold the 1_024 floor cannot carry thinking at all, so undefined
+ * is returned and the caller omits the field - a budget at or above
+ * `max_tokens` is rejected outright.
  */
-function budget(level: "high" | "max", outputLimit: number, maxTokens: number): number {
+function budget(level: "high" | "max", outputLimit: number, maxTokens: number): number | undefined {
   const wanted = level === "max" ? Math.min(31_999, outputLimit - 1) : Math.min(16_000, Math.floor(outputLimit / 2 - 1))
-  return Math.max(1_024, Math.min(wanted, maxTokens - 1))
+  const capped = Math.min(wanted, maxTokens - 1)
+  return capped < 1_024 ? undefined : capped
 }
 
 /**
@@ -210,7 +229,8 @@ export function reasoningRequest(
      * is the API's own shape; `display` is Anthropic's and is left off.
      */
     const kimi = ["k2p5", "kimi-k2.5", "kimi-k2p5"].some((mark) => id.includes(mark))
-    return kimi ? { thinking: { type: "enabled", budget_tokens: budget("high", outputLimit, maxTokens) } } : {}
+    const kimiBudget = kimi ? budget("high", outputLimit, maxTokens) : undefined
+    return kimi && kimiBudget !== undefined ? { thinking: { type: "enabled", budget_tokens: kimiBudget } } : {}
   }
   /*
    * `summarized`, as the reference asks for it (it sets the field on
@@ -237,19 +257,17 @@ export function reasoningRequest(
 
   if (anthropicOpus45(id)) {
     const level = OUTPUT_EFFORTS.find((entry) => entry === effort)
+    const thinkingBudget = budget("high", outputLimit, maxTokens)
     return {
-      thinking: { type: "enabled", budget_tokens: budget("high", outputLimit, maxTokens), display },
+      ...(thinkingBudget !== undefined ? { thinking: { type: "enabled", budget_tokens: thinkingBudget, display } } : {}),
       ...(level ? { output_config: { effort: level } } : {}),
     }
   }
 
-  return {
-    thinking: {
-      type: "enabled",
-      budget_tokens: budget(effort === "max" ? "max" : "high", outputLimit, maxTokens),
-      display,
-    },
-  }
+  const thinkingBudget = budget(effort === "max" ? "max" : "high", outputLimit, maxTokens)
+  return thinkingBudget === undefined
+    ? {}
+    : { thinking: { type: "enabled", budget_tokens: thinkingBudget, display } }
 }
 
 type MessagesBody = Parameters<Anthropic["messages"]["stream"]>[0]
