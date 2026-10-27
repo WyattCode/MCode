@@ -10884,34 +10884,76 @@ fun ProjectsScreen(
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 18.dp, end = 18.dp, top = 6.dp, bottom = 20.dp)) {
             items(visible.size) { index ->
                 val row = visible[index]
-                Box(Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+                /*
+                 * Two lines of words on the page, not a card.
+                 *
+                 * The reference's project row is text and nothing else: a name in
+                 * (19,19,19) and 「编辑于 …」 in (123,121,116), sitting straight
+                 * on the (249,249,247) ground. Scanned every column of that page
+                 * between the search field and the foot capsule - there is no
+                 * fill and no border anywhere, so the rows are separated by
+                 * whitespace alone. This drew a bordered white card with a folder
+                 * mark, a path and a session count, which turned a list of names
+                 * into a stack of objects.
+                 *
+                 * Measured off the reference: name ink 15.2 starting x 24.8,
+                 * second line 11.6 at the same x, 22.8 between their tops. The
+                 * second line here keeps the folder path rather than the
+                 * reference's edit date - this app has no such field - and the
+                 * count moves to the right of it.
+                 */
+                Box(Modifier.fillMaxWidth()) {
                     Row(
                         Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(MaterialTheme.colorScheme.surface)
-                            .border(1.dp, if (LocalBg.current == DarkBg) Color(0xFF2C2C2B) else Color(0xFFE4E1D8), RoundedCornerShape(12.dp))
                             .clickable { onOpen(row.directory) }
-                            .padding(start = 12.dp, end = 2.dp, top = 11.dp, bottom = 11.dp),
+                            .padding(start = 6.8.dp, end = 2.dp, top = 8.4.dp, bottom = 8.4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Icon(Icons.Outlined.Folder, contentDescription = null, tint = Ember, modifier = Modifier.size(20.dp))
-                        Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(row.name, fontSize = 14.sp, color = ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Spacer(Modifier.height(1.dp))
+                            /*
+                             * Two stated line heights rather than the defaults.
+                             *
+                             * The reference's name and its second line are 22.8
+                             * apart, top to top - closer than 17.2sp and 13.2sp
+                             * set their own leading, which came to 39.6 and left
+                             * the pair reading as one tall block of ink. 20.4 and
+                             * 16.4 add up to 22.8 with 2.8 between their boxes,
+                             * which is where the reference's 7.6 of clear space
+                             * comes from.
+                             */
+                            Text(
+                                row.name,
+                                fontSize = 17.2.sp,
+                                lineHeight = 20.4.sp,
+                                color = ink,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Spacer(Modifier.height(2.8.dp))
                             Text(
                                 row.directory,
-                                fontSize = 11.sp,
-                                color = muted,
+                                fontSize = 13.2.sp,
+                                lineHeight = 16.4.sp,
+                                color = if (LocalBg.current == DarkBg) DarkToolWhat else ToolWhat,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
+                        Spacer(Modifier.width(12.dp))
+                        /*
+                         * The count sits on the second line, not between the two.
+                         *
+                         * It is centred against the row, which put it halfway up
+                         * the name and read as belonging to neither line. Aligned
+                         * to the bottom of the column it lines up with the path
+                         * it describes - the count of that folder's threads.
+                         */
                         Text(
                             if (row.sessions == 1) "1 个会话" else "${row.sessions} 个会话",
-                            fontSize = 11.sp,
+                            fontSize = 13.2.sp,
                             color = muted,
+                            modifier = Modifier.align(Alignment.Bottom),
                         )
                         Spacer(Modifier.width(2.dp))
                         Box(
