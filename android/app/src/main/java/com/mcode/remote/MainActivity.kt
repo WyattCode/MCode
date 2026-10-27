@@ -170,6 +170,23 @@ private val ToolMark = Color(0xFF383835)
 private val ToolSummary = Color(0xFF53524F)
 private val DarkToolSummary = Color(0xFFB4B4B0)
 /*
+ * The +/- counter beside an edited-files row: one capsule, two halves.
+ *
+ * Measured off the reference's own thread: its green half runs (210,230,212)
+ * under text of (76,156,73), its pink half (234,206,215) under (212,136,160), and
+ * the two meet at a hard edge with no gap and no divider - so it reads as one
+ * object with a plus side and a minus side, not as two labels that happen to sit
+ * near each other. 17.6 tall.
+ */
+private val DiffAddBg = Color(0xFFD2E6D4)
+private val DiffAddFg = Color(0xFF4C9C49)
+private val DiffDelBg = Color(0xFFEACED7)
+private val DiffDelFg = Color(0xFFD488A0)
+private val DarkDiffAddBg = Color(0xFF23342A)
+private val DarkDiffAddFg = Color(0xFF8FCB8C)
+private val DarkDiffDelBg = Color(0xFF3A2530)
+private val DarkDiffDelFg = Color(0xFFE0A0B4)
+/*
  * The mark's own orange, measured off Claude's empty pane on the fold:
  * (204,124,94) where this used #D97757 = (217,119,87) - the same family but a
  * redder, less dusty tone, which showed most at the 40dp mark.
@@ -9276,6 +9293,46 @@ private fun PermButton(label: String, muted: Boolean, modifier: Modifier, primar
  * materialised in full just to be counted, which is what the first version of
  * this fix did.
  */
+/**
+ * The +/- counter: one capsule, split down the middle.
+ *
+ * The reference draws this as a single object - a green half for the lines added
+ * and a pink half for the lines removed, meeting at a hard edge with no gap and
+ * no divider between them. This app drew two bare monospace labels six apart in
+ * #1A7F37 / #E5484D, which read as two unrelated figures rather than as one
+ * change with a size. Measured: 17.6 tall, halves (210,230,212) and
+ * (234,206,215), text (76,156,73) and (212,136,160).
+ *
+ * Only the outer corners are rounded, so the shape stays one plate.
+ */
+@Composable
+private fun DiffCounter(add: Int, del: Int, modifier: Modifier = Modifier) {
+    if (add == 0 && del == 0) return
+    val dark = LocalBg.current == DarkBg
+    val addBg = if (dark) DarkDiffAddBg else DiffAddBg
+    val addFg = if (dark) DarkDiffAddFg else DiffAddFg
+    val delBg = if (dark) DarkDiffDelBg else DiffDelBg
+    val delFg = if (dark) DarkDiffDelFg else DiffDelFg
+    Row(modifier.height(17.6.dp).clip(RoundedCornerShape(8.8.dp))) {
+        if (add > 0) {
+            Box(
+                Modifier.fillMaxHeight().background(addBg).padding(horizontal = 5.2.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("+$add", fontSize = 11.6.sp, fontFamily = FontFamily.Monospace, color = addFg, maxLines = 1)
+            }
+        }
+        if (del > 0) {
+            Box(
+                Modifier.fillMaxHeight().background(delBg).padding(horizontal = 5.2.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("-$del", fontSize = 11.6.sp, fontFamily = FontFamily.Monospace, color = delFg, maxLines = 1)
+            }
+        }
+    }
+}
+
 internal fun diffSlice(diff: String, maxLines: Int): Pair<List<String>, Int> {
     if (maxLines <= 0) return emptyList<String>() to diff.lineSequence().count()
     val peek = diff.lineSequence().take(maxLines + 1).toList()
@@ -14701,10 +14758,7 @@ fun EditedCard(
             }
             if (add > 0 || del > 0) {
                 Spacer(Modifier.width(12.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("+$add", fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = Color(0xFF1A7F37))
-                    Text("-$del", fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = Color(0xFFE5484D))
-                }
+                DiffCounter(add, del)
             }
             /*
              * 撤销 and 审阅, as the desktop offers them behind the counts. The
@@ -14828,10 +14882,7 @@ fun EditedCard(
                             modifier = Modifier.weight(1f),
                         )
                         Spacer(Modifier.width(12.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text("+${file.add}", fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = Color(0xFF1A7F37))
-                            Text("-${file.del}", fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = Color(0xFFE5484D))
-                        }
+                        DiffCounter(file.add, file.del)
                     }
                 }
                 if (files.size > 3) {
