@@ -10922,15 +10922,33 @@ fun ProjectsScreen(
                              * which is where the reference's 7.6 of clear space
                              * comes from.
                              */
+                            /*
+                             * 16.8, and the number that got it here is a warning.
+                             *
+                             * This sat at 17.2 and drew 17.2 of ink against the
+                             * reference's 15.2, so it was dropped to 15.2 - and
+                             * that was the wrong direction. The two figures were
+                             * not comparable: the reference's row reads
+                             * 「如何使用 Claude」, whose ink is set by the CJK
+                             * glyphs, while the rows here read 「X-SSH」, 「MCode」
+                             * and 「Test」 - all Latin, with no descenders in the
+                             * first. A CJK square and a Latin cap-height are
+                             * different measures of the same point size.
+                             *
+                             * Compared instead on the one pair of glyphs both
+                             * sides have: the reference's 「Claude」 draws 12.8
+                             * of ink, and this one's 「MCode」 draws 11.6 at
+                             * 15.2sp, so 15.2 x 12.8/11.6 = 16.8.
+                             */
                             Text(
                                 row.name,
-                                fontSize = 17.2.sp,
-                                lineHeight = 20.4.sp,
+                                fontSize = 16.8.sp,
+                                lineHeight = 19.2.sp,
                                 color = ink,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
-                            Spacer(Modifier.height(2.8.dp))
+                            Spacer(Modifier.height(1.2.dp))
                             Text(
                                 row.directory,
                                 fontSize = 13.2.sp,
