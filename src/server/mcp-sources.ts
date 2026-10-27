@@ -59,23 +59,30 @@ export function containsSubstitution(value: unknown): boolean {
  */
 export async function substituteEntry(entry: unknown, configDirectory: string, home = sourceHome()): Promise<unknown> {
   if (typeof entry === "string") {
-    const text = entry.replace(/\{env:([^}]+)\}/g, (_match, name: string) => process.env[name] || "")
+    // One pass over the raw text: an env value appended here is never rescanned,
+    // so it cannot smuggle a `{file:…}` that reads an arbitrary path in.
     let out = ""
     let cursor = 0
-    for (const match of text.matchAll(/\{file:([^}]+)\}/g)) {
-      out += text.slice(cursor, match.index)
-      let file = match[1]
-      if (file.startsWith("~/")) file = path.join(home, file.slice(2))
-      const resolved = path.isAbsolute(file) ? file : path.resolve(configDirectory, file)
-      const content = await fs.readFile(resolved, "utf8").catch((error: NodeJS.ErrnoException) => {
-        throw new Error(
-          error.code === "ENOENT" ? `the file named by ${match[0]} does not exist (${resolved})` : `the file named by ${match[0]} could not be read`,
-        )
-      })
-      out += content.trim()
+    for (const match of entry.matchAll(/\{(env|file):([^}]+)\}/g)) {
+      out += entry.slice(cursor, match.index)
+      const kind = match[1]
+      const name = match[2].trim()
+      if (kind === "env") {
+        out += process.env[name] || ""
+      } else {
+        let file = match[2]
+        if (file.startsWith("~/")) file = path.join(home, file.slice(2))
+        const resolved = path.isAbsolute(file) ? file : path.resolve(configDirectory, file)
+        const content = await fs.readFile(resolved, "utf8").catch((error: NodeJS.ErrnoException) => {
+          throw new Error(
+            error.code === "ENOENT" ? `the file named by ${match[0]} does not exist (${resolved})` : `the file named by ${match[0]} could not be read`,
+          )
+        })
+        out += content.trim()
+      }
       cursor = match.index + match[0].length
     }
-    return out + text.slice(cursor)
+    return out + entry.slice(cursor)
   }
   if (Array.isArray(entry)) return Promise.all(entry.map((item) => substituteEntry(item, configDirectory, home)))
   if (isRecord(entry)) {

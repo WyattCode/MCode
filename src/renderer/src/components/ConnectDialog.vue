@@ -10,6 +10,7 @@ import { useEscapeLayer } from "../lib/escape-layer"
 import { connectableProviders, groupConnected, groupProviders, waysFor, type Group, type Way } from "../lib/connect"
 import ProviderIcon from "./ProviderIcon.vue"
 import CustomProviderForm from "./CustomProviderForm.vue"
+import { writeText } from "./../lib/clipboard"
 
 /**
  * Connecting a provider, as its own dialog.
@@ -246,7 +247,7 @@ async function copyCode() {
   if (!auth.value?.userCode) return
   // A refused clipboard is a notice, never the error page.
   try {
-    await navigator.clipboard.writeText(auth.value.userCode)
+    await writeText(auth.value.userCode)
   } catch {
     notifyFailure(t("code.copyFailed"))
     return

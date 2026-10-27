@@ -5,6 +5,7 @@ import { notifyFailure } from "../../lib/toast"
 import { prepareScoreAudio, renderScore, type RenderedScore, type ScoreAudio, type ScoreEngine } from "../../lib/abc"
 import { claimScoreAudio, progressAt, releaseScoreAudio } from "../../lib/abc-play"
 import { warmFluidSynth } from "../../lib/abc-fluidsynth"
+import { writeText } from "./../../lib/clipboard"
 
 /**
  * MiMo's ABC block: an ```abc fence (or an .abc file in the files tab) drawn
@@ -172,7 +173,7 @@ function onScoreClick(event: MouseEvent) {
 
 async function copy() {
   try {
-    await navigator.clipboard.writeText(source.value)
+    await writeText(source.value)
     copied.value = true
     clearTimeout(copiedTimer)
     copiedTimer = setTimeout(() => (copied.value = false), 2000)

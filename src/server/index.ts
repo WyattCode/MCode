@@ -269,7 +269,7 @@ export async function startBackend(dataDirectory: string, options: BackendOption
   // skills: uninstalled skills older than a week leave the trash, as MiMo's start-up sweep removes its own (L12-12).
   void pruneSkillTrash(storage.directory).then((removed) => {
     if (removed) console.info(`[skills] removed ${removed} uninstalled skill(s) older than a week from the trash`)
-  })
+  }).catch((error) => console.warn(`[skills] the trash sweep failed: ${error instanceof Error ? error.message : String(error)}`))
   // skills: a SKILL.md that will not parse is said in the window, once per file, as MiMo reports one.
   watchSkillProblems((problem) => bus.publish({ type: "skill.problem", path: problem.path, message: problem.message }))
   // memory: config's memory.disableWrite, read at every write so a hand edit takes effect at once.
@@ -494,6 +494,7 @@ export async function startBackend(dataDirectory: string, options: BackendOption
        * process ends. Inside the main process's five-second bound on close.
        */
       await permissions.flush()
+      config.unwatch()
       await config.drain()
       await storage.drain()
     },

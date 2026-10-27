@@ -4,6 +4,7 @@ import { getActivePinia } from "pinia"
 import { formatError } from "../lib/format-error"
 import { language, t } from "../lib/i18n"
 import { isPickerBusy, type PickerBusy } from "@shared/native-pick"
+import { writeText } from "./../lib/clipboard"
 
 /**
  * What is left when the interface itself has failed.
@@ -128,7 +129,7 @@ async function exportLogs() {
  */
 async function copy() {
   try {
-    await navigator.clipboard.writeText(details)
+    await writeText(details)
     copied.value = true
     setTimeout(() => (copied.value = false), 1600)
   } catch {

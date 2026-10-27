@@ -107,17 +107,58 @@ export interface UpdaterDeps {
   intervalMs?: number
 }
 
-/** MiMo's segment-wise version order: -1, 0 or 1. Missing or non-numeric segments count as 0. */
+/**
+ * MiMo's segment-wise version order: -1, 0 or 1. Missing or non-numeric segments count as 0.
+ * A pre-release sorts before the release it belongs to (`1.2.0-beta.1 < 1.2.0`),
+ * the way semver orders them - the old numeric-only read called a beta newer
+ * than its own release and a `1.2.3-beta` equal to `1.2.3`.
+ */
 export function compareVersions(a: string, b: string): number {
-  const parts = (value: string) => String(value ?? "").split(/[.+-]/).map((segment) => {
-    const number = Number.parseInt(segment, 10)
-    return Number.isFinite(number) ? number : 0
-  })
-  const left = parts(a)
-  const right = parts(b)
-  for (let index = 0; index < Math.max(left.length, right.length); index++) {
-    const difference = (left[index] ?? 0) - (right[index] ?? 0)
+  const parse = (value: string): { numbers: number[]; pre?: string } => {
+    let text = String(value ?? "")
+    // Build metadata (`+…`) never affects order; it may itself contain `-`,
+    // which must not be read as a pre-release marker.
+    const plus = text.indexOf("+")
+    if (plus !== -1) text = text.slice(0, plus)
+    const dash = text.indexOf("-")
+    const core = dash === -1 ? text : text.slice(0, dash)
+    const pre = dash === -1 ? undefined : text.slice(dash + 1)
+    return {
+      numbers: core.split(/[.+]/).map((segment) => {
+        const number = Number.parseInt(segment, 10)
+        return Number.isFinite(number) ? number : 0
+      }),
+      pre,
+    }
+  }
+  const left = parse(a)
+  const right = parse(b)
+  for (let index = 0; index < Math.max(left.numbers.length, right.numbers.length); index++) {
+    const difference = (left.numbers[index] ?? 0) - (right.numbers[index] ?? 0)
     if (difference !== 0) return difference > 0 ? 1 : -1
+  }
+  // Same core numbers: a plain release is newer than any pre-release of it.
+  const leftPre = left.pre
+  const rightPre = right.pre
+  if (!leftPre && !rightPre) return 0
+  if (leftPre && !rightPre) return -1
+  if (!leftPre && rightPre) return 1
+  // Both pre-releases: compare their dot segments, numerically where both are numbers.
+  const leftParts = leftPre!.split(".")
+  const rightParts = rightPre!.split(".")
+  for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index++) {
+    const l = leftParts[index]
+    const r = rightParts[index]
+    if (l === undefined) return -1
+    if (r === undefined) return 1
+    const ln = Number.parseInt(l, 10)
+    const rn = Number.parseInt(r, 10)
+    const bothNumbers = Number.isFinite(ln) && String(ln) === l && Number.isFinite(rn) && String(rn) === r
+    if (bothNumbers) {
+      if (ln !== rn) return ln > rn ? 1 : -1
+    } else if (l !== r) {
+      return l > r ? 1 : -1
+    }
   }
   return 0
 }
@@ -209,6 +250,8 @@ export interface Updater {
    * It stays in the cache and installs on the next ordinary quit.
    */
   holdInstallOnQuit(): void
+  /** Undoes a hold whose session end was cancelled: an ordinary quit installs again. */
+  resumeInstallOnQuit(): void
 }
 
 /*
@@ -374,6 +417,11 @@ export function createUpdater(deps: UpdaterDeps): Updater {
       // electron-updater reads the flag in its quit handler, so this holds even after the download.
       updater.autoInstallOnAppQuit = false
       if (ready) deps.log(`[update] the OS is ending the session; ${ready.version} installs on the next quit`)
+    },
+    resumeInstallOnQuit() {
+      // A session end that was cancelled must not hold forever: the next
+      // ordinary quit installs the ready update as normal.
+      updater.autoInstallOnAppQuit = true
     },
   }
 }

@@ -84,7 +84,7 @@ import {
   setBounds,
 } from "./browser"
 import { captionOverlay, refreshTitlebar, setTitlebarMode } from "./titlebar"
-import { EXECUTABLE_REFUSAL, isProgram } from "./paths"
+import { EXECUTABLE_REFUSAL, isBundleProgram, isProgram } from "./paths"
 import { fcitxEnvironment } from "./linux-ime"
 import { linuxIconSync } from "./linux-icon-sync"
 import { WINDOW_STATE_FILE, maximizeAtStart, restore, saveWindowState, toggleMaximize, track } from "./window-state"
@@ -1311,7 +1311,12 @@ app.whenReady().then(async () => {
       liveUpdater = created
       if (osQuitting) created.holdInstallOnQuit()
       created.start()
-      app.on("before-quit", () => created.stop())
+      app.on("before-quit", () => {
+        created.stop()
+        // An ordinary quit (the OS not ending the session) installs as normal,
+        // even after a held install from a session end that was cancelled.
+        if (!osQuitting) created.resumeInstallOnQuit()
+      })
       return created
     })
     .catch((error: unknown) => {
@@ -1503,6 +1508,16 @@ app.whenReady().then(async () => {
        * other channel that opens a file for the reader.
        */
       const stat = await fs.stat(target).catch(() => undefined)
+      // A directory opens as itself: 打开位置 hands the project folder over,
+      // and a folder needs no app chosen. But a macOS .app bundle is a
+      // directory on disk and shell.openPath would launch it - the exact
+      // thing R25-E1 keeps this channel from doing - so the bundle check
+      // runs on folders too (isProgram itself cannot: a folder always has
+      // the execute bits its unix arm reads).
+      if (stat?.isDirectory()) {
+        if (await isBundleProgram(target)) return EXECUTABLE_REFUSAL
+        return await shell.openPath(target)
+      }
       if (!stat?.isFile()) return "not a file"
       if (await isProgram(target, stat)) return EXECUTABLE_REFUSAL
       // A non-empty return is the shell's reason for refusing; it is worth showing.

@@ -118,7 +118,7 @@ export async function roundEighteenSettingsChecks(check: Check, section: (name: 
     check("R18-M1: skill.ts no longer says MiMo switches the four folders off", !/switches all four off/.test(source))
     const settings = await read("src/renderer/src/components/SettingsDialog.vue")
     check("R18-M1: the config page lists the four folders with a switch each", /data-skill-path-switch/.test(settings) && /\["agents", "claude", "codex", "opencode"\]/.test(settings))
-    check("R18-M1: and the config file row can copy its path", /data-config-copy-path/.test(settings) && /navigator\.clipboard\.writeText\(target\)/.test(settings))
+    check("R18-M1: and the config file row can copy its path", /data-config-copy-path/.test(settings) && /await writeText\(target\)/.test(settings) && /import \{ writeText \} from \"\.\/\.\.\/lib\/clipboard\"/.test(settings))
   }
 
   // ---------------------------------------------------------------- R18-M2

@@ -249,7 +249,7 @@ export async function roundNineteenLaneAChecks(check: Check, section: (name: str
     const settings = await read("src/renderer/src/components/SettingsDialog.vue")
     const page = settings.slice(settings.indexOf("data-config-page"), settings.indexOf("data-agents-row"))
     check("the line shows homePath(...)", /data-config-path :title="configFile\?\.path">\{\{ configFile \? homePath\(configFile\.path, paths\?\.home\) : "" \}\}/.test(page))
-    check("the copy still takes the real path", /const target = configFile\.value\?\.path\n\s+if \(!target\) return\n\s+try \{\n\s+await navigator\.clipboard\.writeText\(target\)/.test(settings))
+    check("the copy still takes the real path", /const target = configFile\.value\?\.path\n\s+if \(!target\) return\n\s+try \{\n\s+await writeText\(target\)/.test(settings))
     const { homePath } = await import("../src/renderer/src/lib/home-path")
     check("which reads as ~ under the home folder", homePath("C:\\Users\\me\\AppData\\Roaming\\MCode\\config.json", "C:\\Users\\me") === "~\\AppData\\Roaming\\MCode\\config.json")
   }

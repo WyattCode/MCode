@@ -8,6 +8,7 @@ import { notifyFailure } from "../../lib/toast"
 import { openImagePreview } from "../../lib/image-preview"
 import { copyImageFile, openNative } from "../../lib/path-open"
 import { blobToBase64, exportableSvg, isDarkTheme, rasterise, sanitizeSvgFence, themeBackground } from "../../lib/diagram"
+import { writeText } from "./../../lib/clipboard"
 
 /**
  * MiMo's card for an .svg file named in a reply: the code block's frame with
@@ -80,7 +81,7 @@ async function copyImage() {
 
 async function copyCode() {
   try {
-    await navigator.clipboard.writeText(props.text)
+    await writeText(props.text)
     copiedCode.value = true
     clearTimeout(codeTimer)
     codeTimer = setTimeout(() => (copiedCode.value = false), 2000)

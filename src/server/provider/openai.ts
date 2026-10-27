@@ -333,10 +333,13 @@ export const OpenAICompatible: ProviderAdapter = {
     }
     guard.alive()
 
-    // Blocks are indexed for the UI; text always occupies slot 0, reasoning 1,
-    // since this format has no notion of interleaved blocks.
+    // Blocks are indexed for the UI; text always occupies slot 0, reasoning 1.
+    // A reasoning stretch after text reopens at a fresh index instead of
+    // re-starting block 1, which already ended.
     let textOpen = false
     let reasoningOpen = false
+    let reasoningIndex = 1
+    let reasoningUsed = false
     const pending = new Map<number, { id: string; name: string; args: string; announced: boolean }>()
     /**
      * Slot for a delta that carries no `index`.
@@ -354,6 +357,9 @@ export const OpenAICompatible: ProviderAdapter = {
     }
     let finish: string | null = null
     let usage: Omit<Usage, "cost"> = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 }
+    // Made-up ids for tool calls whose server sends none, shared by the
+    // announce pass and the finalize pass below.
+    let unnamed = 0
 
     // `onRead` keeps the stall timer on the bytes themselves, so a comment or a
     // keep-alive counts as the provider being alive, as MiMo's chunk timeout does.
@@ -369,7 +375,13 @@ export const OpenAICompatible: ProviderAdapter = {
         continue
       }
 
-      if (chunk.usage) usage = usageOf(chunk.usage, request.model.provider)
+      if (chunk.usage) {
+        const next = usageOf(chunk.usage, request.model.provider)
+        const counted = next.input + next.output + next.reasoning + next.cacheRead + next.cacheWrite
+        // A gateway may send a real count mid-stream and a zeroed frame at the
+        // end; only a frame that counted something may displace what is kept.
+        if (counted > 0) usage = next
+      }
 
       if (chunk.error) throw describeStreamError(chunk.error)
 
@@ -390,15 +402,19 @@ export const OpenAICompatible: ProviderAdapter = {
       if (reasoning) {
         if (!reasoningOpen) {
           reasoningOpen = true
-          emit({ type: "reasoning.start", index: 1 })
+          // A stretch that reopens after text is a new block: the first one
+          // ended with its own block.end and its index cannot start again.
+          if (reasoningUsed) reasoningIndex++
+          reasoningUsed = true
+          emit({ type: "reasoning.start", index: reasoningIndex })
         }
-        emit({ type: "reasoning.delta", index: 1, text: reasoning })
+        emit({ type: "reasoning.delta", index: reasoningIndex, text: reasoning })
       }
 
       if (delta.content) {
         if (reasoningOpen) {
           reasoningOpen = false
-          emit({ type: "block.end", index: 1 })
+          emit({ type: "block.end", index: reasoningIndex })
         }
         if (!textOpen) {
           textOpen = true
@@ -410,13 +426,18 @@ export const OpenAICompatible: ProviderAdapter = {
       for (const call of delta.tool_calls ?? []) {
         const at = slotFor(call)
         const slot = pending.get(at) ?? { id: "", name: "", args: "", announced: false }
-        if (call.id) slot.id = call.id
+        // A card that already went out is keyed by the id it went out with; a
+        // repeat of that id on a later chunk is harmless, a different one must not re-key it.
+        if (call.id && !slot.announced) slot.id = call.id
         if (call.function?.name) slot.name += call.function.name
         if (call.function?.arguments) slot.args += call.function.arguments
         pending.set(at, slot)
 
         // Announce as soon as the name is complete so the card appears while
-        // the arguments are still streaming.
+        // the arguments are still streaming - but only against an id the server
+        // has sent. A stand-in announced before a late real id left that call
+        // unmatched: one card stuck on pending, one duplicate. A server that
+        // never sends ids gets its stand-in when the stream ends, below.
         if (!slot.announced && slot.name && slot.id) {
           slot.announced = true
           emit({ type: "tool", callID: slot.id, name: slot.name })
@@ -432,7 +453,7 @@ export const OpenAICompatible: ProviderAdapter = {
      */
     if (request.signal.aborted) throw new DOMException("Aborted", "AbortError")
 
-    if (reasoningOpen) emit({ type: "block.end", index: 1 })
+    if (reasoningOpen) emit({ type: "block.end", index: reasoningIndex })
     if (textOpen) emit({ type: "block.end", index: 0 })
 
     // A stream that carried no reply and no stated reason is a failure the
@@ -441,7 +462,6 @@ export const OpenAICompatible: ProviderAdapter = {
       throw new ProviderError("The provider closed the connection without sending a reply.", "error.noReply")
     }
 
-    let unnamed = 0
     const toolCalls: ToolCall[] = [...pending.values()]
       .filter((slot) => slot.name)
       .map((slot) => ({

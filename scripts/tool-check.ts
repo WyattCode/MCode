@@ -479,6 +479,31 @@ async function main(): Promise<void> {
 
   {
     /*
+     * 3. A question nobody ever answers.
+     *
+     * Stop settles a parked question, but a window that is simply gone - closed,
+     * crashed, or a session driven with no reader at all - sends no stop. The
+     * reference leaves that promise unsettled and the turn hangs for ever; here
+     * the wait ends on its own, read as a skip so the model gets "Unanswered"
+     * and carries on. Shortened to a moment so the check does not sit for half
+     * an hour.
+     */
+    const asked = new Questions(new Bus(), 50)
+    const answered = await Promise.race([
+      asked
+        .ask({
+          sessionID: "ses_unread",
+          questions: [{ question: "q", header: "h", options: [{ label: "a", description: "b" }] }],
+        })
+        .then((value) => `answered:${JSON.stringify(value)}`, () => "rejected"),
+      new Promise<string>((resolve) => setTimeout(() => resolve("never"), 600)),
+    ])
+    check("a question nobody answers is read as skipped, not left parked", answered === "answered:[]", answered)
+    check("and is no longer outstanding once it timed out", asked.outstanding().length === 0, String(asked.outstanding().length))
+  }
+
+  {
+    /*
      * 2. A shell that cannot start must still be able to say so.
      *
      * The bus reaches the socket the moment it is published, and `open` is

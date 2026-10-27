@@ -29,6 +29,7 @@ import { pageRows } from "../lib/shortcut-page"
 import { fullAccessOff } from "../lib/confirm-queue"
 import { notifyFailure, notify } from "../lib/toast"
 import { installUpdate, updateState } from "./UpdatePill.vue"
+import { writeText } from "./../lib/clipboard"
 
 /* MiMo's 当前版本 button reads the update capsule's phase; a download announced by the app counts as ready. */
 const updatePhase = computed(() =>
@@ -161,7 +162,7 @@ async function copyConfigPath() {
   const target = configFile.value?.path
   if (!target) return
   try {
-    await navigator.clipboard.writeText(target)
+    await writeText(target)
     notify(t("set.config.pathCopied"), { level: "success" })
   } catch {
     notifyFailure(t("set.config.copyPathFailed"))
