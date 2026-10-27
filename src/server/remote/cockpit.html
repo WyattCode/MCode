@@ -281,18 +281,18 @@ function addToolRow(part) {
   $("timeline").appendChild(row); scroll();
 }
 
-function addPermissionCard(request) {
+function addPermissionCard(asked) {
   const card = document.createElement("div");
   card.className = "pcard";
-  card.id = "pc-" + request.id;
-  const t = document.createElement("div"); t.className = "t"; t.textContent = "权限请求：" + (request.kind || "tool");
+  card.id = "pc-" + asked.id;
+  const t = document.createElement("div"); t.className = "t"; t.textContent = "权限请求：" + (asked.kind || "tool");
   const d = document.createElement("div"); d.className = "d";
-  d.textContent = [request.title, request.meta && request.meta.path, JSON.stringify(request.input || "").slice(0, 200)].filter(Boolean).join(" · ");
+  d.textContent = [asked.title, asked.meta && asked.meta.path, JSON.stringify(asked.input || "").slice(0, 200)].filter(Boolean).join(" · ");
   const btns = document.createElement("div"); btns.className = "btns";
   for (const [label, value, cls] of [["允许一次", "once", "allow"], ["总是允许", "always", "allow"], ["拒绝", "reject", "reject"]]) {
     const b = document.createElement("button");
     b.className = cls; b.textContent = label;
-    b.onclick = () => { request({ type: "permission.respond", requestID: request.id, response: value }); card.remove(); };
+    b.onclick = () => { request({ type: "permission.respond", requestID: asked.id, response: value }); card.remove(); };
     btns.appendChild(b);
   }
   card.append(t, d, btns);
@@ -309,19 +309,20 @@ function removePermissionCard(id) { const el = $("pc-" + id); if (el) el.remove(
  * Without this a phone would show a busy conversation and nothing to press,
  * and the turn would sit until the question timed out.
  */
-function addQuestionCard(request) {
-  if (!request || !request.questions || !request.questions.length) return;
+function addQuestionCard(asked) {
+  if (!asked || !asked.questions || !asked.questions.length) return;
   // The event and the replay can both name the same question; one card answers it.
-  if ($("qc-" + request.id)) return;
+  if ($("qc-" + asked.id)) return;
   const card = document.createElement("div");
   card.className = "pcard qcard";
-  card.id = "qc-" + request.id;
+  card.id = "qc-" + asked.id;
   const t = document.createElement("div"); t.className = "t";
-  t.textContent = request.loop ? "重复调用确认" : "需要你的决定";
-  const answers = request.questions.map(() => []);
-  const send = () => { request({ type: "question.reply", requestID: request.id, answers }); card.remove(); };
+  t.textContent = asked.loop ? "重复调用确认" : "需要你的决定";
+  card.appendChild(t);
+  const answers = asked.questions.map(() => []);
+  const send = () => { request({ type: "question.reply", requestID: asked.id, answers }); card.remove(); };
 
-  request.questions.forEach((q, qi) => {
+  asked.questions.forEach((q, qi) => {
     const label = document.createElement("div"); label.className = "qtext";
     label.textContent = q.question.slice(0, 240);
     card.appendChild(label);
@@ -344,7 +345,7 @@ function addQuestionCard(request) {
 
   const skip = document.createElement("button");
   skip.className = "reject"; skip.textContent = "跳过（Unanswered）";
-  skip.onclick = () => { request({ type: "question.reply", requestID: request.id, answers: request.questions.map(() => []) }); card.remove(); };
+  skip.onclick = () => { request({ type: "question.reply", requestID: asked.id, answers: asked.questions.map(() => []) }); card.remove(); };
   // In a row of its own: `.pcard button` is `flex: 1` and only stretches inside
   // `.btns`, so a bare child would collapse to the width of its own label.
   const skipRow = document.createElement("div"); skipRow.className = "btns";

@@ -138,9 +138,37 @@ layout toggle; none of that is on the reference and all of it is gone. The card
 was a three-across grid of square tiles; it is now the reference's horizontal
 record.
 
+## 设置 — reference captured, this app still a full-screen two-column
+
+`CP-设置.png` (S3) is the reference's settings pane, captured this pass. It is
+**not** a page: it is a panel that slides over the left of the conversation, which
+stays visible on the right.
+
+| | reference | this app |
+|---|---|---|
+| panel | white, x 12.0..347.6 (w 335.6), y 108.8 → bottom, rounded at the top only | full-screen two columns |
+| page ground | (249,249,247) behind the panel | — |
+| header | 设置 centred on the panel, back arrow at 15.6..32.0 | 设置 at start, no back button |
+| account row | email at x 24.4, plan chip (Max) at 270.8 | none |
+| rows | **12**: 个人资料 / 账单 / 用量 / 功能 / Claude Code / 连接器 / 权限 / 颜色模式 / 字体样式 / 语音 / 通知 / 时间与专注 | 12, **different names and order** |
+| row icon | x 26.4..45.2 (≈18 wide), words at 58.8 | none — text only |
+| row text | 58.8, ink 18.0 | 14sp, x varies |
+| row pitch | 58.0 plain; 60.0 after a subtitle; 73.2 when the row below carries one | 9 vertical padding per row |
+| subtitle | 已启用 4 项 at y 396.0 under 功能 | only some rows |
+| divider | (221,221,221) at 165.6, under the account row | a 1 wide hairline column |
+
+Two things this changes beyond numbers: the reference's settings **overlays** rather
+than replacing the conversation, and every row carries an icon. Neither is true
+here, so matching the metrics alone would still look wrong.
+
+Row names are the reference's own; the app's 12 (`常规 / 使用情况 / 外观 / 配置 /
+模型 / 个性化 / 键盘快捷键 / MCP 服务器 / 环境 / 实验室功能 / 已归档对话 /
+应用更新`) are a different set from a different product surface. Mapping them is a
+product decision, not a measurement.
+
 ## Not yet compared
 
-- The diff card and the delivery card (the tool summary line is done, below)
+- The diff card and the delivery card
 - Code-block geometry (the reference thread has no fenced block; only its shape is
   confirmed here — label, syntax colour, plate, copy/share/more)
 - The 定时任务 foot capsule is 110.4 wide against 122.8, and the twelve come from a
@@ -149,31 +177,69 @@ record.
   preview thumbnail — correct for a record with nothing to render, unverified
   for one that has
 - Inline-code chip geometry and colour (see the conversation pane above)
-- The tool summary row's own metrics: the words are now the desktop's, but its
-  indent, icon and font size were never put beside the reference's line
+- The summary's *opening* gesture: the reference lifts a bottom sheet with a title,
+  a close button and the calls inside; this app expands in place
 
-## The tool summary row — words matched, metrics not
+## The tool row — matched
 
-A run of calls folds into one line and the line had four drifts from the desktop
-at once, all of them in the *counting* rather than the drawing:
+A run of calls folds into one summary line, and opening it gives one row per call.
+Both were put beside the reference's own thread on the pad (CX2, and the sheet its
+summary opens) and four things were wrong at once.
 
-| | was | now |
+### The step had a rail it should not have
+
+A grey rule ran down the left of every step with its content inset 14, so a step's
+prose started right of a plain reply's and the two paragraphs of one turn sat in
+different columns. The reference has no rule at all. Tested by counting dark pixels
+down every column between x 375 and 405 in both reference threads: no column stays
+lit for the height of a step. What reads as a rule in a downscaled crop is the left
+side bearing of the text.
+
+The summary line carried a 23 indent as well, on a note pointing at the desktop's
+`.hstep.indent` — which applies to a call nested *under* a summary, not to the
+summary itself. Measured: the reference's 「已运行 2 条命令」 starts at x 401.6 with
+the paragraph under it at 401.6 and a bold heading at 400.8, so all three share a
+column. Ours after the change: summary 410.4, prose 410.8.
+
+### One row, three greys
+
+| | reference | this app |
 |---|---|---|
-| `glob` / `grep` | counted as reads | own bucket, 「已搜索 N 次」 |
-| read bucket | 「读取了」 | 「已读取」 (the desktop's word) |
-| read/edit count | calls | distinct paths |
-| edits | folded into 「已使用 N 个工具」 | 「已编辑 N 个文件」 |
-| failure | 「（N 个失败）」 appended | not in the text; the desktop marks it with an icon |
-| separator | `, ` | 「 · 」 |
+| summary | (83,82,79) | **(83,82,79)** |
+| mark | (56,56,53) | **(56,56,53)** |
+| verb 「已运行」 | (19,19,19) | (31,30,28) |
+| target 「Read mission…」 | (123,121,116) | **(123,121,116)** |
 
-Verified against a live turn on the pad — two globs then one read, prompted over
-the socket rather than typed, because `input text` drops characters — which now
-reads 「已搜索 2 次」 then 「已读取 resources/skills/visualizer/SKILL.md」. The old
-code called the first line 「读取了 2 个文件」.
+Every part was one muted grey, so a dozen calls read as a wall. The verb now takes
+the body ink, the target a new `ToolWhat`, the mark a new `ToolMark`, and the
+summary a `ToolSummary` a step darker than `InkMuted`.
 
-Ten tests hold it (`RunSummaryTest`). They need a real `org.json`: the JVM test
-classpath stubs it, and `returnDefaultValues = true` would have made every
-assertion pass against the stub instead of against parsed JSON.
+### The mark was a third too small
+
+Reference ink 15.6 by 11.6; this drew 10.4 by 10.4 from a 14 box with a 6 gap. The
+slot is 15.6 with a 16 gap now, and its ink measures 11.6 high — the reference's
+own number. Its width still reads 11.6 against 15.6 because the glyphs differ: a
+round magnifier for a search here, a wide fork for a shell call there. Each is the
+right mark for its family, so the width is left alone.
+
+### The connector
+
+Two rows of one group are joined by a 0.8 hairline at x 395.2..396.0 in
+(216,216,214) — and 395.4 is the *mark's* centre (it spans 387.6..403.2), so the
+line drops out of the icon rather than occupying a column of its own. It now does
+the same here: drawn in the row's `drawBehind` at half the 15.6 slot, from below
+the mark's ink to the row's bottom, skipped on a group's last row and on any row
+that is not `indent`ed. On the pad it measures x 439.2..440.0 in exactly
+(216,216,214).
+
+### The words were already right
+
+The counting drift was fixed in an earlier round and holds: `glob`/`grep` in their
+own bucket, 「已搜索 N 次」, distinct paths for reads and edits, 「 · 」 between
+clauses. Verified on a live turn — two globs then a read now reads 「已搜索 2 次」
+then 「已读取 resources/skills/visualizer/SKILL.md」 where the old code said
+「读取了 2 个文件」. Ten tests hold it (`RunSummaryTest`), and they need a real
+`org.json`: the JVM test classpath stubs it.
 
 ## A "defect" that was my own miscount
 

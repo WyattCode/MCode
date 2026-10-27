@@ -1,36 +1,22 @@
-android: the run summary counts like the desktop does
+feat(android): join the rows of one expanded group with the reference's hairline
 
-A run of calls folds into one line - 「已读取 2 个文件 · 已运行 1 条命令」 - and
-that line had drifted from the desktop in four separate ways at once:
+Opening a folded group gave a stack of rows with no thread between them, so a
+list of calls read as separate entries rather than as one step.
 
-  - `glob` and `grep` counted as reads. A run of two searches and one read said
-    「读取了 3 个文件」 when one file had been opened and two patterns looked for.
-  - The desktop splits reads, edits, commands, searches and everything else into
-    five buckets (bucketOf in lib/tool-meta.ts) and words each from
-    buildWorkDisplay.* in lib/i18n.ts. This assembled its own wording, so the
-    read bucket came out 「读取了」 against the desktop's 「已读取」.
-  - Reads and edits counted calls, not files: the desktop collects each call's
-    path into a set and counts its size (groupSummary in lib/step-rows.ts), so
-    one file opened twice is one file. This said two.
-  - Edits were folded into a generic 「已使用 N 个工具」, and a failure count was
-    appended to the line - a second, differently-worded signal for something the
-    desktop marks with an icon.
+Measured the reference's connector between two of its expanded rows: a 0.8 rule
+at x 395.2..396.0 in (216,216,214). Its mark spans 387.6..403.2, so 395.4 is
+that mark's own centre - the line is not a column of its own but drops out of
+the icon, which is what makes it read as one list.
 
-Rewritten to the desktop's rules: five buckets in first-appearance order, joined
-with 「 · 」, paths deduplicated for read and edit, no failure note in the text.
+Drawn in the row's `drawBehind`, at 7.8 from the column's edge (half the 15.6
+slot) and from below the mark's ink to the row's bottom, so the next row's line
+picks it up without a seam. `linked` is false on the group's last row, and the
+line is only drawn for rows that carry `indent` - a lone call has nothing to be
+joined to.
 
-Verified on the pad against a live turn - two globs then one read - which now
-reads 「已搜索 2 次」 then 「已读取 resources/skills/visualizer/SKILL.md」. Under the
-old code the first line said 「读取了 2 个文件」.
+On the pad it lands at x 439.2..440.0 in exactly (216,216,214).
 
-Ten tests hold it (RunSummaryTest). They needed a real org.json: the JVM test
-classpath stubs it out, and `returnDefaultValues = true` would have made every
-assertion pass against the stub rather than against parsed JSON, so the
-reference implementation is on the test classpath instead.
-
-Also corrects a "known defect" this file carried for a round. I had recorded that
-a 105-message thread rendered a single row. It renders all 105: `session.get`
-returns them, and replaying that payload through the row rules gives 138 visible
-elements. The drawer held two conversations with the same title from consecutive
-days, and I mapped the row I meant onto the wrong y and opened the one-message
-sibling. PORT-STATUS now says so.
+The one gesture still not matched is the summary's own: the reference lifts a
+bottom sheet with a title, a close button and the calls inside it, where this
+app expands in place. That is an interaction change rather than a metric, so it
+is recorded in PORT-STATUS and left for its own round.
