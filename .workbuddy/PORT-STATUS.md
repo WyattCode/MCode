@@ -190,7 +190,38 @@ Row names are the reference's own; the app's 12 (`常规 / 使用情况 / 外观
 应用更新`) are a different set from a different product surface. Mapping them is a
 product decision, not a measurement.
 
+## 项目 — matched
+
+Its rows were bordered white plates with a folder mark, a path in 11sp and a
+count on the same line. The reference's page is a list of names on the page.
+
+Checked first: every column between the search field and the foot capsule was
+scanned for a fill or a border, and there is neither - the rows are separated by
+whitespace alone. Name ink 15.2 at x 24.8, second line 11.6 at the same x, the
+two 22.8 apart top to top.
+
+| | reference | before | after |
+|---|---|---|---|
+| name ink | 15.2 @ x 24.8 | 12.4 @ x 32.0 | **15.2 @ x 25.2** |
+| second line | 11.6 @ x 24.8 | 10.0 @ x 32.0 | **11.2 @ x 25.2** |
+| plate | none | white, 1dp border, 12 corner | **none** |
+| folder mark | none | Ember, 20dp | **none** |
+
+The second line carries the folder path where the reference puts an edit date it
+does not expose, and the count and its menu stay because this app has data the
+reference's row does not. Two line heights are stated (20.4 and 16.4) because the
+defaults put 39.6 between the two tops where the reference has 22.8.
+
+## 插件 — no reference, so not a gap
+
+The reference's drawer carries exactly four entries - 项目, Code, Artifacts,
+定时任务 - and no plugins page. Its twelve-row settings pane has no such item
+either. So this app's plugins page is **its own**, and listing it as an
+uncompared screen was wrong: there is nothing on the reference to compare it to.
+
 ## Not yet compared
+
+
 
 - The diff card and the delivery card
 - Code-block geometry (the reference thread has no fenced block; only its shape is

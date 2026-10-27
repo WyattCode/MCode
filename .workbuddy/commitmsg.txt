@@ -1,35 +1,28 @@
-refactor(android): the settings list takes the reference's rhythm and its marks
+refactor(android): a project is a name and a line of text, not a card
 
-The twelve page names were a dense column of words: 14sp at a 42.4 pitch, no
-icons, one continuous black list on a white field. The reference's settings
-pane is not that - it is twelve separate plates, each led by a glyph.
+Each project was a bordered white plate with a folder mark, a path in 11sp and
+a session count on the same line - a stack of objects. The reference's projects
+page is a list of names on the page itself.
 
-Measured off the reference (its settings pane, opened from the drawer's
-account row):
+Checked before changing anything: scanned every column of the reference's page
+between the search field and the foot capsule for a fill or a border and found
+neither, so its rows are separated by whitespace alone. Its name measures 15.2
+of ink at x 24.8, its second line 11.6 at the same x, and the two are 22.8 apart
+top to top.
+
+Now:
 
 | | reference | before | after |
 |---|---|---|---|
-| label ink | 15.2 | 12.4 | **15.2 .. 15.6** |
-| row pitch | 58.0 | 42.4 | **58.0 .. 58.8** |
-| mark | 18.0 wide at x 26.8..44.8 | none | **18.0 at x 27.6..45.6** |
-| row ground | (255,255,255) | transparent | **white** |
-| gap between rows | 1.6, page ground | none | **1.6, page ground** |
-| corner | 13.6 | 8 | **13.6** |
+| name ink | 15.2 @ x 24.8 | 12.4 @ x 32.0 | **15.2 @ x 25.2** |
+| second line ink | 11.6 @ x 24.8 | 10.0 @ x 32.0 | **11.2 @ x 25.2** |
+| plate | none | white, 1dp border, 12 corner | **none** |
+| folder mark | none | Ember, 20dp | **none** |
 
-The label grows 17.2sp, which is 14 x 15.2/12.4, and 17.0 of vertical padding
-carries the rest of the pitch. The marks are a `markOf` function rather than an
-enum property: `Icons.Outlined.*` resolves through Compose's lazy vector cache,
-which is not available while an enum's constants are being initialised.
+Two line heights are stated, 20.4 and 16.4, because 17.2sp and 13.2sp set their
+own leading to 39.6 together and the pair then read as one tall block.
 
-An idle plate is `Color.White` and not `LocalSurface` - the latter is #FEFEFE,
-one level off the #F9F9F7 ground, and with it the 1.6 gaps disappear.
-
-Two things this round did *not* change, both recorded in PORT-STATUS:
-the settings surface is still a full-screen two-column page where the reference
-slides a panel over the conversation, and the twelve names are this app's own
-rather than the reference's. Both are product decisions, not measurements.
-
-Also removed, because the file had not compiled since the origin/main merge: a
-`reconnect` Runnable naming a `reconnectUrl`, a `reconnectToken` and a `dial`
-that do not exist anywhere. Nothing referenced it either - the comment above it
-says retries are driven by the UI loop calling `connect()` again.
+Kept, because this app has data the reference's row does not: the folder path on
+the second line stands where the reference puts an edit date it does not expose,
+and the session count and its menu stay, the count now bottom-aligned so it sits
+on the path's line rather than floating between the two.
