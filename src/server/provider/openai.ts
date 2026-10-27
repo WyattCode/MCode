@@ -426,20 +426,20 @@ export const OpenAICompatible: ProviderAdapter = {
       for (const call of delta.tool_calls ?? []) {
         const at = slotFor(call)
         const slot = pending.get(at) ?? { id: "", name: "", args: "", announced: false }
-        // An announced call already carries the made-up id its card went out
-        // with; a real id arriving later must not re-key it mid-flight.
+        // A card that already went out is keyed by the id it went out with; a
+        // repeat of that id on a later chunk is harmless, a different one must not re-key it.
         if (call.id && !slot.announced) slot.id = call.id
         if (call.function?.name) slot.name += call.function.name
         if (call.function?.arguments) slot.args += call.function.arguments
         pending.set(at, slot)
 
         // Announce as soon as the name is complete so the card appears while
-        // the arguments are still streaming. A server that never sends ids
-        // still gets its card: the made-up id is written back into the slot so
-        // the finalize pass pairs its result on the same one.
-        if (!slot.announced && slot.name) {
+        // the arguments are still streaming - but only against an id the server
+        // has sent. A stand-in announced before a late real id left that call
+        // unmatched: one card stuck on pending, one duplicate. A server that
+        // never sends ids gets its stand-in when the stream ends, below.
+        if (!slot.announced && slot.name && slot.id) {
           slot.announced = true
-          if (!slot.id) slot.id = `call_${++unnamed}`
           emit({ type: "tool", callID: slot.id, name: slot.name })
         }
       }

@@ -75,6 +75,6 @@ export async function roundThirtyFiveChecks(check: Check, section: (name: string
     check("every settled call is counted, as the other detectors' are", /watch\.wander\.consume\(part\)/.test(settle))
     const afterTools = runner.slice(runner.indexOf("const calls = new Semaphore(STEP_TOOL_LIMIT)"), runner.indexOf("const calls = new Semaphore(STEP_TOOL_LIMIT)") + 900)
     check("and once a step's tools are done, the note goes into the next request", /wander\.note\(\)/.test(afterTools) && /notes\.set\(assistant\.id/.test(afterTools))
-    check("the watch starts afresh with every turn, with the others", /loopWatches\.delete\(sessionID\)/.test(runner) && /new LoopMonitor\(\), wander: new WanderWatch\(\)/.test(runner))
+    check("the watch starts afresh with every turn, with the others", /loopWatches\.delete\(sessionID\)/.test(runner) && /new LoopMonitor\(sessionID\), wander: new WanderWatch\(\)/.test(runner))
   }
 }
