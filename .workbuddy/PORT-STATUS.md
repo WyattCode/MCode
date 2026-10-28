@@ -109,6 +109,25 @@ measurement and how a reference was finally obtained.
 The page also had no way in at all until this pass; it has a 「+ 新建任务」 capsule
 now, on the same right edge as the list pages' 新建会话.
 
+### The row under a finished reply, in dark
+
+| | reference | this app, before | now |
+|---|---|---|---|
+| capsule fill | **(32,32,31)** | (35,35,34) | **same** |
+| hairline | **(105,105,102)** | (58,58,56) | **same** |
+| corner | 26 px @2.5/dp | 5.6 dp → 8 px | **15 dp → 28 px** |
+| height | 80 px | 77 px | 77 px |
+
+The fill and the edge were each a step too far from the page, which is what makes
+a capsule read as a smudge: (35,35,34) on (21,21,21) is barely a shape, and a
+(58,58,56) edge does not name one. Both were off by enough to matter and by little
+enough to be invisible in code review.
+
+The corner was 5.6 dp - the light value - against the reference's 10.4. **Asking
+Compose for 10.4 dp drew an 18 px arc, not 26**, so the number that measures right
+is 15 dp. Recorded because the arithmetic is the obvious first guess and it is
+wrong here.
+
 ## Dark theme — measured element by element
 
 Page #151515, composer card #202020, and every colour CompositionLocal carries its
