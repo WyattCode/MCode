@@ -128,6 +128,31 @@ Compose for 10.4 dp drew an 18 px arc, not 26**, so the number that measures rig
 is 15 dp. Recorded because the arithmetic is the obvious first guess and it is
 wrong here.
 
+### The diff panel, measured for the first time
+
+No reference existed until now: every conversation on Claude's phone had only
+read files. Obtained by asking it, on the pad, to create a throwaway file and
+change it. Its panel, which is a full-width sheet with a back arrow, the tool's
+name, a path line with `+N -M`, then the rows:
+
+| | reference | this app, before | now |
+|---|---|---|---|
+| added row wash | **(24,39,31)** | (27,39,32) | **(24,39,31)** |
+| removed row wash | **(36,25,29)** | (36,25,29) | **same** |
+| row pitch | 19.6 | 19.6 | same |
+| gutter | number left of a hairline | same | same |
+
+The added wash is the interesting one. Written as the reference's own (24,39,31)
+the pad drew (27,39,32), and `#1B1B1A` measured on the same sheet measures
+exactly - so the renderer is not shifting everything, and the cause is particular
+to this draw. The compensation is not proportional either: three steps down landed
+two, then one more landed one. The constant is now `0xFF14271E`, which is not the
+reference's colour but the value that makes the pad draw it.
+
+`REF-claude-diffpanel.png` keeps the panel. It also settles something the code
+had guessed at: the rows are set in a **monospace** face, and the gutter's `+`/`-`
+rides immediately left of the number with no gap.
+
 ## Dark theme — measured element by element
 
 Page #151515, composer card #202020, and every colour CompositionLocal carries its
