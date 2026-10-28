@@ -46,6 +46,13 @@ def _attached():
         if " device " not in line:
             continue
         endpoint = line.split()[0]
+        # A USB cable lists the bare serial, not `host:port`. The pad has been
+        # on USB since the wireless toggle was last flipped off, and every
+        # helper here used to skip that line - so `ensure()` went looking for a
+        # wireless endpoint that no longer existed while the device sat right
+        # there on the cable.
+        if endpoint == SERIAL:
+            return endpoint
         if endpoint.startswith(HOST + ":"):
             if SERIAL in _adb_raw("-s", endpoint, "shell", "getprop ro.serialno"):
                 return endpoint

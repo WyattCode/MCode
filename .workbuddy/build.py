@@ -27,6 +27,7 @@ def run(args, **kw):
     #
     if not env.get("JAVA_HOME") or not os.path.isdir(env["JAVA_HOME"]):
         for guess in (
+            "C:/Users/Wyatt/.workbuddy/binaries/jdk21/jdk-21.0.12.1+1",
             "C:/Program Files/Eclipse Adoptium/jdk-21.0.12.101-hotspot",
             "C:/Program Files/Android/Android Studio/jbr",
         ):

@@ -320,6 +320,16 @@ function runsWithin(entry: SimpleCommand, powershell: boolean, depth: number): S
       if (body) return scanCommands(body, powershell, depth + 1).map((found) => ({ ...found, derived: true }))
     }
   }
+  /*
+   * `command -v rm` asks where rm is; it does not run it. Read as a wrapper it
+   * produced `rm` as a program of its own and the harmless lookup raised the
+   * delete card - the "one question too many" every careful reader of the
+   * prompt writes at least once (round 25 recorded it, round 78 fixed it).
+   * `-v` and `-V` are the whole of what `command` does without running the
+   * word that follows (`-p` only changes the PATH it searches), so a line
+   * whose `command` carries either returns nothing.
+   */
+  if (head === "command" && entry.tokens.slice(1).some((token) => /^-[pPvV]+$/.test(token) && /[vV]/.test(token))) return []
   if (WRAPPERS.has(head)) {
     const inner = programAfterWrapper(entry.tokens)
     if (!inner.length) return []

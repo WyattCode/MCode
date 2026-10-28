@@ -218,6 +218,13 @@ const TRAY_SCALE = 1.03
  */
 const ICO_SIZES = [16, 20, 24, 32, 40, 48, 64, 128, 256]
 const TRAY_SIZES = [16, 20, 24, 32, 40, 48, 64]
+/*
+ * What Linux asks a tray for: the same sizes Windows draws, as separate PNGs
+ * because its nativeImage cannot read the .ico. 22 and 44 are the usual
+ * GNOME/KDE panel heights at 100% and 200%, so they are in the set even
+ * though Windows never asks for them.
+ */
+const TRAY_PNG_SIZES = [16, 22, 24, 32, 44, 48, 64]
 
 /**
  * A tile brought down to one small size: straight from the 1024 master with
@@ -427,6 +434,19 @@ async function main() {
     const trayTile = await rounded(await square(await enlarged(mark, TRAY_SCALE), way), mask)
     await fs.mkdir(TRAY, { recursive: true })
     await fs.writeFile(path.join(TRAY, `${way.id}.ico`), await pngToIco(await Promise.all(TRAY_SIZES.map((size) => crisp(trayTile, size)))))
+    /*
+     * The same tile as separate PNGs, for Linux.
+     *
+     * Linux' nativeImage does not read an .ico, so the branch below falls back
+     * to the 512 app tile cut to a single 16 - which a HiDPI panel then
+     * stretches back up, the soft icon the user compared against another app's
+     * crisp one. With one file per pixel size, main can hand the panel a pixmap
+     * that is already the size it will draw (TRAY_PNG_SIZES, and the matching
+     * reader in main/index.ts).
+     */
+    for (const size of TRAY_PNG_SIZES) {
+      await fs.writeFile(path.join(TRAY, `${way.id}-${size}.png`), await crisp(trayTile, size))
+    }
     /*
      * The window's own icon on Windows - title bar, taskbar, Alt+Tab - for
      * this colourway: every size, the small ones with the larger mark. Main

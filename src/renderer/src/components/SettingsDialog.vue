@@ -1895,6 +1895,35 @@ onBeforeUnmount(() => {
               <button class="ctl-btn clear-browsing" @click="confirmingClear = true">{{ t("set.clearBrowsingData") }}</button>
             </div>
           </div>
+
+          <!--
+            Web search, next to the browser: both are "may this reach the
+            network". It was reachable only from the confirmation card that
+            asks the first time, so choosing 关闭 there was a one-way door -
+            turning it back on meant hand-editing config.json's `websearch`
+            (round 31 left it that way; round 78 gave it a switch). Off is
+            `false`; on returns to `auto`, the value that rotates through the
+            services, since which one was in use is not recorded separately.
+          -->
+          <div class="card">
+            <div class="line" data-websearch-row>
+              <div class="line-text">
+                <div class="line-title">{{ t("set.webSearch") }}</div>
+                <div class="line-sub">{{ t("set.webSearchSub") }}</div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: app.config?.websearch !== false }"
+                role="switch"
+                :aria-checked="app.config?.websearch !== false"
+                :aria-label="t('set.webSearch')"
+                data-websearch-switch
+                @click="app.patchConfig({ websearch: app.config?.websearch === false ? 'auto' : false })"
+              >
+                <span class="knob" />
+              </button>
+            </div>
+          </div>
           <Teleport to="body">
             <ConfirmDialog
               v-if="confirmingClear"

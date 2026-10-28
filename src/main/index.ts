@@ -503,6 +503,36 @@ function trayIcoFile(id: string): string | undefined {
 }
 
 /**
+ * Linux' tray icon for a colourway, as every size scripts/icons.mjs drew.
+ *
+ * nativeImage does not read an .ico, so this platform had been taking the 512
+ * app tile and cutting it to a single 16 - a reduction a HiDPI panel then
+ * stretched back up, which is the soft icon the user put beside another app's
+ * crisp one (round 34 recorded it; round 78 gave the generator a PNG per size
+ * and this the reader to go with it).
+ *
+ * `createFromPath` takes the first file's size; `addRepresentation` is what
+ * lets one image carry all of them, and the panel picks the one it draws at.
+ * The representation goes in as a data URL rather than a `buffer`: a buffer
+ * is read as raw pixels, so handing it a PNG would put noise on the panel.
+ * Only sizes that exist are added, so a stale resources folder still produces
+ * a usable icon rather than an empty one.
+ */
+function trayLinuxImage(id: string): Electron.NativeImage | undefined {
+  if (!/^[a-z][a-z0-9-]{0,30}$/.test(id)) return undefined
+  const folder = app.isPackaged ? path.join(process.resourcesPath, "tray") : path.join(here, "../../resources/tray")
+  const at = (size: number) => path.join(folder, `${id}-${size}.png`)
+  if (!existsSync(at(16))) return undefined
+  const image = nativeImage.createFromPath(at(16))
+  if (image.isEmpty()) return undefined
+  for (const size of [16, 22, 24, 32, 44, 48, 64]) {
+    if (size === 16 || !existsSync(at(size))) continue
+    image.addRepresentation({ scaleFactor: size / 16, dataURL: `data:image/png;base64,${readFileSync(at(size)).toString("base64")}` })
+  }
+  return image
+}
+
+/**
  * The file an id names, or nothing if it names none. The Dock takes the macOS
  * cut (`app-icons-mac`, on Apple's icon grid, drawn by scripts/icons.mjs), as
  * MiMo picks its macOS artwork there; everything else takes the full tile.
@@ -580,10 +610,17 @@ function refreshTray(enabled: boolean): void {
     image = nativeImage.createFromPath(trayIcoFile(trayIcon)!)
     if (image.isEmpty()) return
   } else {
-    const file = appIconFile(trayIcon)
-    if (!file) return
-    // The source is 512, so this is a reduction rather than a stretch.
-    image = nativeImage.createFromPath(file).resize({ width: 16, height: 16 })
+    // Linux: every size the generator drew, so a HiDPI panel has one to draw
+    // rather than a 16 it has to stretch (see trayLinuxImage).
+    const linux = process.platform === "linux" ? trayLinuxImage(trayIcon) : undefined
+    if (linux) {
+      image = linux
+    } else {
+      const file = appIconFile(trayIcon)
+      if (!file) return
+      // The source is 512, so this is a reduction rather than a stretch.
+      image = nativeImage.createFromPath(file).resize({ width: 16, height: 16 })
+    }
   }
   /*
    * MiMo's tray opens the window on a click and on a double-click alike; it

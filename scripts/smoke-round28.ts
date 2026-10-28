@@ -77,6 +77,18 @@ export async function roundTwentyEightChecks(check: Check, section: (name: strin
     for (const line of ["ls -la", "sudo -u bob ls", 'find . -name "*.ts"', "git status", "then-script.sh"]) {
       check(`${line} is not a delete`, !(await asks(line)))
     }
+    /*
+     * Round 78: `command` was in the wrapper table, so `command -v rm` - a
+     * lookup that runs nothing - produced `rm` as a program of its own and
+     * raised the delete card. `-v` and `-V` are the only forms that do not run
+     * the word that follows.
+     */
+    for (const line of ["command -v rm", "command -V rm", "command -pv rm", "command -v python3", "which rm"]) {
+      check(`${line} asks nothing: it looks the program up`, !(await asks(line)))
+    }
+    for (const line of ["command rm -rf src", "command -p rm -rf src"]) {
+      check(`${line} still asks: that one runs it`, await asks(line))
+    }
     const scan = await scanCommand("if true; then rm -rf src; fi", project, project, false)
     check("what the question shows starts where the command does", scan.deletes[0] === "rm -rf src", scan.deletes)
   }

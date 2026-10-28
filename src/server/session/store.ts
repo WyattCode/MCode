@@ -1,5 +1,5 @@
 import type { AgentName, AssistantMessage, Effort, Message, ModelRef, SessionInfo, Usage } from "@shared/protocol"
-import { Identifier } from "@shared/id"
+import { adopt, Identifier } from "@shared/id"
 import type { Storage } from "../storage"
 import type { Bus } from "../bus"
 import { newSlug } from "./plan"
@@ -379,6 +379,9 @@ export class SessionStore {
 
   private async readAll(): Promise<SessionInfo[]> {
     const ids = await this.storage.listDirectories("session")
+    // Sessions carry ids too, and a conversation created after the clock was
+    // set back would otherwise list below one it was started after.
+    for (const id of ids) adopt("ses", id)
     const sessions: SessionInfo[] = []
     const unreadable = new Set<string>()
     // A few dozen records at a time rather than one after another (S13-4).
@@ -786,11 +789,17 @@ export class SessionStore {
    * and going to the model as history from the branch they abandoned (R25-A4).
    */
   async messageIDs(sessionID: string): Promise<string[]> {
-    return this.storage.list(`session/${sessionID}/message`)
+    const ids = await this.storage.list(`session/${sessionID}/message`)
+    // Whatever is already on disk is the floor for what gets written next, so a
+    // clock set back between two launches cannot file a new message earlier
+    // than the ones it answers (see `adopt` in shared/id.ts).
+    for (const id of ids) adopt("msg", id)
+    return ids
   }
 
   async messages(sessionID: string): Promise<Message[]> {
     const ids = await this.storage.list(`session/${sessionID}/message`)
+    for (const id of ids) adopt("msg", id)
     const messages: Message[] = []
     for (const id of ids) {
       /*
