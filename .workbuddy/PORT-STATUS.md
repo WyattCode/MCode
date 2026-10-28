@@ -109,10 +109,40 @@ measurement and how a reference was finally obtained.
 The page also had no way in at all until this pass; it has a 「+ 新建任务」 capsule
 now, on the same right edge as the list pages' 新建会话.
 
-## Dark theme — matched
+## Dark theme — measured element by element
 
 Page #151515, composer card #202020, and every colour CompositionLocal carries its
 own dark branch.
+
+Its surfaces were already right: sampled side by side against Claude's own dark
+list, page (21,21,21) and rail (26,26,25) match exactly. What did **not** match was
+the ink ladder inside them, and the reference turns out to have three steps where
+this app had two:
+
+| step | what it is | reference | this app, before | now |
+|---|---|---|---|---|
+| body | a reply, a title | (249,249,247) | (249,249,247) | **same** |
+| muted | a time under a title | **(151,149,142)** - warm | (138,138,138) - neutral | **#97958E** |
+| faint | a placeholder, its mark | **(137,135,130)** | (107,104,99) - 30 too dark | **#898782** |
+
+Two things were wrong, and both are easy to miss by eye:
+
+- The muted step was a **neutral** grey where the reference's carries a warm cast
+  (R−B = 9). Every secondary line here was colder than Claude's.
+- The search field's magnifier and 「搜索」 are not muted at all - they are a third,
+  fainter step, and the reference uses **the same value in light and dark**
+  ((137,135,130) sampled in both modes). This app drew them in `InkMuted`
+  (107,104,99), 30 steps too dark and darker than the titles' own secondary line,
+  which made the field look already filled in. `LocalFaint` is that step now.
+
+**The title's weight was a step too heavy.** Measured as stroke width rather than
+by eye: the reference's list titles run 3 px wide (243 runs of that width against
+201 of 4), this app's ran 5 px (187). Same 18 sp, so the weight was the whole of
+the difference - `Medium` where the reference is `Normal`. It now reads 4 px, and
+the 1 px that remains is the two renderers' own antialiasing.
+
+Checked on the pad in both modes: muted (151,149,143) against (151,149,142) in
+dark, faint (137,135,130) in both, title strokes 4 px.
 
 ## Artifacts — matched
 

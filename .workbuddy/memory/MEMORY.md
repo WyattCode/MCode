@@ -10,15 +10,14 @@
 ## 设备与驱动
 
 - **目标平板**：USB `0A06049009983540`（M367FC，2272×3408，density 400）。**别往非目标设备装**（`192.168.10.173/174/155`）。
-- **`build.py` 会装到无线端点**：多设备在线时它挑 `192.168.10.173`。**必须 `--no-install` 后自己 `adb -s 0A06049009983540 install -r android/app/build/outputs/apk/debug/app-debug.apk`**。
-- **`build.py` 说 “built in 1.4s” = 缓存未重建**，改动没进去；先查 python `s.replace` 是否静默失败。
+- **`build.py` 两个坑**：①多设备在线时它挑 `192.168.10.173` 装，必须 `--no-install` 后自己 `adb -s 0A06049009983540 install -r android/app/build/outputs/apk/debug/app-debug.apk`；②报 “built in 1.4s” 是缓存未重建，改动没进去，先查 `s.replace` 是否静默失败。
 - **adb**：`C:/Users/Wyatt/.workbuddy/binaries/android-sdk/platform-tools/adb.exe`（不在 PATH）。
 - **截图**：`screencap -p /sdcard/s.png` + `pull`，bash 下必须 `MSYS_NO_PATHCONV=1`。`exec-out screencap` 易拿黑帧。
 - **保活**（缺一不可）：`screen_off_timeout=2147483647`、**`screen_brightness_mode 0`**（自动亮度压 0 会「Awake 但截图全黑」）、`screen_brightness 200`、`svc power stayon true`、`locksettings set-disabled true`。**不充电时 adb 唤不亮**。
 - **有 PIN 锁**：`isKeyguardShowing=true` 时 adb 解不开；`mCurrentFocus=com.android.systemui` = 锁屏挡着不是崩溃。**别用 `KEYCODE_POWER` 唤醒**（一按设备从 adb 消失）。
 - **脚本**：`pad.py` `ui.py` `nav.py` `shot.py` `build.py` `drive.py` `see.py` `measure_all.py` `side2.py`。
-- **点击坐标**：一律用 `uiautomator dump` 的 bounds；边缘点击会变系统返回手势（汉堡 x=60px）。
-- **Claude 参考件**：`com.anthropic.claude/.mainactivity.MainActivity`。
+- **点击坐标**：一律用 `uiautomator dump` 的 bounds；边缘点击会变系统返回手势（汉堡 x=60px）。**Artifacts/项目/定时任务页是左栏内容，宽仅 900px**，别往 x>900 点。
+- **Claude 参考件**：`com.anthropic.claude/.mainactivity.MainActivity`。**缺参考件时走「最近记录」页**——它列 12 条会话，Code 页只列 3 条（按目录过滤）。
 - **「空白/没渲染」先查进程**：`pidof com.mcode.remote` 为空 = App 没跑；`logcat -b crash -d | grep FATAL`。
 - **「点了没反应」先分清「事件没到」和「到了被覆盖」**：真因常是 `if (widthSize < Expanded) return` 让宽屏被双栏盖住。先打日志再猜坐标。
 - **`.workbuddy/PORT-STATUS.md` 是进度唯一索引**（参考值 vs 实现值），每轮更新。
@@ -111,7 +110,9 @@
 
 **逐项数值全在 `.workbuddy/PORT-STATUS.md`**（每页一张对照表：参考值 vs 实现值）。这里只留最容易弄错、或一句话就能省下一次测量的判据：
 
-- **左栏比例 0.2641**（900/3408）。深色：页面 `#151515`、卡片 `#20201F`、边框 `#232323`、图标块 `#2A2A29`、文字 `#F9F9F7`、弱化 `#8A8A8A`、输入卡 `#202020`。切换 `cmd uimode night yes|no`。
+- **左栏比例 0.2641**（900/3408）。深色：页面 `#151515`、卡片 `#20201F`、边框 `#232323`、图标块 `#2A2A29`、文字 `#F9F9F7`、输入卡 `#202020`。切换 `cmd uimode night yes|no`。
+- **深色墨阶是三档不是两档**（实测 Claude 深色左栏）：正文 `(249,249,247)`／次要（时间行）**`(151,149,142)`，带暖偏移 R−B=9**／占位符+其图标 **`(137,135,130)`，浅深两色同一个值**。原来只有两档且都是纯灰：次要用了 `(138,138,138)`（偏冷）、占位符用了 `InkMuted (107,104,99)`（暗 30 阶）。新 token `LocalFaint`。
+- **列表标题字重是 `Normal` 不是 `Medium`**。判据用**笔画宽**：Claude 3px 为主（243 次），我们改前 5px（187 次），改后 4px。同 18sp，差的全在字重。剩 1px 是两个渲染器的抗锯齿差，压不下去。
 - **正文列** x 408.8..1341.6（**左 48.8 / 右 21.6，不对称**），正文 **17.4sp / 30sp 行距**。
 - **主页与 Code 是两页**：前者有搜索框/无设备块/平铺行，后者相反/圆角卡片。卡片三级底色只差 1 阶（边框 `#F8F8F6` / 页面 `#F9F9F7`），差 24 阶的 `#E1E1DF` 会像描边盒。
 - **图标**：**声明尺寸 ≠ 墨迹尺寸**（24 网格只画 3/4：17dp → 12.0 墨迹）。筛选 = 三竖轴 + 三**空心圆**；列表 = 三**对勾** + 三横线；**都不是漏斗/圆点**。
@@ -123,7 +124,7 @@
 - **artifacts 列表行是 5 个元素**：类型框 / **种类胶囊**（`badge-cell`，色 12% 淡底 + 6px 点 + 11px 600 字 + 2/8 padding 全圆角）/ 文件名 / 时间 / 操作。原来只有 3 个，缺胶囊。`文本` 是 `#4B5563` 灰 —— 桌面版 `art.badge.text` 就这个色，**灰色是对的**。
 - **行内代码 chip**：底 `(237,237,235)`、字 **(40,78,144) 蓝色等宽**、高 **17.6**、圆角 3.2、左右内边距 5.6/5.2。**桌面端那对灰字灰底是错的**。取高不能用 `getBoundingBox`（它是**行**盒，17.4 字号 30 行距→30），要按字号给固定高并以行盒中点居中。
 
-**工具**：单测 **119 个**（SelectionSlice 56 / StepFold 13 / DiffNumber 11 / RunSummary 10 / DiffSlice 9 / MarkdownBlocks 9 / DiffFold 8 / StepFoldRealThread 3），`build.py` 连带跑；JVM 测里 `org.json` 是空壳，要加 `testImplementation("org.json:json:20240303")`；uiautomator 抓不到 Compose 的 `text` 但抓得到 `clickable` bounds（`nav.py dump` 返回缓存，用 `drive.py`）；`input text` 不可靠，造内容用 `.workbuddy/prompt.mjs`；同名会话是陷阱，按 `updated` 对 id；权限卡会挡工具（工具停在 `pending` 是在等批准）。
+**工具**：单测 **132 个**（SelectionSlice 56 / StepFold 13 / PullRequestUrl 13 / DiffNumber 11 / RunSummary 10 / DiffSlice 9 / MarkdownBlocks 9 / DiffFold 8 / StepFoldRealThread 3），`build.py` 连带跑；JVM 测里 `org.json` 是空壳，要加 `testImplementation("org.json:json:20240303")`。uiautomator 抓不到 Compose 的 `text` 但抓得到 `clickable` bounds；`input text` 不可靠，造内容用 `.workbuddy/prompt.mjs`；权限卡会挡工具（工具停在 `pending` 是在等批准）；**探针用 `Log.i` 不要用 Toast**（会被重组刷掉）。
 
 ## 已知未解决
 
