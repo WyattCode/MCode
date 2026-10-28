@@ -12466,8 +12466,14 @@ private fun ArtifactCard(row: ArtRow, now: Long, onClick: () -> Unit) {
              *
              * Enlarged 6x, the mark inside is a palette: a rounded body with a
              * notch bitten out at its lower right and four dots on its face, in
-             * #5C50AC on a #DEDBFA ground. It marks the record as something the
-             * model drew rather than something the reader wrote.
+             * (71,59,161) on a (222,219,250) ground. It marks the record as
+             * something the model drew rather than something the reader wrote.
+             *
+             * The ground matched to the value; the stroke did not - #5C50AC is
+             * (92,80,172), nineteen steps lighter than the reference's ink, so
+             * the palette read as a tint of its own plate rather than as a mark
+             * on it. Measured off `REF-artifacts.png` at native size, taking the
+             * commonest colour inside the glyph and not its antialiased edge.
              */
             Box(
                 Modifier
@@ -12477,10 +12483,19 @@ private fun ArtifactCard(row: ArtRow, now: Long, onClick: () -> Unit) {
                 contentAlignment = Alignment.Center,
             ) {
                 Canvas(Modifier.size(12.dp)) {
-                    val ink = Color(0xFF5C50AC)
+                    val ink = Color(0xFF473BA1)
                     val w = 1.35f * density
                     /*
                      * Traced off `REF-artifacts.png` at 1:1 (a 30 px glyph).
+             *
+             * What the well holds beside it is a type mark, not a preview, and
+             * that is the only thing it *can* hold: `ArtifactFile` in
+             * `src/shared/protocol.ts` carries a path, a time, an exists flag, a
+             * size and a role - and nothing to draw. The reference's own single
+             * record shows a 2x2 collage because it is a mini-app, a kind this
+             * product has no counterpart for (`artifact-kind.ts` says so in as
+             * many words). Rendering one would need a capture pipeline on the
+             * desktop, not a client change.
                      *
                      * The reference's mark is a painter's palette: a circle whose
                      * lower-right has a *notch bitten inward* - the outline runs
