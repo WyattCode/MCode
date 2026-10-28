@@ -124,14 +124,22 @@ field, then records, with nothing in between.
 |---|---|---|
 | search field | y 104.8..160.4, h 55.6 | **104.8..160.4** |
 | search / card x | 16.0..343.6 | **16.0..343.6** |
-| card | y 180.8..279.2, h 98.4 | 180.8..279.6, h 98.8 |
+| card | x 40..859, y 452..698 → 328.0 × 98.8 | **99.2** |
+| card outline | 0.4 dp (225,225,223) | **0.4** |
+| card corner | arc 12.8 | **15.6** |
 | card fill | (249,249,247) — page colour | **same** |
-| thumbnail well | x 28.0..140.0, y 192.8..267.6, 112×74.8 | same size |
+| inset | 12.0 every edge | **12.0** |
+| thumbnail well | 112.0 × 75.2, corner 9.6 | **112 × 75.2, 9.6** |
 | well fill | (237,237,235) | **same** |
-| palette sticker | 23.6 square, x 28.0..51.6 | 23.2, x 28.0..51.2 |
-| title | y 197.6, x 152.8 | **197.6, x 153.6** |
-| 仅您可见 | y 221.6 | **221.6** |
-| 编辑于 | y 252.0 | **252.0** |
+| palette sticker | 24.0 square, corner 5.6, mark 12.0 | **24.0 / 5.6 / 12.0** |
+| title ink | 16.8..30.4 from the card's top | **17.2..30.8** |
+| 仅您可见 | 40.8..53.2 | **40.4..51.6** |
+| 编辑于 | 71.2..82.8 | **69.2..80.4** |
+
+The figures that stood in this table before - a 112×74.8 well, a 23.6 sticker, the
+title at y 197.6 - came off a blurred reading and are superseded by the
+re-measurement above. They are kept only in this sentence so a search for them
+does not send anyone back to them.
 
 The page had a 24sp heading, two lines of blurb, a category-pill row and a
 layout toggle; none of that is on the reference and all of it is gone. The card
