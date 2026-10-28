@@ -18,6 +18,22 @@ def run(args, **kw):
     # Electron-shaped environment and Gradle's daemon hangs on it.
     for key in ("ELECTRON_RUN_AS_NODE", "NODE_OPTIONS", "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"):
         env.pop(key, None)
+    #
+    # Gradle needs a JDK and this shell does not always have one on PATH: a
+    # session that lost its environment answers "JAVA_HOME is not set and no
+    # 'java' command could be found", which reads like a broken checkout rather
+    # than a missing variable. Fall back to an installed JDK rather than making
+    # every run export it by hand.
+    #
+    if not env.get("JAVA_HOME") or not os.path.isdir(env["JAVA_HOME"]):
+        for guess in (
+            "C:/Program Files/Eclipse Adoptium/jdk-21.0.12.101-hotspot",
+            "C:/Program Files/Android/Android Studio/jbr",
+        ):
+            if os.path.isdir(guess):
+                env["JAVA_HOME"] = guess
+                env["PATH"] = os.path.join(guess, "bin") + os.pathsep + env.get("PATH", "")
+                break
     return subprocess.run(args, cwd=ANDROID, capture_output=True, text=True, env=env, **kw)
 
 

@@ -1,33 +1,32 @@
-fix(android): one capsule on 定时任务, and the 110.4 puzzle answered
+feat(android): the +/- counter is one capsule with two halves
 
-The page carried **two** 「+ 新建任务」 pills and the build drew both: one under
-the notice at y 1373, one on the page's floor at 2121. `ScheduledScreen` had a
-capsule inside its empty branch *and* another at its own foot.
+The reference's edited-files row ends with a single object: a green half for the
+lines added and a pink half for the lines removed, meeting at a hard edge with no
+gap and no divider between them. Sampled off its own thread - 17.6 tall, halves
+(210,230,212) and (234,206,215), text (76,156,73) and (212,136,160).
 
-The reference has exactly one, and it is the one at the foot. The inner one is
-deleted; its own comment already said the capsule belongs on the column's floor,
-which the `Spacer(weight(1f))` below it enforces.
+This app drew two bare monospace labels six apart in #1A7F37 / #E5484D. Two
+unrelated figures, rather than one change with a size - which is what the row is
+reporting.
 
-That also closes the 110.4-against-122.8 note this file has carried for several
-passes as "a squeeze I have not located". Nothing was squeezing anything: the two
-readings were taken off different renders of a page that had two pills on it, and
-the surviving one measures 110.8 because it spends its width differently — the
-reference types its plus as a character in 「+ 新建任务」, this app draws a 15 dp
-`Add` mark and a 6 gap. The width is now stated at 122.8 with a 43.6 height, so
-the two cannot drift apart again, and on the pad it measures **121.6** against
-122.8 — the 1.2 being the corner's antialiasing.
+`DiffCounter(add, del)` now draws the plate, with only its outer corners rounded
+so the shape reads as one object. Both call sites use it: the turn's edited-files
+summary and each file's own row. Dark gets its own four values rather than
+reusing the light ones, since a #D2E6D4 fill would glare on the near-black page.
 
-Also in this pass: 定时任务 and 设置 now both `return` unconditionally after their
-full-screen branch. 定时任务 still tested `widthSize < Expanded`, so on a wide
-screen it built the page here and again inside the left column; 设置's own note
-records the same fault.
+Confirmed on the pad in a thread that really has edits: 「已编辑 2 个文件」 ends in a
+green +12 plate, and each file row with a +6.
 
-The projects page name is 16.8sp, and the step that got there ran backwards
-first. It sat at 17.2 and drew 17.2 of ink against the reference's 15.2, so it
-was dropped to 15.2 — on two figures that were not comparable. The reference's
-row reads 「如何使用 Claude」, where the CJK glyphs set the ink; the rows here
-read 「X-SSH」, 「MCode」 and 「Test」, all Latin and the first with no descender.
-Compared on the one pair both sides carry — its 「Claude」 at 12.8 and this app's
-「MCode」 at 11.6 from 15.2sp — the answer is 16.8, and at 16.8 the name now
-measures **12.8**. This is the second time in this port that two ink heights from
-different glyph sets were subtracted from each other.
+Two things this pass did **not** settle, both now recorded:
+
+- The **diff line colours** inside an expanded patch (#20A923 added, #E5351C
+  removed) are still the desktop's. Every patch in the reference thread on this
+  machine is reached through a collapsed group, and opening one to read line
+  colours needs a tap I did not get to land.
+- The reference's counter carries a **chevron** after it, opening the file list.
+  This app shows the list inline instead, so there is no chevron to draw.
+
+Also learned the hard way, and now in the notes: `input text` will not take
+spaces across separate calls on this device — it strips them and welds the words
+together. One call with `%s` for each space works, and old text has to be cleared
+from the end first or it prepends.
