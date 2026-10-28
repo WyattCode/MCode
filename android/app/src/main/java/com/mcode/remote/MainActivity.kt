@@ -12287,17 +12287,21 @@ fun ArtifactsScreen(
                 /*
                  * One card per row, horizontal - the reference's own shape.
                  *
-                 * Photographed with a real artifact in it: the card runs x
-                 * 16.0..343.6 by y 180.8..279.2 - 327.6 wide, 98.4 tall - with a
-                 * 155.2 x 86.4 thumbnail well inset 8 from the card's left, its
-                 * lower-left corner carrying a violet brush badge, and three
-                 * lines of text starting at x 172.0: the title at 197.6, a lock
-                 * with the visibility note at 222.0, and the age at 252.4.
+                 * Re-measured off `REF-artifacts.png`: the card runs x 40..859 by
+                 * y 452..698 - 328.0 wide, 98.8 tall - with a **112.0 x 75.2**
+                 * thumbnail well inset **12** from every edge, its lower-left
+                 * corner carrying a violet palette badge, and three lines of text
+                 * starting 136.8 from the card's left edge: the title's ink at
+                 * 16.8, a lock with the visibility note at 40.8, the age at 71.2.
                  *
-                 * This laid three square tiles across, each with its mark
-                 * centred in a 96 dp well above the name. A shelf of documents
-                 * reads better as rows than as a photo grid, and a row gives the
-                 * title room to be a title.
+                 * The numbers that stood here before - a 155.2 x 86.4 well inset
+                 * 8, text at 172.0 - were read off a thumbnail and were wrong
+                 * enough to make the card a third wider than it is.
+                 *
+                 * This laid three square tiles across, each with its mark centred
+                 * in a 96 dp well above the name. A shelf of documents reads
+                 * better as rows than as a photo grid, and a row gives the title
+                 * room to be a title.
                  */
                 for (row in shown) {
                     item {
@@ -12314,7 +12318,19 @@ fun ArtifactsScreen(
                         ) {
                             BadgeMark(row.badge, 26.dp)
                             Spacer(Modifier.width(12.dp))
+                            /*
+                             * The kind, as the desktop's list draws it: a pill in
+                             * the kind's own colour on a 12% tint of it, led by a
+                             * 6 px dot - `ArtifactsView.vue`'s `badge-cell`. The
+                             * grid card states the kind only through the mark in
+                             * its well, so this column is the list's own way of
+                             * saying it, and leaving it out was the one element
+                             * of that row still missing.
+                             */
+                            KindBadge(row.badge)
+                            Spacer(Modifier.width(10.dp))
                             Text(row.name, fontSize = 14.sp, color = LocalText.current, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                            Spacer(Modifier.width(8.dp))
                             Text(artifactWhen(row.at, now), fontSize = 12.sp, color = LocalMuted.current)
                         }
                     }
@@ -12559,6 +12575,33 @@ private fun ArtifactCard(row: ArtRow, now: Long, onClick: () -> Unit) {
 @Composable
 private fun BadgeMark(badge: Badge, size: androidx.compose.ui.unit.Dp) {
     Canvas(Modifier.size(size)) { badge.glyph(this) }
+}
+
+/**
+ * The kind as a pill: its colour on a 12% tint of itself, led by a dot.
+ *
+ * The desktop's `.badge` (`ArtifactsView.vue`): `inline-flex`, 5 px gap, 2/8
+ * padding, fully round, 11 px at weight 600, and `color-mix(in srgb, fg 12%,
+ * transparent)` behind it - so a Word file's label is blue on pale blue rather
+ * than a grey chip with coloured text.
+ *
+ * Compose has no `color-mix`, so the tint is the colour's own alpha: 12% over the
+ * page gives what the mix gives, and it stays correct in dark where a flat pale
+ * fill would glare.
+ */
+@Composable
+private fun KindBadge(badge: Badge) {
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(percent = 50))
+            .background(badge.fg.copy(alpha = 0.12f))
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(6.dp).clip(RoundedCornerShape(percent = 50)).background(badge.fg))
+        Spacer(Modifier.width(5.dp))
+        Text(badge.label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = badge.fg)
+    }
 }
 
 /* ------------------------------------------------------------------ */
