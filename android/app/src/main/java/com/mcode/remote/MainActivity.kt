@@ -12626,7 +12626,13 @@ private fun ArtifactCard(row: ArtRow, now: Long, onClick: () -> Unit) {
              * column's own height is what the card measures, so a spacer 1.6
              * too tall made every record 1.6 taller than the reference's 98.8.
              */
-            Spacer(Modifier.height(4.8.dp))
+            /*
+             * 6.4, not 4.8. The two gaps above are 24.0 then 30.4 apart on the
+             * reference; this card measured 23.6 and 28.8, so the second gap was
+             * 1.6 short and 「编辑于」 sat above where it belongs. Re-measured after
+             * the change: 24.0 and 30.4.
+             */
+            Spacer(Modifier.height(6.4.dp))
             Text(
                 "\u7f16\u8f91\u4e8e " + artifactWhen(row.at, now),
                 fontSize = 12.8.sp,
