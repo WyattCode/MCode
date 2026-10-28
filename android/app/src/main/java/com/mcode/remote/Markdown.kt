@@ -412,8 +412,18 @@ fun MarkdownBody(
     SideEffect { sharedSelection.lineCount = blocks.size }
     val textColor = LocalText.current
     val muted = LocalMuted.current
-    chipBg = if (dark) Color(0xFF2A2A28) else Color(0xFFEDEDEB)
-    chipFg = if (dark) Color(0xFF8FB4E8) else Color(0xFF284E90)
+    /*
+     * Dark inline code: (38,38,38) behind (122,165,230), sampled off the
+     * reference's own dark reply - the same shape as light's (237,237,235) on
+     * (40,78,144), a chip a shade off the page with blue letters on it.
+     *
+     * This drew (42,42,40) and a paler blue (143,180,232). The fill was 4 steps
+     * too light against a 21 page - barely visible, but it made the chip's edge
+     * dissolve where the reference's is a distinct rounded block - and the
+     * letters were washed out.
+     */
+    chipBg = if (dark) Color(0xFF262626) else Color(0xFFEDEDEB)
+    chipFg = if (dark) Color(0xFF7AA5E6) else Color(0xFF284E90)
     selectionTint = if (dark) Color(0xFF63463A) else Color(0xFFDEBFAF)
     selectionHandle = if (dark) Color(0xFFD08A6B) else Color(0xFFB96747)
     /*

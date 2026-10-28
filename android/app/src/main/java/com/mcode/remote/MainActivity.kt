@@ -162,7 +162,12 @@ private val InkMuted = Color(0xFF6B6862)
  * near-black page.
  */
 private val ToolWhat = Color(0xFF7B7974)
-private val DarkToolWhat = Color(0xFF9A9A96)
+/*
+ * A finished tool row's own ink, dark: (151,149,142) sampled off the reference's
+ * reply - the same warm grey it gives a timestamp, not the neutral (154,154,150)
+ * this carried. In light the row is (123,121,116), which is the same relationship.
+ */
+private val DarkToolWhat = Color(0xFF97958E)
 /* The mark before the verb: (56,56,53) on the reference, between the verb's 19
  * and the target's 123. It was `LocalMuted` (107,104,99), which drew the icon
  * as light as the words it introduces and lost the three-step rhythm. */
@@ -14483,7 +14488,22 @@ fun ToolRow(
                 fontSize = 14.sp,
                 lineHeight = 22.4.sp,
                 fontWeight = FontWeight.Medium,
-                color = if (failed || busy) rowTint else LocalText.current,
+                /*
+                 * One colour for the whole row, as the reference sets it.
+                 *
+                 * The verb used to be body ink - (249,249,247) - with only the
+                 * call's own title in the muted step. Sampled off the
+                 * reference's own reply, a finished tool row is a single flat
+                 * (151,149,142) from 「已运行」 through the sentence after it,
+                 * while the prose around it is (249,249,247): the row is a
+                 * caption about the work, not part of it. Drawing the verb white
+                 * made every tool call read as another paragraph of the answer.
+                 */
+                color = when {
+                    failed || busy -> rowTint
+                    LocalBg.current == DarkBg -> DarkToolWhat
+                    else -> ToolWhat
+                },
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f, fill = false),
