@@ -224,28 +224,124 @@ phone with a local MCode gateway (「连接本机的 MCode 后…」), a capabil
 app has no equivalent for. Neither page is scored, because neither has a
 reference to be measured against.
 
+## The artifacts card — re-measured against a real reference
+
+`REF-artifacts.png` was captured from the drawer's own Artifacts entry this round
+(the earlier `CL-ART*.png` "references" were captures of *this* app: their left
+rail says 设备 / 添加设备). At 2.5 px per dp:
+
+| element | reference | this app, before | now |
+|---|---|---|---|
+| card | x 40..859, y 452..698 → 328.0 x 98.8 | 102.4 tall | **99.2** |
+| card outline | **1 px** (225,225,223) | 3 px | **0.4 dp** |
+| card corner | 12.8 of arc | 10.8 | **15.6** (matches the arc) |
+| inset | 12 all round | 10.6 | **12** |
+| well | 112.0 x 75.2, corner 9.6 | 112 x 74.8, corner 8 | **112 x 75.2, 9.6** |
+| badge | 24.0 square, corner 5.6, glyph 12.0 | 23.6, corner 4, glyph 15.2 | **24, 5.6, 12** |
+| badge mark | painter's palette: circle with a notch bitten inward at the lower right, four dots | a pinched circle, three dots in a row (read as a flower) | **traced from a 1:1 dot map** |
+| title | ink 16.8..30.4 (13.6) | 14.0..29.6 (16.0) | **17.2..30.8 (14.0)** |
+| 仅您可见 | ink 40.8..53.2 | 38.4..49.6 | **40.4..51.6** |
+| 编辑于 | ink 71.2..82.8 | 68.8..80.0 | **69.2..80.4** |
+
+**The card's height is set by the well, not by the text.** Left to themselves the
+two children are measured independently and the taller one wins; the three lines
+came out 1.6 taller than 75.2, so every card read 100.8. `heightIn(max = 75.2.dp)`
+on the text column pins the row to the well, which is what the reference's own
+proportions say.
+
 ## Not yet compared
 
 
 
-- The diff card's **colours** (added #20A923, removed #E5351C, `@@` muted):
-  still the desktop's, never sampled off the phone. The one reference thread
-  that carries a step holds no file edits, so this pass had nothing to measure.
-  Its **truncation** is done and tested — see below.
-- The delivery card
-- Code-block geometry (the reference thread has no fenced block; only its shape is
-  confirmed here — label, syntax colour, plate, copy/share/more)
+- (closed) The diff sheet's **header, gutter, fold bar** — see below.
+- The diff card's **colours**: opened the phone's own diff sheet and
+  sampled it; the desktop's inks were not what it draws. Now matched on every
+  element including the gutter and the blue change mark — see "The diff sheet".
+- (closed) **The row under a finished reply** — measured off `REF-deliv.png` and
+  implemented: 差异 +N -M ／ 创建 PR, two white capsules 32 tall, 5.6 corner, a
+  0.4 dp (167,167,167) hairline, 10.4 apart. The reference draws **no
+  edited-files card** on that screen, so those capsules carry the change's size.
+  创建 PR is drawn only where `git.status` says the folder is a repository — the
+  conversation this was checked against lives in a non-repo folder, where the
+  reference's own button could not work either.
+  **Its action now opens the forge's compare page.** The gateway can read a pull
+  request but cannot file one, so the capsule does what the reference's does:
+  opens the branch's compare URL, where the reader confirms title and body. Two
+  facts go into it - `git.status` for the branch, `file.read` of `.git/config`
+  for the remote - and `pullRequestUrl` assembles it (13 unit tests: scp-style
+  remotes, `.git` suffix, GitLab's own `/‑/compare` route, `/` in a branch name
+  escaped, a custom default branch, and refusal for hosts whose route is not
+  known). Verified on the pad: with a repository on a feature branch the URL came
+  out `https://github.com/WyattCode/MCode/compare/main...chore%2Fapp-name-mcode?expand=1`,
+  the tap opened Chrome, and the same URL shape answers 200 on a public repo with
+  a real branch and 404 with a made-up one - so the shape is right, and the 404
+  seen on the pad was a private repo answering 404 to a signed-out browser.
+
+  **A bug this exposed**: `gitRepo` and `prUrl` used to be computed only inside
+  the changes rail, which runs *while its sheet is open*. In an ordinary
+  conversation neither was ever asked for, so `gitRepo` stayed false and the
+  capsule never appeared even in a repository on a feature branch. Both are now
+  answered by a standing effect keyed on the conversation's folder, not on that
+  panel.
+- (closed) The delivery card. R1.png was taken for the reference and is a
+  screenshot of *this* app — its numbers matched this app's exactly. Verified by
+  the top-right corner (blue spinner arc + vertical ⋮ = Claude; three horizontal
+  dots = this app). What looked like a delivery card there is this app's edited
+  card. The reference's `REF-deliv.png` was re-verified the same way before any
+  number off it was used.
+- (closed) **Code-block geometry** — a reference was found at last (`REF-codeblock.png`,
+  the 「Python code request」 thread, whose fence is the three-line
+  `for i in range(1, 4)`). Matched: plate (240,239,236) over (243,243,240), 40 dp
+  label row, 22.4 corner, label ink 12.0 at x 17.2, code ink 13.6 on a 16.4 pitch,
+  the two head marks 26 dp apart with the pair 27.2 from the right edge, and the
+  language capitalised as the reference does (「Python」). The block spans its text
+  column edge to edge, which it already did.
 - (closed) The 定时任务 foot capsule read 110.4 against 122.8. Nothing was
   squeezing it: the page carried **two** capsules - one inside the empty branch,
   one at the function's foot - and both readings came off renders of that page.
   The inner one is gone, and the survivor states 122.8 by 43.6, measuring 121.6
   on the pad.
-- The artifacts well carries the kind's mark where the reference shows a real
-  preview thumbnail — correct for a record with nothing to render, unverified
-  for one that has
-- Inline-code chip geometry and colour (see the conversation pane above)
-- The summary's *opening* gesture: the reference lifts a bottom sheet with a title,
-  a close button and the calls inside; this app expands in place
+- **(still open) The artifacts well draws the kind's mark where the reference draws
+  a real preview.** A proper reference was captured this round
+  (`REF-artifacts.png`, the drawer's own Artifacts entry) and it settles what the
+  reference does: the well holds a **2x2 collage of rendered page screenshots**,
+  not a glyph. Everything else about the card was measured against it and
+  matched (see below); the preview itself is not implementable from here — the
+  gateway's `artifact.list` returns path/size/mtime only, there is no thumbnail
+  call, and this profile's five records are `.md`/`.ts`/`.ps1`, so even a
+  renderer would have nothing to draw but text. Drawing a fake thumbnail would be
+  inventing evidence.
+- (closed) **Inline code** — the chip was never measurable because no reference
+  carried one; every thread with backticks lived outside the folders Claude's Code
+  page lists. It was obtained by asking Claude, in one of those threads, for a
+  sentence carrying three spans (`REF-inline2.png`). Measured at 2.5 px per dp:
+
+  | | reference | this app, before | now |
+  |---|---|---|---|
+  | fill | **(237,237,235)** | #F0F0F2 (blue cast) | **#EDEDEB** |
+  | letters | **(40,78,144)** blue mono | #3A3A38, the body ink | **#284E90** |
+  | height | **17.6** | 28.8 - the line's 30 dp box | **17.6** |
+  | corner | 3.2 | 4 | **3.2** |
+  | air | 5.6 / 5.2 | 1.6 / 1.6 | **5.6 / 4.8** |
+
+  Two things were wrong in kind, not degree. The colours were the desktop's
+  (grey on grey), while the phone sets the span in **blue** - which is what makes
+  a chip read as code at a glance rather than as a highlighted word. And the fill
+  used `getBoundingBox`, whose rect is the **line's** box, not the glyphs': at
+  17.4 on a 30 dp pitch it reported 30, so every chip was a band that swallowed
+  the lines around it. The height now comes from the type (17.6) and the fill is
+  centred on the box's own middle, so it still sits on the baseline.
+- (closed) **The summary's opening gesture** — the reference lifts a bottom sheet,
+  and this expanded in place. A real reference was finally captured
+  (`REF-summarysheet.png`, from the 「Main」 thread): grabber, ✕ at x 32, the
+  summary line centred and bold (ink 17.6), one row per call on a 45.2 dp pitch,
+  and one connector stroke through the marks' centre line. All of it is now
+  `SummarySheet`; the pitch needed `spacedBy(12.4)` on top of `ToolRow`'s own
+  5 dp, and the connector had to move from per-row to one stroke per group —
+  drawn per row, the 12.4 dp gaps cut it into three dashes.
+  *(The note that called CX2 the reference was wrong: CX2–CX6 are captures of
+  this app. The top-right blue-arc test passes on them and is not sufficient;
+  the left rail's own words are what settle it.)*
 
 ## The tool row — matched
 
@@ -352,6 +448,88 @@ The arithmetic is `diffSlice(diff, maxLines) -> (shown, hidden)`, a plain functi
 rather than part of the composable so it can be tested without a device. It reads
 only `maxLines + 1` lines to decide — the first cut materialised the whole patch
 just to count it. Nine tests hold it, including the 99-line case reporting 19.
+
+## The diff sheet — measured and matched
+
+The desktop's inks (#20A923 / #E5351C) were never what the phone draws, and the
+phone's own sheet had never been opened until `REF-diffview.png`. Sampled at
+native resolution (2.5 px per dp):
+
+| element | reference | this app |
+|---|---|---|
+| changed-line code ink | (56,58,65) | **same** |
+| changed-line wash | (237,244,227) / (247,236,236) | **same** |
+| row's left rule | 0.8 dp, (67,116,39) / (167,61,57) | **same** |
+| gutter width | 51.2 | **50.8** |
+| gutter separator | 0.4 dp | **0.4** |
+| number ink, changed / context | (19,19,19) / (123,121,116) | **same** |
+| number's right gap | 11.6 | **12.4** |
+| blue change mark | 4.4 × 0.8, (78,119,234) | **same** |
+| line pitch | 19.6 | **19.6** |
+| band extent | edge to edge | **edge to edge** |
+
+What changed on the strength of it: the sides are told apart by a **wash and a
+rule**, not by colouring the type; the sheet gained the **gutter** (side + line
+number, `-231` / `+231` / bare) that it never had, so a change now says which line
+of the file it sits on; and the **blue mark** that starts a change. Two bugs the
+gutter exposed and the tests now hold: a patch's trailing newline read as a
+phantom numbered row, and a removal advancing the new-side counter.
+
+`diffSlice` stays a plain function (`diffSlice` / `diffWithNumbers`) so the
+numbering is testable without a device. `DiffNumberTest` (10) holds the
+arithmetic, including the 99-line truncation case and the phantom newline.
+
+## The diff sheet's header — implemented, measured
+
+The sheet had a title and a wall of lines. Sampled off `REF-diffview.png` (dp
+from the sheet's top edge):
+
+| element | reference | this app |
+|---|---|---|
+| grabber | 34 × 4 at 5.6 | **same** |
+| ✕ ink | 12 × 12 at x 32 | **12.8 at x 28.8** |
+| 「差异」 ink | 25.6..41.2 | **24.8..40.4** |
+| branch line | ink 12.8, (123,121,116) | drawn when the caller names a branch |
+| file row | 47.2 tall on (253,253,251) | **same** |
+| `+N` / `-M` | (41,97,24) / (131,46,43) | **same** |
+| fold bar | 47.6 tall, plate 38.4, 「+N 行」 | **same** |
+
+The ✕ needed `size(20.dp)` with stroke 1.4, not `size(12.dp)`: its path spans
+x 6..18 of the 24 grid, so it inks half the size it is given.
+
+## Two bugs this round found
+
+**审阅 did nothing — and worse, changed the page.** The button ran, and a probe
+(`Toast` with the patch length) proved it: 1065 characters reached the handler.
+The sheet still never opened, and the left rail flipped to Code. The cause was
+`diffWithNumbers(patch, Int.MAX_VALUE)`: `diffSlice` peeks at `maxLines + 1`,
+which wraps to `Int.MIN_VALUE`, and `take` throws on a negative count. Inside a
+composable's `remember`, that exception took the whole composition down — the
+"page change" was the screen rebuilding from a crash. Fixed in `diffSlice` (the
+"all of it" request now answers instead of throwing) and pinned by
+`aHugeLimitDoesNotWrapIntoANegative`.
+
+**The provider sheet was nested inside the file-preview lambda.** `filePreview?.let {`
+opened above the provider block and closed 120 lines below it, so opening any
+preview also composed the provider list. The preview moved out into
+`PreviewSheet`; the two are now siblings.
+
+Also fixed: **抽屉 → 查看全部 was wired to `openDrawer()`** — the drawer re-opened
+itself, so the row read as dead.
+
+## Context folding — built, but rare in real data
+
+`sheetRows` keeps three unchanged lines either side of a change and folds longer
+runs behind a 「+N 行」 bar, which is what the reference does (its bar counts 227
+skipped lines and the rows below it begin at 228). A window is only kept on a side
+that has a change: testing `i == 0` looked equivalent to "is this the top of the
+hunk" and was not — a hunk header occupies index 0, so the head window was always
+kept.
+
+Measured across every patch on this machine (`.workbuddy/foldstats.mjs`): the
+**longest context run is 3 lines**, so the bar will not appear in these
+transcripts. It is correct and tested (`DiffFoldTest`, 8 cases), and it is what a
+large write produces — the reference's own 227-line bar came from one.
 
 ## A "defect" that was my own miscount
 
