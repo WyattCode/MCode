@@ -120,6 +120,7 @@
 - **回复下方按钮**：白胶囊 32 高、**0.4dp 描边**（白底与页面只差 1 阶，没边就散成「几个词」）。
 - **代码块**：标签行 `(240,239,236)` 比正文区 `(243,243,240)` **更深**；语言首字母大写；代码墨迹 13.6 / 行距 16.4；右上两图标间距 26.0。
 - **artifacts 卡片**：**0.4dp 描边**、内边距 12.0、井 112.0×75.2 圆角 9.6；**卡高由井决定**（文字列须 `heightIn(max=75.2.dp)`）；徽标是**画家调色盘**（圆轮廓右下内凹缺口 + 四点），不是梅花。
+- **artifacts 列表行是 5 个元素**：类型框 / **种类胶囊**（`badge-cell`，色 12% 淡底 + 6px 点 + 11px 600 字 + 2/8 padding 全圆角）/ 文件名 / 时间 / 操作。原来只有 3 个，缺胶囊。`文本` 是 `#4B5563` 灰 —— 桌面版 `art.badge.text` 就这个色，**灰色是对的**。
 - **行内代码 chip**：底 `(237,237,235)`、字 **(40,78,144) 蓝色等宽**、高 **17.6**、圆角 3.2、左右内边距 5.6/5.2。**桌面端那对灰字灰底是错的**。取高不能用 `getBoundingBox`（它是**行**盒，17.4 字号 30 行距→30），要按字号给固定高并以行盒中点居中。
 
 **工具**：单测 **119 个**（SelectionSlice 56 / StepFold 13 / DiffNumber 11 / RunSummary 10 / DiffSlice 9 / MarkdownBlocks 9 / DiffFold 8 / StepFoldRealThread 3），`build.py` 连带跑；JVM 测里 `org.json` 是空壳，要加 `testImplementation("org.json:json:20240303")`；uiautomator 抓不到 Compose 的 `text` 但抓得到 `clickable` bounds（`nav.py dump` 返回缓存，用 `drive.py`）；`input text` 不可靠，造内容用 `.workbuddy/prompt.mjs`；同名会话是陷阱，按 `updated` 对 id；权限卡会挡工具（工具停在 `pending` 是在等批准）。
@@ -127,5 +128,5 @@
 ## 已知未解决
 
 - **创建 PR 打不开就直接说清**：网关只有 `git.pullRequest`（查），但动作已接上——`pullRequestUrl(remote, branch)` 拼 forge 的 compare URL，remote 从 `.git/config`（`file.read` 可读）、branch 从 `git.status` 拿。GitHub `/compare/`、GitLab `/-/compare`；scp 形态 `git@host:o/r.git` 先转 https；分支里的 `/` 要转 `%2F`。
-- **artifacts 井里是真实预览图**（参考件 2×2 页面截图拼贴），我们画类型图标。网关 `artifact.list` 只回 path/size/mtime、无缩略图接口，本机语料全文本 —— 不造假图。
+- **artifacts 井画类型图标是对的，不是缺陷**（纠正了三轮误判）：参考件 `REF-artifacts.png` 只有**一条**记录「交换机界面概念稿」，井里是那个 **web 应用自己的 2×2 页面拼贴** —— 是应用类预览，不是文件缩略图。桌面版 `ArtifactsView.vue` 的 tile 就是 `well-mark` 38×38 SVG 图标，全文件**没有** `<img>`/`background-image`。所以画图标与本产品一致；真要做应用预览得靠渲染器（桌面版 `browser.ts:screenshot()` 截的是活窗口），不是加协议字段。
 - 设置页可进入，**无参考件、视觉未校准**；面板形态属用户主动搁置。

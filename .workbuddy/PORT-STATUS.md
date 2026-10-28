@@ -92,10 +92,10 @@ time kept misidentifying them:
   the code had it, and a nested one steps 20.4;
 - the body is 17.4sp, not 18 — its ink measures 17.0 against this app's 17.6.
 
-Not yet compared on this pane: inline-code chip geometry and colour. The
-reference's chips are close enough to the page colour that a pixel scan cannot
-separate them from text antialiasing, so the file's existing 29.6-tall reading
-stands unverified rather than re-guessed.
+Inline code was the last thing uncompared on this pane. It is settled - the
+"29.6-tall" figure was wrong by two thirds, and the colours were the desktop's
+rather than the phone's; see "Inline code" near the end of this file for the
+measurement and how a reference was finally obtained.
 
 ## 定时任务 — matched
 
@@ -224,6 +224,22 @@ phone with a local MCode gateway (「连接本机的 MCode 后…」), a capabil
 app has no equivalent for. Neither page is scored, because neither has a
 reference to be measured against.
 
+### The list, and the kind badge it was missing
+
+The desktop's artifacts page has two layouts, and its **list** row carries five
+things where this app carried three: the kind's box, a **`badge-cell`** naming the
+kind, the file's name, its age, and the actions. The badge is MiMo's: a pill in
+the kind's own colour over a 12% tint of it, led by a 6 px dot, 2/8 padding,
+fully round, 11 px at weight 600 (`ArtifactsView.vue`'s `.badge`).
+
+`KindBadge` draws it, and the list is five elements per row now. Compose has no
+`color-mix`, so the tint is the colour's own alpha at 0.12 - which also keeps it
+right in dark, where a flat pale fill would glare.
+
+The colours come from the same table the mark uses, so 文本 is `#4B5563` - grey,
+and correctly so: that is the desktop's `art.badge.text`. Checked on the pad in
+both modes; the pill is legible in dark without going bright.
+
 ## The artifacts card — re-measured against a real reference
 
 `REF-artifacts.png` was captured from the drawer's own Artifacts entry this round
@@ -301,16 +317,26 @@ proportions say.
   one at the function's foot - and both readings came off renders of that page.
   The inner one is gone, and the survivor states 122.8 by 43.6, measuring 121.6
   on the pad.
-- **(still open) The artifacts well draws the kind's mark where the reference draws
-  a real preview.** A proper reference was captured this round
-  (`REF-artifacts.png`, the drawer's own Artifacts entry) and it settles what the
-  reference does: the well holds a **2x2 collage of rendered page screenshots**,
-  not a glyph. Everything else about the card was measured against it and
-  matched (see below); the preview itself is not implementable from here — the
-  gateway's `artifact.list` returns path/size/mtime only, there is no thumbnail
-  call, and this profile's five records are `.md`/`.ts`/`.ps1`, so even a
-  renderer would have nothing to draw but text. Drawing a fake thumbnail would be
-  inventing evidence.
+- (settled, and **not** a defect) **The artifacts well draws the kind's mark; one
+  record on the reference draws a preview instead.** This was carried as an open
+  flaw for three rounds on the reading that the reference always renders a
+  thumbnail. Read properly, `REF-artifacts.png` holds **one** record - 交换机界面概念稿 -
+  and its well is a 2x2 collage of that *app's own pages*: a dashboard, a kanban
+  board, a node graph and a document view. It is a preview of a web app, not of a
+  file, and it is what that kind of record gets.
+
+  The desktop settles the general case, and settles it the other way: its
+  `ArtifactsView.vue` tile is a `well-mark` **glyph** - a 38x38 SVG stroked in the
+  kind's own colour - over a `badge` naming the kind. There is no `<img>`, no
+  `background-image`, and no thumbnail call anywhere in that view. So a type mark
+  in the well is what this product does; drawing a collage would be the deviation.
+
+  What is genuinely missing is the *app* preview, and that needs a renderer, not a
+  protocol change: `artifact.list` answers path/size/mtime, and rendering a page
+  to an image is the desktop's `browser.ts:screenshot()`, which captures a live
+  window rather than an arbitrary file. This profile's five records are
+  `.md`/`.ts`/`.ps1` - no app among them - so the case cannot even be exercised
+  here. Left as it is, deliberately, with the reason written down.
 - (closed) **Inline code** — the chip was never measurable because no reference
   carried one; every thread with backticks lived outside the folders Claude's Code
   page lists. It was obtained by asking Claude, in one of those threads, for a
