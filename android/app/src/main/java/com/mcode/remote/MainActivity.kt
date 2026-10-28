@@ -15361,7 +15361,13 @@ private fun TurnActions(
     onDiff: () -> Unit,
 ) {
     val dark = LocalBg.current == DarkBg
-    val plate = if (dark) Color(0xFF232322) else Color(0xFFFFFFFF)
+    /*
+     * Dark: (32,32,31) behind a (105,105,102) hairline, sampled off the
+     * reference's own button row. This drew (35,35,34) on a (58,58,56) edge -
+     * both a shade too far from the page, so a capsule read as a smudge rather
+     * than as an outlined object, and its edge disappeared at a glance.
+     */
+    val plate = if (dark) Color(0xFF20201F) else Color(0xFFFFFFFF)
     val ink = if (dark) Color(0xFFF2F2F0) else Color(0xFF131313)
     val addInk = if (dark) Color(0xFF6FB055) else Color(0xFF296118)
     val delInk = if (dark) Color(0xFFC4685F) else Color(0xFF832E2B)
@@ -15381,7 +15387,14 @@ private fun TurnActions(
         Row(
             Modifier
                 .height(32.dp)
-                .clip(RoundedCornerShape(5.6.dp))
+                /*
+                 * 15, not 5.6. Measured off the reference's own button: 80 px
+                 * tall with a 26 px corner at 2.5 px per dp. Asking Compose for
+                 * 10.4 drew 18 px, not 26 - its arc is not the radius in device
+                 * pixels - so the number is the one that measures right rather
+                 * than the one the arithmetic gives.
+                 */
+                .clip(RoundedCornerShape(15.dp))
                 .background(plate)
                 /*
                  * A 0.4 dp hairline, (167,167,167) - not a borderless capsule.
@@ -15390,7 +15403,7 @@ private fun TurnActions(
                  * apart; without the edge the capsule dissolved into the page on
                  * the pad and the row read as loose words rather than as buttons.
                  */
-                .border(0.4.dp, if (dark) Color(0xFF3A3A38) else Color(0xFFA7A7A7), RoundedCornerShape(5.6.dp))
+                .border(0.4.dp, if (dark) Color(0xFF696966) else Color(0xFFA7A7A7), RoundedCornerShape(15.dp))
                 .clickable(remember { MutableInteractionSource() }, indication = null) { onDiff() }
                 .padding(horizontal = 11.6.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -15412,7 +15425,7 @@ private fun TurnActions(
                     .height(32.dp)
                     .clip(RoundedCornerShape(5.6.dp))
                     .background(plate)
-                    .border(0.4.dp, if (dark) Color(0xFF3A3A38) else Color(0xFFA7A7A7), RoundedCornerShape(5.6.dp))
+                    .border(0.4.dp, if (dark) Color(0xFF696966) else Color(0xFFA7A7A7), RoundedCornerShape(15.dp))
                     .clickable(remember { MutableInteractionSource() }, indication = null) {
                         /*
                          * Opens the forge's own compare page for this branch - the
