@@ -450,12 +450,21 @@ column. Ours after the change: summary 410.4, prose 410.8.
 |---|---|---|
 | summary | (83,82,79) | **(83,82,79)** |
 | mark | (56,56,53) | **(56,56,53)** |
-| verb 「已运行」 | (19,19,19) | (31,30,28) |
+| verb 「已运行」 | **(123,121,116)** | (31,30,28) - then (123,121,116) |
 | target 「Read mission…」 | (123,121,116) | **(123,121,116)** |
 
-Every part was one muted grey, so a dozen calls read as a wall. The verb now takes
-the body ink, the target a new `ToolWhat`, the mark a new `ToolMark`, and the
-summary a `ToolSummary` a step darker than `InkMuted`.
+**The verb is not body ink; that reading was wrong.** It was recorded as (19,19,19)
+and the row was split into two greys on the strength of it. Sampled again off the
+reference's own reply, in **both** modes, a finished tool row is one flat colour
+from its verb through the sentence after it - (123,121,116) in light, (151,149,142)
+in dark - while the prose around it is (19,19,19) and (249,249,247). The (19,19,19)
+came from a row that had been expanded, where the verb joins the prose above it.
+
+So the row takes `ToolWhat` throughout, in both modes. Drawing the verb white made
+every tool call read as another paragraph of the answer, which is the opposite of
+what a caption about the work should do.
+
+Three greys remain on a row - summary, mark, and the words - but not four.
 
 ### The mark was a third too small
 
