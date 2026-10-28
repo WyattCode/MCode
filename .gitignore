@@ -19,3 +19,6 @@ android/build/
 android/app/build/
 android/local.properties
 android/.idea/
+
+# Local agent tooling: its own settings and worktrees, not part of the product.
+.claude/
