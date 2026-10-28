@@ -4,16 +4,16 @@
 
 **这份文档怎么读**：前六节是接手就要知道的（现状、怎么跑、代码在哪、坑、刻意的差异、下一步）；第七节起是逐轮记录，按轮次从新到旧，查某个决定为什么是现在这样时再翻。最后是附录：早期的对照清单和待办。
 
-## 当前状态（2026-10-17）
+## 当前状态（2026-10-28）
 
-- **这是什么**：在界面和功能上 1:1 复刻小米 MiMo 桌面端的 Electron 应用，MCode 保留自己的名字、图标和字标。技术栈 Electron 41.7.2 + Vue 3 + Pinia + electron-vite，后端是同一进程里的 Node 服务。
+- **这是什么**：在界面和功能上 1:1 复刻小米 MiMo 桌面端的 Electron 应用，MCode 保留自己的名字、图标和字标。技术栈 Electron 41.10.7 + Vue 3 + Pinia + electron-vite，后端是同一进程里的 Node 服务。
 - **对照基准**：界面照 MiMo **26.920**（第十八轮起）。 第四十七轮已只读比较本机 **26.929.292248**；第四十八轮补了确认的五项增量并修复发送目标竞态，但没有重跑新版全部页面，不宣称全量对齐。只读它的行为和尺寸，**不复制**它的代码、文案、图标、插画和品牌。逐项对照清单（含百分比）：https://claude.ai/code/artifact/f149a5d1-857e-4bae-80be-ca03265d9f83
 - **引擎跟随 OpenCode v2**（第三十一轮起，用户 2026-09-27 定的）：内核和 Agent 编程能力照 OpenCode 的 `v2` 分支逐项移植进 MCode 自己的引擎（v2 还没正式发布，所以是搬能力，不是换引擎）；界面和其余部分保留 MCode 自己的设计。只搬比 MCode 现有做法好的，MCode 更强的地方保留（见第三十一轮）。OpenCode 是 MIT 许可，移植的代码在注释里注明出处。
-- **版本**：**0.7.9**（`package.json`；GitHub Releases 最新版 v0.7.9，2026-10-18，Windows 安装包 + **Android debug APK**（`MCode-Remote-0.1.0-debug.apk`，20.8MB），SHA-256 已与远程核对；发布内容见第五十六轮）。0.7.8（`MCode-0.7.8-x64.exe` 237,049,120 字节）是前一版；0.7.5-0.7.7 无安装包（Linux 制作）；0.7.4 再往前。本机 `D://Apps//MCode` 装 0.7.8——**0.7.9 的 Remote 需要装新版或在仓库跑 `npm run remote`**。自动更新地址仍是占位的 `updates.invalid`，不会触发自动更新。0.7.5-0.7.7 无安装包（Linux 制作）；0.7.4（`MCode-0.7.4-x64.exe`）是再往前最后一个带安装包的发布，本机 `D:\Apps\MCode` 装的是 0.7.7（第五十四轮本地打包）或 0.7.8（自行安装）。自动更新地址仍是占位的 `updates.invalid`，不会触发自动更新。
+- **版本**：**0.9.5**（`package.json`）。第七十八轮打了 Windows 安装包 `dist/MCode-0.9.5-x64.exe`（237,289,653 字节），命令行绕开 `package.mjs` 直接调 electron-builder，所以版本号没被抬到 0.9.6。**打包必须带 `--config.electronDist=node_modules/electron/dist`**：这台机器下不动 Electron 二进制，默认流程会 600 秒超时；手动压 zip 进缓存无效（官方 SHA 对不上）。GitHub Releases 最新仍是 v0.7.9（2026-10-18）——0.8.x/0.9.x 都没有发到 Release，**要发版得手动传**。
 - **分支**：第五十四轮起 **`v2.0` 退役**。0.7.5 起的工作本就直接从 feature 分支（`fix/...`、`feat/...`）合进 `main`（#22-#27），`origin/v2.0` 停在 0.7.4 的交接提交 `2f9f92f8` 之后无人再推；本地 `v2.0` 已删，远端留着不动。以后一切工作（含交接更新）都从最新 `main` 拉分支、PR 合回 `main`。私有仓库 `WyattCode/MCode`。保留未跟踪的 `.claude/`，不提交本地测试产物。
 - **拉取请求**：#4 到 #20、#22 到 #55 已全部合并（#21 关闭未合并；0.7.5=#22-#25、0.7.6=#26、0.7.7=#27，见第五十四轮；#29=session-check 修复、#30=0.7.8 版本号，见第五十五轮；**MCode Remote**：#32=设计、#33=网关、#34=桌面集成、#35=Web 驾驶舱、#36=历史回放、#37=原生安卓、#38=真机修复，见第五十六轮；#39=交接r56、#40=0.7.9 版本号、#41/#42=UI 重设计×2、#43=默认连接、#44/#45/#46=1:1 对齐与宽屏、#47=保活服务、#48=改名 MCode、#49=edge-to-edge、#50=功能补全、#51=历史三连修、#52=steer 丢弃修复、#53/#54=四态走查、#55=启动诊断，见第五十七轮；#61=IME 遮挡/发送钮/自动滚动三连修，见第五十八轮；#63=模型切换/权限响应/会话操作/停止钮，见第五十九轮；#64=ask 卡+挂起卡片重放，见第六十轮；#66=用量面板，见第六十一轮；#67=Agent/Effort 切换，见第六十二轮；#68=0.8.0 版本号；#70=图片附件，见第六十四轮；#71=浅色调色板真值对齐，见第六十五轮；标题照 #10「MCode 2.0：0.6.4 —— …，第四十到四十一轮」的格式）。#3（`macos-hardening-v2`）已关闭：它声称的 16 条修复逐条对照过当前代码，5 条已被后来的工作修掉（含全部 3 条安全项）、2 条在本平台仍然存在并已修（0.4.6）、7 条只在 macOS 上能观察到，结论写在 #3 的关闭评论里。
 - **发布**：https://github.com/WyattCode/MCode/releases/tag/v0.7.9（2026-10-18，最新稳定版，Windows 安装包 + **首个安卓 APK**，附件 SHA-256 已与本地核对）。前一版 v0.7.8（Windows 安装包回归）。带安装包的最近版本：v0.7.8、v0.7.4、v0.7.3、v0.7.2；v0.7.5-0.7.7 无安装包（Linux 制作）；更早 v0.7.1、v0.7.0、v0.6.9、v0.6.8、v0.6.7、v0.6.6、v0.6.4、v0.6.3、v0.5.3、v0.4.7、v0.4.5、v0.3.8。自动更新地址仍是占位的 `updates.invalid`，所以**发布不会触发任何自动更新**。
-- **验证状态**：2026-10-09 第四十九轮二次复核，build、typecheck 和十二项专项检查全部通过；最终完整 smoke **7794 passed / 0 failed**（out/round49-smoke.log）。修复音频预检抢走新草稿、操作标记断线恢复、驱动替换/关闭后的旧类型，以及已取消的排队操作迟到执行。新增 13 条回归用 11 份实现变异逐条证明能失败；10 份隔离界面构建变异被检出，正常探针通过。旧浏览器夹具改为等待实际关闭，原 1800ms 预算和产品监听变异的失败断言均保留。独立可见 Electron 窗口、真实浏览器及 Windows 原生窗口检查均通过，计时阈值未放宽。本轮未接安卓设备，未重跑真实模型；详情见第四十九轮。第五十四轮（2026-10-17）：typecheck 与十二项专项检查在本机 Windows 全过；0.7.5-0.7.7 的完整回归（**7781 passed / 0 failed**）都是 Release 流程在 Linux 上以「Electron 41 作为 Node」跑的，Windows 完整 smoke 未重跑。第五十五轮（2026-10-17）：**Windows 完整 smoke 首次重跑——7838 passed / 35 failed**，35 条全部为执行环境因素（WorkBuddy 作业对象里 GPU 子进程不稳导致软渲染下的窗口/绘制类、外网封面抓取类、DevTools attach 类、构建未完成时产物过旧的连带一条），agent/session/tool/fs 核心逻辑零失败；session-check 修复后十二项专项全过（详见第五十五轮）。 第五十六轮（2026-10-18）：typecheck 绿；mdcheck/wiringcheck/toolcheck/sessioncheck 绿；**remotecheck 新增专项 7/7**（网关协议端到端：错误令牌拒绝、welcome、session.list 经 handle、会话事件投递、transcript 通道、断线补发）；基线 smoke 7838/35 与 0.7.8 一致（Remote 纯增量零回归）。第五十七轮（2026-10-18 下午/晚）：typecheck 绿、四项专项绿、remotecheck 7/7；**18 Fold 真机驱动**——四态截图对照 Claude 逐元素修正（竖单栏/横双栏/时段问候/幽灵-only 顶栏/系统字体/edge-to-edge 同色）、功能全点验（项目/任务/长按重命名/隐私模糊/保活）、**端到端发指令打通**（PC 端 prompt→deepseek 回复「OK-PC」一字不差）；三连深 bug（跨线程可见性/扁平 text/NPE）修复后零崩溃；凭据损坏破案并明文重建。第五十八轮（2026-10-18 晚）：设备重连、三批修复 APK 上机；**深色像素级复验全过**（#151515/#18191B/#38393B/白语音钮逐一等于 Claude 真值）；**App UI 发指令端到端**（真键盘 REMOTE-OK-2026 → qwen 一字不差回复落库）；IME 遮挡/发送钮图标/时间线自动滚动三连修复（PR #61）真机复验通过。第五十九轮（2026-10-18 晚）：模型切换（provider.list→session.model，pill 双向跟随）、权限响应接通（原 onPerm 空实现）、会话压缩/撤销/归档、运行中停止钮（PR #63）——模型切换与 bash 回合真机端到端。第六十轮（2026-10-18 晚）：ask 卡（question.asked→question.reply 端到端，answers 落库）+ 挂起权限/问题重放（重启不丢，PR #64）真机验证。第六十一轮（2026-10-18 深夜）：用量面板（usage.summary 30 天，总计/按模型/按天，USD 格式与桌面一致，PR #66）。第六十二轮（2026-10-18 深夜）：会话设置面板——Agent（build/plan）与 Effort（none→max）芯片，SessionRow 携带 agent/effort（PR #67）。第六十三轮（2026-10-18 深夜）：**0.8.0 发版**——Windows 安装包 + Android debug APK 已传 GitHub Release（PR #68）。第六十四轮（2026-10-19 凌晨）：图片附件（+钮弹菜单/PhotoPicker/缩略图条/base64 attachments，模型实读字节「这张图片是红色的。」，PR #70，APK 已装机，**不在 0.8.0 包内**）。第六十五轮（2026-10-19 凌晨）：**浅色调色板真机采样对齐**——adb 打开手机上的 Claude 实拍，bg #F9F9F7/卡 #FEFEFE/pill #F0EFEC，发送钮随主题翻转（深白圆黑↑/浅淡橙 E1C0B3 白↑），像素 Counter 验证 top3 色逐一相等（PR #71）。**深浅两套调色板至此全部 Claude 真值对齐**。
+- **验证状态**：**第七十八轮（2026-10-28）完整 smoke 7900 passed / 0 failed**（起点 7838/35，那 35 条是第五十五轮记的执行环境因素），typecheck 绿、i18ncheck 绿（18 张表齐全）。Android 侧 132 个单测随 build.py 一起过，APK 装机后能起、无崩溃、连得上网关，但**真实对话未验证**（平板随后从 adb 掉线）。再往前：2026-10-09 第四十九轮二次复核，build、typecheck 和十二项专项检查全部通过；最终完整 smoke **7794 passed / 0 failed**（out/round49-smoke.log）。修复音频预检抢走新草稿、操作标记断线恢复、驱动替换/关闭后的旧类型，以及已取消的排队操作迟到执行。新增 13 条回归用 11 份实现变异逐条证明能失败；10 份隔离界面构建变异被检出，正常探针通过。旧浏览器夹具改为等待实际关闭，原 1800ms 预算和产品监听变异的失败断言均保留。独立可见 Electron 窗口、真实浏览器及 Windows 原生窗口检查均通过，计时阈值未放宽。本轮未接安卓设备，未重跑真实模型；详情见第四十九轮。第五十四轮（2026-10-17）：typecheck 与十二项专项检查在本机 Windows 全过；0.7.5-0.7.7 的完整回归（**7781 passed / 0 failed**）都是 Release 流程在 Linux 上以「Electron 41 作为 Node」跑的，Windows 完整 smoke 未重跑。第五十五轮（2026-10-17）：**Windows 完整 smoke 首次重跑——7838 passed / 35 failed**，35 条全部为执行环境因素（WorkBuddy 作业对象里 GPU 子进程不稳导致软渲染下的窗口/绘制类、外网封面抓取类、DevTools attach 类、构建未完成时产物过旧的连带一条），agent/session/tool/fs 核心逻辑零失败；session-check 修复后十二项专项全过（详见第五十五轮）。 第五十六轮（2026-10-18）：typecheck 绿；mdcheck/wiringcheck/toolcheck/sessioncheck 绿；**remotecheck 新增专项 7/7**（网关协议端到端：错误令牌拒绝、welcome、session.list 经 handle、会话事件投递、transcript 通道、断线补发）；基线 smoke 7838/35 与 0.7.8 一致（Remote 纯增量零回归）。第五十七轮（2026-10-18 下午/晚）：typecheck 绿、四项专项绿、remotecheck 7/7；**18 Fold 真机驱动**——四态截图对照 Claude 逐元素修正（竖单栏/横双栏/时段问候/幽灵-only 顶栏/系统字体/edge-to-edge 同色）、功能全点验（项目/任务/长按重命名/隐私模糊/保活）、**端到端发指令打通**（PC 端 prompt→deepseek 回复「OK-PC」一字不差）；三连深 bug（跨线程可见性/扁平 text/NPE）修复后零崩溃；凭据损坏破案并明文重建。第五十八轮（2026-10-18 晚）：设备重连、三批修复 APK 上机；**深色像素级复验全过**（#151515/#18191B/#38393B/白语音钮逐一等于 Claude 真值）；**App UI 发指令端到端**（真键盘 REMOTE-OK-2026 → qwen 一字不差回复落库）；IME 遮挡/发送钮图标/时间线自动滚动三连修复（PR #61）真机复验通过。第五十九轮（2026-10-18 晚）：模型切换（provider.list→session.model，pill 双向跟随）、权限响应接通（原 onPerm 空实现）、会话压缩/撤销/归档、运行中停止钮（PR #63）——模型切换与 bash 回合真机端到端。第六十轮（2026-10-18 晚）：ask 卡（question.asked→question.reply 端到端，answers 落库）+ 挂起权限/问题重放（重启不丢，PR #64）真机验证。第六十一轮（2026-10-18 深夜）：用量面板（usage.summary 30 天，总计/按模型/按天，USD 格式与桌面一致，PR #66）。第六十二轮（2026-10-18 深夜）：会话设置面板——Agent（build/plan）与 Effort（none→max）芯片，SessionRow 携带 agent/effort（PR #67）。第六十三轮（2026-10-18 深夜）：**0.8.0 发版**——Windows 安装包 + Android debug APK 已传 GitHub Release（PR #68）。第六十四轮（2026-10-19 凌晨）：图片附件（+钮弹菜单/PhotoPicker/缩略图条/base64 attachments，模型实读字节「这张图片是红色的。」，PR #70，APK 已装机，**不在 0.8.0 包内**）。第六十五轮（2026-10-19 凌晨）：**浅色调色板真机采样对齐**——adb 打开手机上的 Claude 实拍，bg #F9F9F7/卡 #FEFEFE/pill #F0EFEC，发送钮随主题翻转（深白圆黑↑/浅淡橙 E1C0B3 白↑），像素 Counter 验证 top3 色逐一相等（PR #71）。**深浅两套调色板至此全部 Claude 真值对齐**。
 - **已知差异**：对照 26.920 没有已知的、未决的界面差异；26.929 确认的水印选择、后台子智能体提示、停止/未完成状态、项目目录保护和电脑/浏览器标记已补（第四十八轮），发送期间切会话的问题已复现并修复；没有实现录制回放，也没有全页复核新版。仍然不同的三类——用户定的刻意差异（见下）；依赖小米账号或小米服务的功能；需要 Linux / macOS 真机才能核对的细节。
 - **真实模型**：第二十七轮起用局域网模型真用过——撤销、删除提问、手动压缩都端到端验证过（见那一节）；第三十一轮的排队、联网搜索、代码模式也在真模型上跑通了（见第三十二轮末尾）；用户自己也在日常用（第二十九轮的两个问题就是用出来的）。
 
@@ -197,12 +197,12 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 4. **真实模型验证边界**：第二十七轮验了撤销、删除提问和**手动**压缩；第四十四轮发版后的 Qwen 实测已跑通**按计数自动压缩**（48K 测试窗口），也复现并修了 24K 窗口反复压缩的死循环。第四十五轮用用户提供的新服务 `http://192.168.x.x:8888/v1`、`deepseek-v4.1-flash` 实测了**后端进程中断后自动继续、回复途中断线续写**：独立临时配置，运行真实 `startBackend`；不是安装版或整个 Electron 窗口的重启验证。服务的用户给定上下文 / 输出上限是 1,048,576 / 393,216，本轮配置上下文 1,048,576、测试输出上限 8,192，未测试大输出或百万 token 输入。仍只用桩模型验过的有**滚动压缩、MCP 资源**；**`patch` 只给 GPT 模型**，需要 GPT 服务商才能真用。发送停靠与跟随、拖选暂停、批注发光（第十九轮 C 路）仍未在真实使用里覆盖。旧地址 `192.168.x.x:8888` 本轮连接失败，旧 `%TEMP%\mcode-lan-trial` 的配置文件也已不存在；不要沿用旧测试配置或把认证信息写入交接文档。
 5. **MiMo 更新对照**：第四十七轮已比 26.920 → 26.929.292248；第四十八轮完成目录保护、发送目标保护、后台状态、水印选项和电脑/浏览器操作标记。此轮未打包或发布，版本仍为 0.7.1；录制回放不在本轮范围内。以后再更新仍先比新旧 bundle，再决定是否重跑逐页对照。
 6. **留着的小尾巴**：
-   - 消息 id 的「单调递增」只在一个进程里成立：应用关着的时候系统时钟往回调，下次启动写出的 id 仍可能排到已有消息前面（第三十轮复核时记下；彻底修要把高水位存盘）。
+   - ~~消息 id 的「单调递增」只在一个进程里成立~~：第七十八轮已修（`adopt()`，读取时把磁盘 id 作为下限）。
    - 一轮对话**中途**因溢出而压缩时，圆环会一直显示估算值到这一轮结束（没有逐步的时间戳能分辨；估算值很接近）。
-   - 联网搜索在确认卡片里选了「关闭网络搜索」之后，只能把 `config.json` 的 `websearch` 改回 `"auto"`（或某家服务名）才能重新打开，设置页里没有入口（第三十一轮，MiMo 没有这个设置页，没加）。
+   - ~~联网搜索在确认卡片里选了「关闭网络搜索」之后，只能把 `config.json` 的 `websearch` 改回 `"auto"`~~：第七十八轮已在设置页「浏览器」分组加开关（18 语言表补齐）。**平板端没有**这个开关。
    - 全新配置第一次运行时，第一条 bash 命令要 16 秒左右，之后正常（第三十五轮探针看到的，原因未查；只影响新装后的第一条命令）。
-   - Linux 托盘图标仍是把 512 的配色图缩成一张 16 交给托盘（`src/main/index.ts` 的 `refreshTray`），高分屏上会发虚；Linux 的 nativeImage 不读 `.ico`，要改得另外生成多张 PNG 并加各倍率的表示（第三十四轮记下）。
-   - `command -v rm` 这种只查命令位置的写法也被当成删除来问（多问一次，安全方向，第二十五轮起就是这样）。
+   - ~~Linux 托盘图标仍是把 512 的配色图缩成一张 16 交给托盘~~：第七十八轮已修（每配色 7 个尺寸 PNG + `addRepresentation`，注意必须走 `dataURL` 不能走 `buffer`）。
+   - ~~`command -v rm` 这种只查命令位置的写法也被当成删除来问~~：第七十八轮已修（`-v`/`-V` 不派生程序）。
    - 12 条提示在 MiMo 的所有语言里都是英文，MCode 照参照保留（名单在 `scripts/i18n-check.ts` 的 `REFERENCE_ENGLISH`）；若决定翻译，要同时改参照比对。
    - 约 90 处没写字号的 `--text-weak`，要逐个截图才能判断该用哪一档灰（第二十二轮 L1 留下）。
    - 设置页「开源引擎」那一行还缺一个公开仓库地址。
@@ -220,6 +220,37 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 更早的下一步建议留作记录，见文末「附录 C」。
 
 ## 逐轮记录（新到旧）
+
+### 第七十八轮：清理遗留尾巴 —— 删除误报、跨进程 id、联网搜索开关、Linux 托盘（2026-10-28）
+
+用户指令：「全干。」指上一轮列在「仍未做」和「留着的小尾巴」里的那些。这一轮**先把环境从零重建回来**，再把能确定是 bug 的四条修掉，最后打了一版安装包。
+
+**环境整个没了。** 开工时 `C:/Users/Wyatt/.workbuddy/binaries/` 下只剩 `PortableGit`、`node`、`python` —— JDK、Gradle、Android SDK 全不见了（`android/gradle.properties` 里那个绝对路径的 JDK 因此成了死路径）。本轮重新下载并装回：JDK 21（Temurin `jdk-21.0.12.1+1`）、Gradle 8.7、`cmdline-tools`、`platform-tools`、`platforms;android-34`、`build-tools;34.0.0`。装完 APK 能正常构建（149.9s，含单元测试）。**下次接手若发现构建报 JAVA_HOME 或 sdk.dir，先查这个目录，不是代码坏了。**
+
+- **`android/gradle.properties` 里 `org.gradle.java.home` 是硬编码的绝对路径**，且这个文件**在版本控制里**。它的值指向 `C:/Program Files/Eclipse Adoptium/jdk-21.0.12.101-hotspot`，本机已不存在，换任何一台机器也大概率不匹配 —— 这本身就是缺陷，不只是本地环境问题。已删掉该行，改由 `.workbuddy/build.py` 导出 `JAVA_HOME`（每机配置该在的地方）。
+- **`fold.py` 只认无线端点**，`_attached()` 里 `endpoint.startswith(HOST + ":")` 把 USB 直连的裸序列号行整个跳过。平板插着线却 `ensure()` 去连一个早已不存在的无线端口。已加 `endpoint == SERIAL` 分支。
+
+**四条尾巴，逐条修完。**
+
+1. **`command -v rm` 被当成删除来问**（第二十五轮记下）。`command` 在 `WRAPPERS` 表里，而包装器的语义是「它运行后面那个词」，于是这条纯查询派生出一条 `["rm"]` 并命中 `DELETE_COMMANDS`。修法：`-v`/`-V` 是 `command` 唯一不运行后续词的两种拼法，`runsWithin` 里对它们直接返回空。**回归守住两侧**：`command -v rm`、`command -V rm`、`command -pv rm` 不再问；`command rm -rf src`、`command -p rm -rf src` 照样问（派生出的 `rm` 仍为 true）。
+
+2. **消息 id 的「单调递增」只在单进程内成立**（第三十轮记下）。`shared/id.ts` 的 `counters` 是内存里的 Map，只挡住了同一次运行中时钟回拨。**退出应用、把系统时钟往回拨一天、再启动**，新消息的 48 位时间前缀仍会排在已有消息前面 —— 转写乱序，「从此条删除」切错范围，正是高位标记当初要防的那件事，隔一次重启就复发。修法：新增 `adopt(prefix, existingId)`，`SessionStore.messages()`／`messageIDs()`／`readAll()` 读完就把磁盘上的 id 作为下限（`seq` 借 `SEQ_LIMIT-1`，只借时间不借序号，否则同一毫秒内新 id 会排到旧 id 前面）。只借时间的理由写在函数注释里。
+
+3. **联网搜索关掉后没有入口重开**（第三十一轮记下）。`websearch` 只能在首次确认卡里设 `false`，此后要手改 `config.json`。已在设置页「浏览器」分组加开关（`data-websearch-switch`）：关是 `false`，开恢复 `auto`。**18 张语言表全部补齐**（`set.webSearch` / `set.webSearchSub`），脚本按表顺序插入并 `assert` 张数，避免写错语言。注意这**只对桌面端 Vue 设置页生效** —— 平板端设置页是 Kotlin 独立实现，那边只有工具名映射，没有这个开关。
+
+4. **Linux 托盘图标发虚**（第三十四轮记下）。`nativeImage` 不读 `.ico`，Linux 分支只能把 512 的图缩成单个 16，高分屏再拉伸回去。修法：`scripts/icons.mjs` 每种配色额外输出 7 个尺寸的 PNG（16/22/24/32/44/48/64，22 与 44 是 GNOME/KDE 面板的 100%/200%），主进程 `trayLinuxImage()` 用 `addRepresentation` 把全部倍率装进一个 image。**踩了一个坑**：`addRepresentation` 的 `buffer` 是**裸位图**，塞 PNG 上去会在面板上显示噪点，必须走 `dataURL`。
+
+**测试 7900 passed / 0 failed**（起点 7838/35，那 35 条是第五十五轮记的执行环境因素）。新增 `scripts/smoke-round78.ts`（三个 section：查询不问/仍问两侧、跨进程 id 排序、store 读取时抬升下限）。
+
+**打包踩到的两件事。** `npm run package:win` 前两次都死在 `Timeout awaiting 'request' for 600000ms` —— electron-builder 要联网下 Electron 41.10.7，而这台机器下不动。手动把我方 `node_modules/electron/dist` 压成 zip 塞进缓存**没用**：官方 SHA 对不上，反而触发重下。正解是 `--config.electronDist=node_modules/electron/dist`，直接指本地运行时，1m58s 出包。另：`package.mjs` 会先 `bump-version` 再打包，失败时回滚，所以失败几次后 `package.json` 仍是 0.9.5 而不是被抬到 0.9.6。
+
+**平板侧：装上了，但没跑成真实对话。** HyperOS 拦 `INSTALL_FAILED_USER_RESTRICTED`（`PKMSImpl: assertCallerAndPackage: uid=2000, installerPkg=null`），`pm install`、`adb install`、`-i` 指定 installer、启 `AdbInstallActivity` 全部无效，**这个开关脚本绕不过，要人在设备上授权一次**；授权后 `pm install` 直接 `Success`。之后 App 能起、无崩溃、连上网关（橙色重连横幅消失，左栏从「连接断开」变「还没有对话」）。另发现**网络被 Windows 识别成 Public，防火墙默认拦入站**，平板 ping 不通主机；改 Private 需要管理员（本机被组策略挡住），最后靠平板授权安装 + 主机侧网关起来才通。
+
+**PC 版网关的开启方式。** `remote` 开关设置页里没有（代码注释：`on by hand in config.json for now`），要手写 `storage/config.json` 的 `"remote": {"enabled": true, "host": "0.0.0.0", "port": 7900}` 再重启。配对令牌在 `storage/remote-token.json`。
+
+**配局域网模型时的一个真问题。** 用户给的模型名是 `DeepSeek-V4.1-Flash-1017`，但该端点 `/v1/models` 实际只暴露 **`deepseek-v4.1-flash`**（小写、无后缀）。照用户给的字符串写进配置，每次请求都会 404 —— **配置模型 id 必须先查一次 `/v1/models`，别信手抄的名字**。另一个老坑复现：凭据只认 `storage/credentials.json` 的 `keys.<providerId>`，写 `customProviders[].apiKey` 无效（第二轮那条判据仍然成立）。
+
+**仍未做**：平板上的真实对话验证（平板从 adb 掉线，USB 与无线端口都没了）；设置页视觉无参考件；artifacts 应用类预览需渲染器；代码块与摘要 sheet 的深色值未整套校准。
 
 ### 第七十七轮：Claude 手机端逐项校准 —— artifacts 卡片、行内代码、diff sheet、创建 PR（2026-10-28）
 
