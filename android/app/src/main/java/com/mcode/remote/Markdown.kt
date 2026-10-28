@@ -293,13 +293,21 @@ object MdText {
 }
 
 /*
- * The two chip colours, set on the same values the desktop uses: a reply's
- * inline code is #3a3a38 on #f0f0f2 in light and #e6e6e6 on #2e2e2e in dark.
+ * The two chip colours, measured off `REF-inline2.png` - a real reply with
+ * inline code, captured by asking Claude for a sentence carrying
+ * `package.json` / `README.md` / `npm run build`.
+ *
+ * The desktop's pair (#3a3a38 on #f0f0f2) was never sampled on the phone, and
+ * the phone does not agree: its fill is a neutral (237,237,235) - the same grey
+ * the code block's body uses, with no blue cast - and its letters are **blue**
+ * (40,78,144), not the body ink. That blue is what makes a chip read as code at
+ * a glance; the old grey-on-grey pair read as a highlighted word.
+ *
  * They are module state rather than composition locals because the parser runs
  * outside composition; each render sets them first.
  */
-private var chipBg = Color(0xFFF0F0F2)
-private var chipFg = Color(0xFF3A3A38)
+private var chipBg = Color(0xFFEDEDEB)
+private var chipFg = Color(0xFF284E90)
 /*
  * The selection wash, measured off the reference at 400 dpi.
  *
@@ -404,8 +412,8 @@ fun MarkdownBody(
     SideEffect { sharedSelection.lineCount = blocks.size }
     val textColor = LocalText.current
     val muted = LocalMuted.current
-    chipBg = if (dark) Color(0xFF2E2E2E) else Color(0xFFF0F0F2)
-    chipFg = if (dark) Color(0xFFE6E6E6) else Color(0xFF3A3A38)
+    chipBg = if (dark) Color(0xFF2A2A28) else Color(0xFFEDEDEB)
+    chipFg = if (dark) Color(0xFF8FB4E8) else Color(0xFF284E90)
     selectionTint = if (dark) Color(0xFF63463A) else Color(0xFFDEBFAF)
     selectionHandle = if (dark) Color(0xFFD08A6B) else Color(0xFFB96747)
     /*
@@ -984,24 +992,41 @@ private fun MdLine(
             .drawBehind {
                 val laid = layout ?: return@drawBehind
                 if (inline.code.isEmpty()) return@drawBehind
-                val corner = 4.dp.toPx()
+                /*
+                 * Re-measured off `REF-inline2.png` at 2.5 px per dp:
+                 *
+                 *   fill   118.8 x 17.6, corner ~3.2
+                 *   text   ink 108.0 x 15.2 - the mono face inks 1.6 less than
+                 *          the body's 16.8, and it sits **on the same baseline**
+                 *   air    5.6 before the first letter, 5.2 after the last
+                 *
+                 * The glyph box is the line's full 30 dp, so taking it as it
+                 * came drew a chip 29.6 tall - two thirds again the reference's
+                 * 17.6, a band that swallowed the line above and below it. The
+                 * fill is centred on the ink instead: 0.8 above and below the
+                 * 16 dp the mono box reports.
+                 */
+                val corner = 3.2.dp.toPx()
+                /*
+                 * `getBoundingBox` hands back the **line's** box, not the
+                 * glyphs': at 17.4 on a 30 dp pitch it reports 30, which drew a
+                 * chip 28.8 tall - the reference's is 17.6, i.e. its fill hugs
+                 * the letters rather than the line.
+                 *
+                 * So the height comes from the type, not the layout: 15.2 of ink
+                 * plus 1.2 of air above and below. The box is re-centred on its
+                 * own middle so the fill stays on the baseline the text sits on.
+                 */
+                val chipH = 17.6.dp.toPx()
                 for (range in inline.code) {
                     for (box in chipBoxes(laid, range)) {
-                        /*
-                         * The glyph box is already the line's own height here -
-                         * 14sp mono in a 30sp line - so the fill needs no
-                         * vertical inflation. 3.6 above and below made the chip
-                         * 36.8 tall against the reference's 29.6; with the box
-                         * taken as it is, only the horizontal 1.6 a side
-                         * remains, which is the air the reference puts before
-                         * the first letter and after the last.
-                         */
+                        val midY = (box.top + box.bottom) / 2f
                         drawRoundRect(
                             color = chipBg,
-                            topLeft = androidx.compose.ui.geometry.Offset(box.left - 1.6.dp.toPx(), box.top),
+                            topLeft = androidx.compose.ui.geometry.Offset(box.left - 6.4.dp.toPx(), midY - chipH / 2f),
                             size = androidx.compose.ui.geometry.Size(
-                                box.width + 3.2.dp.toPx(),
-                                box.height,
+                                box.width + 12.dp.toPx(),
+                                chipH,
                             ),
                             cornerRadius = androidx.compose.ui.geometry.CornerRadius(corner, corner),
                         )
@@ -1878,12 +1903,28 @@ private fun CodeBox(
             .background(body),
     ) {
         Row(
-            Modifier.fillMaxWidth().background(head).height(40.dp).padding(start = 17.2.dp, end = 13.dp),
+            /*
+             * 27.2 dp in from the right edge, measured off `REF-codeblock.png`:
+             * the expand mark's ink ends 27.2 from the block's own edge. At 13
+             * the pair sat nearly against the edge, where the reference leaves a
+             * margin as wide as the one on the left.
+             */
+            Modifier.fillMaxWidth().background(head).height(40.dp).padding(start = 17.2.dp, end = 22.8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            /*
+             * 12.9 sp, not 12: at 12 the label's ink read 11.2 dp where the
+             * reference's is 12.0 - the same measurement error the reply actions
+             * had, and the same fix.
+             */
             Text(
-                lang.ifEmpty { "code" },
-                fontSize = 12.sp,
+                /*
+                 * 「Python」, not the fence's own 「python」: the reference
+                 * capitalises the language's name in the label. 12.5 sp inks
+                 * 12.0 dp, which is what the reference's label measures.
+                 */
+                lang.ifEmpty { "code" }.replaceFirstChar { it.uppercaseChar() },
+                fontSize = 12.5.sp,
                 color = ink,
                 modifier = Modifier.weight(1f),
             )
@@ -1909,7 +1950,13 @@ private fun CodeBox(
                     modifier = Modifier.size(15.dp),
                 )
             }
-            Spacer(Modifier.width(2.dp))
+            /*
+             * 13.6 dp between the two marks, measured off `REF-codeblock.png`:
+             * the copy mark's ink ends 67.2 dp from the block's right edge and
+             * the expand mark's begins 686.8 - a 26 dp trough between two 15 dp
+             * glyphs. At 2 the pair read as one crowded control.
+             */
+            Spacer(Modifier.width(13.6.dp))
             /*
              * Expand, for real: a full screen sheet with the block on it.
              *
@@ -1963,9 +2010,16 @@ private fun CodeBox(
                     Spacer(Modifier.height(10.dp))
                     Text(
                         Highlight.colorize(code, lang, if (dark) Highlight.dark else Highlight.light),
+                        /*
+                         * 12.6 / 16.4, measured off `REF-codeblock.png`: its
+                         * code lines ink 13.6 dp tall and sit 41 px (16.4 dp)
+                         * apart. At 13 / 18 this drew 14.0 dp of ink on an 18 dp
+                         * pitch - the block ran long and the type read heavy
+                         * against the reference's lighter mono.
+                         */
                         fontFamily = FontFamily.Monospace,
-                        fontSize = 13.sp,
-                        lineHeight = 18.sp,
+                        fontSize = 13.6.sp,
+                        lineHeight = 16.4.sp,
                         color = LocalText.current,
                         softWrap = true,
                         modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
@@ -1998,8 +2052,14 @@ private fun CodeBox(
          */
         Text(
             Highlight.colorize(code, lang, if (dark) Highlight.dark else Highlight.light),
+            /*
+             * 13.6, measured off `REF-codeblock.png`: its code lines ink 13.6 dp
+             * tall. At 14 this drew 14.0 - a hair heavy, and enough that a fence
+             * of twenty lines ran visibly longer than the reference's. The 16.4
+             * pitch was already right.
+             */
             fontFamily = FontFamily.Monospace,
-            fontSize = 14.sp,
+            fontSize = 13.6.sp,
             lineHeight = 16.4.sp,
             color = LocalText.current,
             softWrap = true,

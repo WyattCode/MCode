@@ -104,6 +104,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.core.graphics.PathParser
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.asComposePath
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -124,6 +125,7 @@ import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.*
 import okhttp3.OkHttpClient
@@ -181,7 +183,16 @@ private val DarkToolSummary = Color(0xFFB4B4B0)
 private val DiffAddBg = Color(0xFFD2E6D4)
 private val DiffAddFg = Color(0xFF4C9C49)
 private val DiffDelBg = Color(0xFFEACED7)
-private val DiffDelFg = Color(0xFFD488A0)
+/*
+ * (188,52,86), not the (212,136,160) this carried.
+ *
+ * The pink was read off a thumbnail and came out a pale rose that sat on the
+ * pink half with barely more contrast than the background - the minus side of
+ * the counter read as an empty pill. Sampled at native resolution off
+ * `REF-now.png` the ink is a deep raspberry, and the pair now reads as one
+ * figure with a size rather than as an empty box.
+ */
+private val DiffDelFg = Color(0xFFBC3456)
 private val DarkDiffAddBg = Color(0xFF23342A)
 private val DarkDiffAddFg = Color(0xFF8FCB8C)
 private val DarkDiffDelBg = Color(0xFF3A2530)
@@ -193,20 +204,15 @@ private val DarkDiffDelFg = Color(0xFFE0A0B4)
  */
 private val Ember = Color(0xFFCC7C5E)
 
-/**
- * A patch's two inks, per scheme.
+/*
+ * A patch's sides are not coloured text.
  *
- * `--diff-add` / `--diff-delete`: #20a923 and #e5351c in light, #a3da9f and
- * #ffb3a4 in dark. The phone held one pair of dark greens and reds for both
- * schemes, so on the dark page a diff's added lines came out a near-black green
- * that could not be read at all - and a patch is the commonest thing a tool
- * row prints.
+ * This held the desktop's `--diff-add` / `--diff-delete` (#20a923, #e5351c) and
+ * painted the lines themselves; the phone's own diff sheet prints both sides in
+ * the body ink and tells them apart with a wash and a rule, which `DiffLines`
+ * now draws (sampled off `REF-diffview.png`). Nothing reads these two any more,
+ * and keeping them invites the next pass to colour the type again.
  */
-@Composable
-fun diffAddInk(): Color = if (LocalBg.current == DarkBg) Color(0xFFA3DA9F) else Color(0xFF20A923)
-
-@Composable
-fun diffDelInk(): Color = if (LocalBg.current == DarkBg) Color(0xFFFFB3A4) else Color(0xFFE5351C)
 
 
 /**
@@ -1565,6 +1571,24 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     /** The changes panel's two "there is nothing to show" cases, which are not the same as "nothing changed". */
     var changesNoRepo by remember { mutableStateOf(false) }
     var changesNoGit by remember { mutableStateOf(false) }
+    /**
+     * Whether the open conversation's folder is a git repository.
+     *
+     * Set beside `changesNoRepo`, from the same `git.status` answer, but kept
+     * separate: one is the panel's empty state, this decides whether a turn draws
+     * its 创建 PR capsule at all.
+     */
+    var gitRepo by remember { mutableStateOf(false) }
+    /**
+     * The compare page a turn's 创建 PR opens, or null.
+     *
+     * Three facts go into it and the screen owns all three: the folder is a
+     * repository (`git.status`), its branch (`git.status` again) and its remote
+     * (`file.read` of `.git/config`, which the gateway serves like any other
+     * text). `pullRequestUrl` does the arithmetic; this holds the answer so a
+     * transcript's many turns share one round trip.
+     */
+    var prUrl by remember { mutableStateOf<String?>(null) }
     /** Parked permission requests per session, replayed from session.list. */
     val pendingPerms = remember { java.util.concurrent.ConcurrentHashMap<String, MutableList<JSONObject>>() }
     /**
@@ -3722,7 +3746,17 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     // The drawer's search closes the drawer and focuses the
                     // list's field; on a phone the list is the page behind it.
                     onSearch = { closeDrawer() },
-                    onSeeAll = { openDrawer() },
+                    /*
+                     * 查看全部 opens the full list, not the drawer again.
+                     *
+                     * It was wired to `openDrawer()`, which is the drawer it sits
+                     * inside - so the row read as dead: the tap re-opened the
+                     * panel already on screen and nothing moved. Every other row
+                     * here switches the left pane and closes the drawer; this one
+                     * now does the same, onto the conversation list the word
+                     * promises.
+                     */
+                    onSeeAll = { leftMode = LeftMode.Sessions; closeDrawer() },
                     onNewTask = { newSession(); closeDrawer() },
                     onArtifacts = { leftMode = LeftMode.Artifacts; closeDrawer() },
                     onPlugins = { leftMode = LeftMode.Plugins; closeDrawer() },
@@ -4991,6 +5025,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                             root = sessions.find { it.id == currentSession }?.directory.orEmpty(),
                                             onRevertTurn = ::revertTurn,
                                             onReviewTurn = { patch -> filePreview = "本回合的改动" to patch },
+                                            gitRepo = gitRepo,
+                                            prUrl = prUrl,
                                         )
                                         /*
                                          * The info card floats over the pane's top
@@ -5100,6 +5136,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             root = sessions.find { it.id == currentSession }?.directory.orEmpty(),
                             onRevertTurn = ::revertTurn,
                             onReviewTurn = { patch -> filePreview = "本回合的改动" to patch },
+                                            gitRepo = gitRepo,
+                                            prUrl = prUrl,
                         )
                         if (infoOpen) InfoCard(
                             items = items.toList(),
@@ -5332,6 +5370,43 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * checking from a phone, and until now the only way was to ask the model
      * what it had done.
      */
+    /*
+     * 创建 PR's URL, asked once per folder rather than once per turn.
+     *
+     * This used to be computed inside the changes rail, which only runs while
+     * that sheet is open - so in an ordinary conversation the answer was never
+     * asked for and the capsule never appeared, even in a repository on a
+     * feature branch. It belongs to the conversation, not to that panel.
+     *
+     * Three facts: `git.status` for whether it is a repository and which branch,
+     * `file.read` of `.git/config` for the remote. A non-repository skips the
+     * read; a remote with no comparable forge, or a branch that is already the
+     * default, leaves it null and the capsule is simply not drawn.
+     */
+    val prRoot = sessions.find { it.id == currentSession }?.directory.orEmpty()
+    LaunchedEffect(prRoot, showChanges) {
+        if (prRoot.isBlank()) { prUrl = null; return@LaunchedEffect }
+        val st = runCatching { rpc(JSONObject().put("type", "git.status").put("directory", prRoot)) }
+            .getOrNull()?.optJSONObject("data") ?: run { prUrl = null; return@LaunchedEffect }
+        /*
+         * `gitRepo` is set here too, not only by the changes rail. It is the same
+         * answer - whether this folder is a repository - and the rail only runs
+         * while its sheet is open, so a reader who never opened it had `gitRepo`
+         * false and lost the capsule even in a repository on a feature branch.
+         */
+        gitRepo = st.optBoolean("repo")
+        if (!gitRepo) { prUrl = null; return@LaunchedEffect }
+        val cfg = runCatching {
+            rpc(JSONObject().put("type", "file.read").put("root", prRoot).put("rel", ".git/config"))
+        }.getOrNull()?.optJSONObject("data")?.optString("content").orEmpty()
+        val remote = cfg.lineSequence()
+            .map { it.trim() }
+            .filter { it.startsWith("url = ") }
+            .map { it.removePrefix("url = ").trim() }
+            .firstOrNull { it.isNotBlank() }
+            .orEmpty()
+        prUrl = pullRequestUrl(remote, st.optString("branch"))
+    }
     if (showChanges) {
         val root = sessions.find { it.id == currentSession }?.directory.orEmpty()
         LaunchedEffect(root) {
@@ -5346,6 +5421,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
              */
             changesNoRepo = data.has("repo") && !data.optBoolean("repo")
             changesNoGit = data.has("installed") && !data.optBoolean("installed")
+            // The same answer the panel uses, kept where the transcript can reach it.
+            gitRepo = data.optBoolean("repo")
             branches.clear()
             runCatching { rpc(JSONObject().put("type", "git.branches").put("directory", root)) }
                 .getOrNull()
@@ -5575,6 +5652,9 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * a reading surface of its own.
      */
     filePreview?.let { (name, body) ->
+        PreviewSheet(name, body, onClose = { filePreview = null })
+    }
+
     /*
      * 模型服务: which provider serves this conversation, and its key.
      *
@@ -5582,6 +5662,11 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * it - the row led nowhere, which is the one thing a repair button must not
      * do. This is what it should have opened: the providers the desktop's
      * settings page lists, whether each has a key, and a field to paste one.
+     *
+     * This block used to sit *inside* `filePreview?.let`: the lambda opened above
+     * it and closed 120 lines below, so the provider sheet was composed as part
+     * of the file preview. Pressing 审阅 therefore also ran the whole provider
+     * list, and the left rail flipped to Code instead of a diff opening.
      *
      * `provider.auth` is the call that matters. It writes through the
      * credentials store into `credentials.json`, which is where the backend
@@ -5693,31 +5778,6 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         }
     }
 
-        ModalBottomSheet(onDismissRequest = { filePreview = null }, containerColor = MaterialTheme.colorScheme.background) {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 25.dp)) {
-                Text(name, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = LocalText.current, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Spacer(Modifier.height(10.dp))
-                LazyColumn(
-                    Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 520.dp)
-                        .background(LocalPill.current, RoundedCornerShape(10.dp))
-                        .padding(10.dp),
-                ) {
-                    val lines = body.lineSequence().take(300).toList()
-                    items(lines.size) { i ->
-                        Text(
-                            lines[i].ifEmpty { " " },
-                            fontSize = 11.sp,
-                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                            color = LocalText.current,
-                            softWrap = true,
-                        )
-                    }
-                }
-            }
-        }
-    }
 
     /*
      * The video, played from the copy the gateway sent over. `VideoView`
@@ -7857,6 +7917,24 @@ fun Timeline(
     onRevertTurn: ((List<String>) -> Unit)? = null,
     /** 审阅: open the turn's recorded diffs. Handed the patch to show. */
     onReviewTurn: ((String) -> Unit)? = null,
+    /**
+     * Whether this conversation's folder is a git repository.
+     *
+     * The turn's 创建 PR capsule is drawn only where it can work; the reference's
+     * turn sits in a repository on a GitHub remote, and the conversation this was
+     * checked against lives in a folder where `git.status` answers `repo: false`.
+     * The screen already asks that question for its changes panel, so the answer
+     * is passed down rather than asked again per turn.
+     */
+    gitRepo: Boolean = false,
+    /**
+     * The compare page 创建 PR opens, or null when this folder's remote is not
+     * one this app can address. Computed on the screen - it is the only place
+     * that can read `.git/config` - and handed down for the same reason as
+     * `gitRepo`: a transcript holds many turns and each would otherwise ask the
+     * same question again.
+     */
+    prUrl: String? = null,
 ) {
     val listState = rememberLazyListState()
     val scope = androidx.compose.runtime.rememberCoroutineScope()
@@ -8805,6 +8883,26 @@ fun Timeline(
                     if (turn.delivered.isNotEmpty()) {
                         DeliveredCards(turn.delivered, root, onOpenFile ?: { _, _ -> })
                     }
+                    /*
+                     * The turn's two actions, under everything it produced.
+                     *
+                     * Measured off `REF-deliv.png`: white capsules 32 tall, 3.2
+                     * corner, no border - 差异 at x 33.2 (110.4 wide) with its
+                     * counts in (41,97,24) and (131,46,43), then 创建 PR 10.4 to
+                     * its right with a (57,105,185) branch mark. The reference
+                     * draws no edited-files card on this screen at all; the
+                     * buttons are the whole of what follows the prose, so they
+                     * carry the change's size in place of one.
+                     */
+                    if (turn.patch.isNotBlank()) {
+                        TurnActions(
+                            add = turn.files.sumOf { it.add },
+                            del = turn.files.sumOf { it.del },
+                            gitRepo = gitRepo,
+                            prUrl = prUrl,
+                            onDiff = { onReviewTurn?.invoke(turn.patch) },
+                        )
+                    }
                 }
                 }
             }
@@ -9335,9 +9433,223 @@ private fun DiffCounter(add: Int, del: Int, modifier: Modifier = Modifier) {
 
 internal fun diffSlice(diff: String, maxLines: Int): Pair<List<String>, Int> {
     if (maxLines <= 0) return emptyList<String>() to diff.lineSequence().count()
+    /*
+     * `maxLines + 1` on Int.MAX_VALUE wraps to Int.MIN_VALUE, and `take` throws
+     * on a negative count. "All of them" is a request callers legitimately make,
+     * so it has to answer rather than throw - inside a composable's `remember`
+     * the throw took the whole screen down.
+     */
+    if (maxLines == Int.MAX_VALUE) return diff.lineSequence().toList() to 0
     val peek = diff.lineSequence().take(maxLines + 1).toList()
     if (peek.size <= maxLines) return peek to 0
     return peek.take(maxLines) to (diff.lineSequence().count() - maxLines)
+}
+
+/**
+ * One drawn line of a patch: which side it belongs to, its line number, and the
+ * text without the prefix.
+ *
+ * The phone's diff sheet puts the side *in the gutter* - the removed lines read
+ * `-231`, the added `+231`, and the context lines carry the new number bare
+ * (measured off `REF-diffview.png`, gutter 51.2 dp wide, one hairline down its
+ * right edge). This renderer printed the raw `+`/`-` prefix in the body with no
+ * numbers at all, so a reader could not tell which line of the file a change sat
+ * on - the one thing the numbers exist for.
+ *
+ * Hunk headers (`@@ -1,5 +1,11 @@`) and the `---`/`+++` file header are their
+ * own shapes; they return `null` for a side so the caller draws them plainly.
+ */
+internal data class DiffLine(val side: Int, val number: Int?, val text: String)
+
+internal fun parseDiffLine(raw: String, oldNo: Int, newNo: Int): Pair<DiffLine, Pair<Int, Int>> {
+    if (raw.startsWith("@@")) return DiffLine(0, null, raw) to (oldNo to newNo)
+    if (raw.startsWith("---") || raw.startsWith("+++") || raw.startsWith("diff --git") || raw.startsWith("index ")) {
+        return DiffLine(0, null, raw) to (oldNo to newNo)
+    }
+    return when {
+        raw.startsWith("+") -> DiffLine(1, newNo, raw.substring(1)) to (oldNo to newNo + 1)
+        raw.startsWith("-") -> DiffLine(2, oldNo, raw.substring(1)) to (oldNo + 1 to newNo)
+        else -> DiffLine(3, newNo, raw.removePrefix(" ")) to (oldNo + 1 to newNo + 1)
+    }
+}
+
+/** The hunk header's starting line numbers, or null outside a hunk. */
+internal fun hunkStart(raw: String): Pair<Int, Int>? {
+    val m = HUNK_HEADER.find(raw) ?: return null
+    val old = m.groupValues[1].toIntOrNull() ?: return null
+    val new = m.groupValues[3].toIntOrNull() ?: return null
+    return old to new
+}
+
+/** Every line of a patch, numbered the way the sheet wants them. */
+internal fun diffWithNumbers(diff: String, maxLines: Int): Pair<List<DiffLine>, Int> {
+    val (slice, hidden) = diffSlice(diff, maxLines)
+    return numberLines(slice) to hidden
+}
+
+/**
+ * A run of unchanged lines the sheet does not print, standing in its place.
+ *
+ * Measured off `REF-diffview.png`: 「+227 行」 on a 38.4-wide blue plate at the
+ * top of the sheet, and the lines below it begin at 228 - so the number is the
+ * count of context lines skipped, and what follows is the *last three* of that
+ * run. This is the three-line window every diff viewer uses: keep three lines
+ * around a change, fold the rest behind one bar.
+ */
+internal data class DiffFold(val skipped: Int)
+
+/** One drawn thing in the sheet: a numbered line or a fold bar. */
+internal sealed interface SheetRow {
+    data class Line(val line: DiffLine) : SheetRow
+    data class Fold(val skipped: Int) : SheetRow
+}
+
+/**
+ * Numbers the lines and folds long runs of unchanged ones.
+ *
+ * A file whose change sits at line 231 would otherwise print 230 identical
+ * context rows before it, and the change itself - the only reason the sheet was
+ * opened - would be somewhere below the fold of the screen. Keeping three lines
+ * either side and standing one bar in for the rest is what the reference does
+ * and what every diff viewer does; before this the sheet printed everything.
+ */
+internal fun sheetRows(diff: String, maxLines: Int, context: Int = 3): Pair<List<SheetRow>, Int> {
+    val (slice, hidden) = diffSlice(diff, maxLines)
+    val numbered = numberLines(slice)
+    val out = ArrayList<SheetRow>(numbered.size)
+    var i = 0
+    while (i < numbered.size) {
+        val line = numbered[i]
+        // A run of context lines, which is the only thing worth folding.
+        if (line.side == 3) {
+            var end = i
+            while (end + 1 < numbered.size && numbered[end + 1].side == 3) end++
+            val run = end - i + 1
+            /*
+             * Only a run longer than the two windows' worth plus one is worth a
+             * bar: folding 7 lines into "…+0 行" and two windows costs more
+             * attention than it saves.
+             */
+            if (run > context * 2) {
+                /*
+                 * A window is kept only where there is something to keep it from.
+                 *
+                 * A run at the top of the hunk has no change above it, so the
+                 * three lines above would be file header - not context worth
+                 * keeping. The reference's bar sits directly under its file row
+                 * and is followed by exactly three lines, which is what this says.
+                 * (Testing `i == 0` looked equivalent and was not: a hunk header
+                 * occupies index 0, so the run began at 1 and the head window was
+                 * always kept.)
+                 */
+                val head = if (hasChangeBefore(numbered, i)) context else 0
+                val tail = if (hasChangeAfter(numbered, end)) context else 0
+                val skipped = run - head - tail
+                for (k in 0 until head) out.add(SheetRow.Line(numbered[i + k]))
+                if (skipped > 0) out.add(SheetRow.Fold(skipped))
+                if (tail > 0) for (k in 0 until tail) out.add(SheetRow.Line(numbered[end - tail + 1 + k]))
+                i = end + 1
+                continue
+            }
+        }
+        out.add(SheetRow.Line(line))
+        i++
+    }
+    return out to hidden
+}
+
+/**
+ * Whether a real change sits before [index], ignoring hunk and file headers.
+ *
+ * A fold's window only belongs on a side that has a change to be near; the other
+ * side would be window onto the top of the file, which the reference does not
+ * print either.
+ */
+private fun hasChangeBefore(lines: List<DiffLine>, index: Int): Boolean {
+    for (k in index - 1 downTo 0) {
+        val side = lines[k].side
+        if (side == 1 || side == 2) return true
+        if (side != 3) return false
+    }
+    return false
+}
+
+private fun hasChangeAfter(lines: List<DiffLine>, index: Int): Boolean {
+    for (k in index + 1 until lines.size) {
+        val side = lines[k].side
+        if (side == 1 || side == 2) return true
+        if (side != 3) return false
+    }
+    return false
+}
+
+/**
+ * Turns raw patch lines into numbered ones.
+ *
+ * A patch always ends with a newline, and `lineSequence` reads that as a final
+ * empty line; drawn, it was a numbered blank row hanging off every patch. A real
+ * blank line inside a hunk is " " - a space - so an empty string can only be the
+ * phantom.
+ */
+internal fun numberLines(slice: List<String>): List<DiffLine> {
+    val shown = if (slice.size > 1 && slice.last().isEmpty()) slice.dropLast(1) else slice
+    var oldNo = 0
+    var newNo = 0
+    val out = ArrayList<DiffLine>(shown.size)
+    for (raw in shown) {
+        val start = hunkStart(raw)
+        if (start != null) {
+            oldNo = start.first
+            newNo = start.second
+        }
+        val (line, next) = parseDiffLine(raw, oldNo, newNo)
+        oldNo = next.first
+        newNo = next.second
+        out.add(line)
+    }
+    return out
+}
+
+/**
+ * The bar that stands in for unchanged lines: 「+227 行」.
+ *
+ * Measured off `REF-diffview.png` at 47.6 tall: a light-blue plate 38.4 wide on
+ * the sheet's own fill holding a chevron, then the count at x 60.8 in
+ * (123,121,116). The reference shows the plate in (232,241,250) on a
+ * (243,247,252) band, and the count carries a leading "+" because it reads as
+ * lines added back to the view, not as lines omitted.
+ */
+@Composable
+private fun DiffFoldBar(skipped: Int, modifier: Modifier = Modifier) {
+    val dark = LocalBg.current == DarkBg
+    Row(
+        modifier
+            .fillMaxWidth()
+            .height(47.6.dp)
+            .background(if (dark) Color(0xFF1A2028) else Color(0xFFF3F7FC)),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier
+                .width(38.4.dp)
+                .fillMaxHeight()
+                .background(if (dark) Color(0xFF1E2733) else Color(0xFFE8F1FA)),
+            contentAlignment = Alignment.Center,
+        ) {
+            MiIcon(
+                "M6 15l6-6 6 6",
+                modifier = Modifier.size(20.dp),
+                strokeWidth = 1.6f,
+                tint = if (dark) Color(0xFF8A8A8A) else Color(0xFF7B7974),
+            )
+        }
+        Spacer(Modifier.width(22.4.dp))
+        Text(
+            "+$skipped 行",
+            fontSize = 13.2.sp,
+            color = if (dark) Color(0xFF8A8A8A) else Color(0xFF7B7974),
+        )
+    }
 }
 
 @Composable
@@ -9367,23 +9679,147 @@ private fun DiffLines(
      * One line past the cut, to learn whether there *is* more without reading
      * the rest: a pathological patch should not be materialised to count it.
      */
-    val (shown, hidden) = diffSlice(diff, maxLines)
+    val (rows, hidden) = sheetRows(diff, maxLines)
     Column(modifier.then(plate)) {
-        for (line in shown) {
-            val (bg, fg) = when {
-                !isPatch -> Color.Transparent to LocalMuted.current.copy(alpha = 0.8f)
-                line.startsWith("+") && !line.startsWith("+++") -> (if (LocalBg.current == DarkBg) Color(0x2631532F) else Color(0x1A20A923)) to diffAddInk()
-                line.startsWith("-") && !line.startsWith("---") -> (if (LocalBg.current == DarkBg) Color(0x26553431) else Color(0x1AE5351C)) to diffDelInk()
-                line.startsWith("@@") -> Color.Transparent to LocalMuted.current
-                else -> Color.Transparent to LocalMuted.current.copy(alpha = 0.8f)
+        for (row in rows) {
+            if (row is SheetRow.Fold) {
+                DiffFoldBar(row.skipped)
+                continue
             }
-            Text(
-                line.ifEmpty { " " },
-                fontSize = 11.sp,
-                fontFamily = FontFamily.Monospace,
-                color = fg,
-                modifier = Modifier.fillMaxWidth().background(bg).padding(horizontal = 3.dp, vertical = if (boxed) 1.dp else 0.5.dp),
-            )
+            val line = (row as SheetRow.Line).line
+            /*
+             * The row is a gutter and a body, as the sheet has it.
+             *
+             * Sampled off `REF-diffview.png`: a gutter 51.2 dp wide holding the
+             * side and the number (`-231`, `+231`, bare for context), a hairline
+             * down its right edge, then the code. What separates the sides is a
+             * faint wash across the row and a 0.8 dp bar on the row's left edge,
+             * red (167,61,57) above green (67,116,39). Both sides print in the
+             * same ink, (56,58,65) - this drew the text itself in #20A923 /
+             * #E5351C per the desktop, which on a phone read as two blocks of
+             * saturated type rather than a column of code with two tinted bands.
+             */
+            val dark = LocalBg.current == DarkBg
+            val wash = when (line.side) {
+                1 -> if (dark) Color(0xFF18271F) else Color(0xFFEDF4E3)
+                2 -> if (dark) Color(0xFF24191D) else Color(0xFFF7ECEC)
+                else -> Color.Transparent
+            }
+            val bar = when (line.side) {
+                1 -> Color(0xFF437427)
+                2 -> Color(0xFFA73D39)
+                else -> Color.Transparent
+            }
+            val codeInk = when {
+                !isPatch -> LocalMuted.current.copy(alpha = 0.8f)
+                line.side == 1 || line.side == 2 -> if (dark) Color(0xFFB9BDC6) else Color(0xFF383A41)
+                line.text.startsWith("@@") -> LocalMuted.current
+                else -> LocalMuted.current.copy(alpha = 0.8f)
+            }
+            /*
+             * The gutter's ink follows the row.
+             *
+             * Sampled off `REF-diffview.png`: an added or removed line numbers in
+             * the body ink (19,19,19), a context line in the muted (123,121,116) -
+             * so the changed lines read as the darker, nearer thing. Drawing all
+             * of them muted made the numbers recede behind the code they number.
+             */
+            val gutterInk = when {
+                line.side == 1 || line.side == 2 -> if (dark) Color(0xFFE6E6E4) else Color(0xFF131313)
+                else -> if (dark) Color(0xFF6F7378) else Color(0xFF7B7974)
+            }
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .drawBehind {
+                        drawRect(wash)
+                        if (line.side == 1 || line.side == 2) drawRect(bar, size = Size(0.8.dp.toPx(), size.height))
+                    }
+                    /*
+                     * 19.6 dp of row, which is the sheet's pitch: its line-number
+                     * bands sit 49 px apart at 2.5 px per dp. `min` alone did
+                     * nothing - the row grew to its text's height (24 dp), so a
+                     * 40-line patch took a third more of the sheet than the
+                     * reference's. A cap is what actually sets the pitch; a line
+                     * that wraps past it still grows, because `heightIn` is a
+                     * bound and not a clip.
+                     */
+                    .heightIn(min = if (isPatch) 19.6.dp else 0.dp, max = if (isPatch) 19.6.dp else Dp.Unspecified),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (isPatch && line.number != null) {
+                    Box(
+                        Modifier
+                            .width(51.2.dp)
+                            .fillMaxHeight()
+                            .drawBehind {
+                                val x = size.width - 0.4.dp.toPx()
+                                drawRect(
+                                    if (dark) Color(0xFF2E2E30) else Color(0xFFE7DDDD),
+                                    topLeft = Offset(x, 0f),
+                                    size = Size(0.4.dp.toPx(), size.height),
+                                )
+                            },
+                        contentAlignment = Alignment.CenterEnd,
+                    ) {
+                        Text(
+                            (when (line.side) {
+                                1 -> "+"
+                                2 -> "-"
+                                else -> ""
+                            }) + line.number,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = gutterInk,
+                            maxLines = 1,
+                            // The number hangs off the separator by 11.2 dp, so four
+                            // digits and three start at the same right edge - which is
+                            // what keeps a column of numbers scannable.
+                            modifier = Modifier.padding(end = 11.2.dp),
+                        )
+                    }
+                    /*
+                     * The change's own mark, in the reference's blue.
+                     *
+                     * (78,119,234), 4.4 dp wide and under a dp tall, standing 12 dp
+                     * off the separator - present on every changed line and absent
+                     * on the context ones, so the eye finds the change without
+                     * reading a single word of it. The bar down the row's edge says
+                     * which side; this says "a change starts here".
+                     */
+                    Box(
+                        Modifier.width(23.6.dp).fillMaxHeight(),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                        if (line.side == 1 || line.side == 2) {
+                            Box(
+                                Modifier
+                                    .padding(start = 12.dp)
+                                    .width(4.4.dp)
+                                    .height(0.8.dp)
+                                    .background(if (dark) Color(0xFF6E90F0) else Color(0xFF4E77EA)),
+                            )
+                        }
+                    }
+                    Text(
+                        line.text.ifEmpty { " " },
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = codeInk,
+                        softWrap = true,
+                        modifier = Modifier.padding(end = 3.dp),
+                    )
+                } else {
+                    Text(
+                        line.text.ifEmpty { " " },
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = codeInk,
+                        softWrap = true,
+                        modifier = Modifier.padding(start = 3.dp, end = 3.dp),
+                    )
+                }
+            }
         }
         if (hidden > 0) {
             Text(
@@ -11524,6 +11960,62 @@ private fun badgeOf(path: String): Badge {
     }
 }
 
+/**
+ * The URL 「创建 PR」 opens, or null when this folder has no branch to propose.
+ *
+ * The gateway has no create-PR call - only `git.pullRequest`, which *reads* one -
+ * so the button cannot file anything itself. What it can do is what the
+ * reference's button does: open GitHub's own compare page, pre-set to this
+ * branch, where the reader confirms the title and body. That needs two facts the
+ * gateway does not hand back in a request of its own: the remote (it lives in
+ * `.git/config`, which `file.read` serves like any other text) and the branch
+ * (`git.status` already carries it).
+ *
+ * Parsed here rather than on the screen because it is the one part that is
+ * arithmetic on strings, and it is what a wrong URL would break:
+ *
+ *   git@github.com:owner/repo.git          -> https://github.com/owner/repo
+ *   https://github.com/owner/repo.git      -> https://github.com/owner/repo
+ *   ssh://git@gitlab.com/owner/repo.git    -> https://gitlab.com/owner/repo
+ *
+ * A non-http(s) host, a remote that is not a forge this can address, or a branch
+ * that is the default one all answer null, so the button is simply not drawn
+ * rather than drawn and dead.
+ */
+internal fun pullRequestUrl(remoteUrl: String, branch: String, defaultBranch: String = "main"): String? {
+    val raw = remoteUrl.trim()
+    if (raw.isEmpty() || branch.isBlank()) return null
+    if (branch == defaultBranch || branch == "master") return null
+    /*
+     * scp-style (`git@host:owner/repo.git`) has no scheme and uses a colon where
+     * a URL would have a slash, so it is normalised to https first and then read
+     * by the same parser as the rest.
+     */
+    val https = when {
+        raw.startsWith("git@") || raw.startsWith("ssh://git@") -> {
+            val afterAt = raw.substringAfter('@')
+            val host = afterAt.substringBefore(':').substringBefore('/')
+            val path = afterAt.substringAfter(':').substringAfter(host).trimStart('/')
+            "https://$host/${path.trimStart('/')}"
+        }
+        raw.startsWith("http://") || raw.startsWith("https://") -> raw
+        else -> return null
+    }
+    val trimmed = https.removeSuffix("/").removeSuffix(".git")
+    val host = trimmed.substringAfter("://").substringBefore('/').lowercase()
+    if (host.isEmpty() || '.' !in host) return null
+    val repoPath = trimmed.substringAfter("://").substringAfter('/')
+    if (repoPath.isBlank() || '/' !in repoPath) return null
+    // Only the hosts whose compare route this shape is known to match.
+    val forge = when {
+        host == "github.com" || host.endsWith(".github.com") -> "compare"
+        host == "gitlab.com" || host.endsWith(".gitlab.com") -> "-/compare"
+        else -> return null
+    }
+    val encoded = branch.replace("/", "%2F")
+    return "$trimmed/$forge/$defaultBranch...$encoded?expand=1"
+}
+
 /** One artifact as the page lists it: flattened out of the groups the server sends. */
 internal data class ArtRow(
     val key: String,
@@ -11866,25 +12358,35 @@ private fun ArtifactCard(row: ArtRow, now: Long, onClick: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
+            .clip(RoundedCornerShape(15.6.dp))
             /*
              * No fill. Sampled inside the reference's own card at x 200 y 224:
-             * (249,249,247) - the page's own colour. The card is a 1 dp outline
-             * and nothing else, and the only thing darker on it is the
-             * thumbnail well at (237,237,235). This filled with surface
-             * (254,254,254), which made every record read as a white tile
-             * floating above a grey page.
+             * (249,249,247) - the page's own colour. The card is a hairline and
+             * nothing else, and the only thing darker on it is the thumbnail
+             * well at (237,237,235). This filled with surface (254,254,254),
+             * which made every record read as a white tile above a grey page.
+             *
+             * The outline is 0.4 dp, not 1: the reference's border column is a
+             * single pixel of (225,225,223) where this drew three. At 1 dp the
+             * card read as a heavier box than the one the phone draws.
              */
-            .border(1.dp, if (LocalBg.current == DarkBg) Color(0xFF2C2C2B) else Color(0xFFE1E1DF), RoundedCornerShape(14.dp))
+            .border(0.4.dp, if (LocalBg.current == DarkBg) Color(0xFF2C2C2B) else Color(0xFFE1E1DF), RoundedCornerShape(15.6.dp))
             .clickable { onClick() }
-            .padding(start = 12.dp, end = 12.dp, top = 10.6.dp, bottom = 10.6.dp),
+            /*
+             * 12 all round, re-measured off `REF-artifacts.png`: the card runs
+             * y 452..698 and the well y 482..669, so the inset is 12 both above
+             * and below it, and the well's left edge sits at 12 from the card's.
+             * The old 10.6 came off an earlier, blurrier reading and left the
+             * card 2.8 dp short of the reference's 98.8.
+             */
+            .padding(12.dp),
         verticalAlignment = Alignment.Top,
     ) {
         Box(
             Modifier
                 .width(112.dp)
-                .height(74.8.dp)
-                .clip(RoundedCornerShape(8.dp))
+                .height(75.2.dp)
+                .clip(RoundedCornerShape(9.6.dp))
                 .background(if (LocalBg.current == DarkBg) Color(0xFF262625) else Color(0xFFEDEDEB)),
             contentAlignment = Alignment.Center,
         ) {
@@ -11905,44 +12407,71 @@ private fun ArtifactCard(row: ArtRow, now: Long, onClick: () -> Unit) {
             Box(
                 Modifier
                     .align(Alignment.BottomStart)
-                    .size(23.6.dp)
-                    .background(Color(0xFFDEDBFA), RoundedCornerShape(4.dp)),
+                    .size(24.dp)
+                    .background(Color(0xFFDEDBFA), RoundedCornerShape(5.6.dp)),
                 contentAlignment = Alignment.Center,
             ) {
-                Canvas(Modifier.size(15.2.dp)) {
+                Canvas(Modifier.size(12.dp)) {
                     val ink = Color(0xFF5C50AC)
-                    val w = 1.5f * density
+                    val w = 1.35f * density
+                    /*
+                     * Traced off `REF-artifacts.png` at 1:1 (a 30 px glyph).
+                     *
+                     * The reference's mark is a painter's palette: a circle whose
+                     * lower-right has a *notch bitten inward* - the outline runs
+                     * right along the bottom, turns up into a small hook at
+                     * 0.60/0.78, and comes back out - with four dots scattered on
+                     * its face (upper-left, left, upper-right, right). What this
+                     * drew before was a circle pinched at both sides with three
+                     * dots in a row, which at 24 dp read as a flower, not a
+                     * palette - the one thing the badge has to say at this size.
+                     */
                     val path = androidx.compose.ui.graphics.Path().apply {
-                        moveTo(size.width * 0.10f, size.height * 0.52f)
+                        val cx = size.width
+                        val cy = size.height
+                        // Top arc, left to right.
+                        moveTo(cx * 0.50f, cy * 0.02f)
                         cubicTo(
-                            size.width * 0.10f, size.height * 0.18f,
-                            size.width * 0.90f, size.height * 0.18f,
-                            size.width * 0.90f, size.height * 0.52f,
+                            cx * 0.24f, cy * 0.02f,
+                            cx * 0.04f, cy * 0.22f,
+                            cx * 0.04f, cy * 0.50f,
+                        )
+                        // Left side down to the bottom-left.
+                        cubicTo(
+                            cx * 0.04f, cy * 0.78f,
+                            cx * 0.24f, cy * 0.98f,
+                            cx * 0.48f, cy * 0.98f,
+                        )
+                        // Along the bottom to the notch's mouth.
+                        lineTo(cx * 0.48f, cy * 0.78f)
+                        // Into the notch: up and to the right, then out again.
+                        cubicTo(
+                            cx * 0.48f, cy * 0.66f,
+                            cx * 0.62f, cy * 0.62f,
+                            cx * 0.72f, cy * 0.68f,
+                        )
+                        // Right side back up to the top.
+                        cubicTo(
+                            cx * 0.90f, cy * 0.72f,
+                            cx * 0.96f, cy * 0.62f,
+                            cx * 0.96f, cy * 0.48f,
                         )
                         cubicTo(
-                            size.width * 0.90f, size.height * 0.74f,
-                            size.width * 0.72f, size.height * 0.80f,
-                            size.width * 0.60f, size.height * 0.72f,
-                        )
-                        lineTo(size.width * 0.52f, size.height * 0.90f)
-                        cubicTo(
-                            size.width * 0.34f, size.height * 0.96f,
-                            size.width * 0.10f, size.height * 0.82f,
-                            size.width * 0.10f, size.height * 0.52f,
+                            cx * 0.96f, cy * 0.22f,
+                            cx * 0.76f, cy * 0.02f,
+                            cx * 0.50f, cy * 0.02f,
                         )
                         close()
                     }
                     drawPath(path, ink, style = androidx.compose.ui.graphics.drawscope.Stroke(w))
                     /*
-                     * Four dots, floating inside the body rather than touching
-                     * its edge - the first build put the upper row at 0.40 of the
-                     * height, which is where the outline runs, so they read as
-                     * notches cut out of the stroke.
+                     * Four dots, at the fractions the trace gave: two on the
+                     * upper face (0.30 / 0.32 and 0.50 / 0.28), one low on the
+                     * left (0.22 / 0.64), one on the right (0.72 / 0.57).
                      */
-                    for (fx in listOf(0.36f, 0.54f, 0.72f)) {
-                        drawCircle(ink, radius = 1.15f * density, center = androidx.compose.ui.geometry.Offset(size.width * fx, size.height * 0.44f))
+                    for ((fx, fy) in listOf(0.30f to 0.32f, 0.50f to 0.28f, 0.22f to 0.64f, 0.72f to 0.57f)) {
+                        drawCircle(ink, radius = 1.15f * density, center = androidx.compose.ui.geometry.Offset(size.width * fx, size.height * fy))
                     }
-                    drawCircle(ink, radius = 1.15f * density, center = androidx.compose.ui.geometry.Offset(size.width * 0.31f, size.height * 0.62f))
                 }
             }
         }
@@ -11958,10 +12487,24 @@ private fun ArtifactCard(row: ArtRow, now: Long, onClick: () -> Unit) {
          * those four numbers - the block rides up 6.4, and the two gaps give up
          * 10.4 and 5.6.
          */
-        Column(Modifier.offset(y = (-3.6).dp)) {
+        /*
+         * The card's height comes from the well, not from the text column.
+         *
+         * With both children free, the taller one decides: the three lines
+         * measured 1.6 more than 75.2 once their own line boxes were counted, so
+         * every card came out 100.8 against the reference's 98.8. The reference
+         * pins the row to the well - its text ends well above the well's foot -
+         * so the column is told the well's height and clips nothing because it
+         * is shorter.
+         */
+        Column(
+            Modifier
+                .offset(y = (-1.6).dp)
+                .heightIn(max = 75.2.dp),
+        ) {
             Text(
                 row.name,
-                fontSize = 15.sp,
+                fontSize = 14.6.sp,
                 color = LocalText.current,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -11995,12 +12538,18 @@ private fun ArtifactCard(row: ArtRow, now: Long, onClick: () -> Unit) {
                     )
                 }
                 Spacer(Modifier.width(7.2.dp))
-                Text("\u4ec5\u60a8\u53ef\u89c1", fontSize = 11.2.sp, color = LocalMuted.current)
+                Text("\u4ec5\u60a8\u53ef\u89c1", fontSize = 12.8.sp, color = LocalMuted.current)
             }
-            Spacer(Modifier.height(6.4.dp))
+            /*
+             * 4.8, not 6.4: the third line's ink has to land at 71.2 from the
+             * card's top edge, and the two lines above it end at 53.2. The
+             * column's own height is what the card measures, so a spacer 1.6
+             * too tall made every record 1.6 taller than the reference's 98.8.
+             */
+            Spacer(Modifier.height(4.8.dp))
             Text(
                 "\u7f16\u8f91\u4e8e " + artifactWhen(row.at, now),
-                fontSize = 11.2.sp,
+                fontSize = 12.8.sp,
                 color = LocalMuted.current,
             )
         }
@@ -13539,6 +14088,134 @@ private fun StepBody(item: Item.Msg) {
     }
 }
 
+/**
+ * The calls behind a summary line, lifted in a sheet.
+ *
+ * Measured off `REF-summarysheet.png` at 2.5 px per dp: a bottom sheet on the
+ * page's own fill (249,249,247), a grabber, then one row - ✕ 12 dp at x 32, the
+ * summary line centred and bold in ink 18 dp - and under it one row per call:
+ * the family mark 15.6 dp at x 27.6, joined by a short rule down the mark's
+ * centre when another row follows, the verb and what it acted on to its right.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SummarySheet(title: String, item: ToolRun, onClose: () -> Unit) {
+    val dark = LocalBg.current == DarkBg
+    val ink = if (dark) Color(0xFFF9F9F7) else Color(0xFF131313)
+    ModalBottomSheet(
+        onDismissRequest = onClose,
+        containerColor = MaterialTheme.colorScheme.background,
+        /* The sheet draws its own grabber, so the stock one would double it. */
+        dragHandle = {},
+    ) {
+        Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
+            Spacer(Modifier.height(5.6.dp))
+            Box(
+                Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .width(34.dp)
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(if (dark) Color(0xFF3A3A38) else Color(0xFFD8D8D6)),
+            )
+            Spacer(Modifier.height(16.dp))
+            Row(
+                Modifier.fillMaxWidth().height(32.dp).padding(horizontal = 20.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    Modifier
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .clickable(remember { MutableInteractionSource() }, indication = null) { onClose() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    /* 24 dp on the 24 grid: the path spans x 6..18, so it inks half. */
+                    MiIcon("M6 6l12 12M18 6L6 18", modifier = Modifier.size(20.dp), strokeWidth = 1.4f, tint = ink)
+                }
+                Text(
+                    title,
+                    /*
+                     * 18 sp, whose ink measures 17.6 dp - the reference's title
+                     * band (35.2..52.8 from the sheet's top edge). At 15.6 the
+                     * heading read as body text next to the calls under it.
+                     */
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = ink,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.size(32.dp))
+            }
+            /*
+             * 12.4 dp between the title's band and the first call's (52.8 to
+             * 74.8), then a 45.2 dp pitch. `ToolRow` brings its own 5 dp of
+             * vertical padding, which is what makes the pitch add up.
+             */
+            Spacer(Modifier.height(15.dp))
+            /*
+             * The connector is drawn across the whole group, not per row.
+             *
+             * Each `ToolRow` draws its own connector down to its bottom edge, and
+             * the 12.4 dp gap between rows fell between them - so the line broke
+             * into three dashes where the reference's is one stroke through the
+             * gaps (x 988..990, (216,216,214), on the marks' centre line). Drawing
+             * it here, from the first mark's centre down to the last row's
+             * bottom, cannot break.
+             */
+            val linkTint = if (dark) Color(0xFF3A3A38) else Color(0xFFD8D8D6)
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+                    .drawBehind {
+                        if (item.items.size < 2) return@drawBehind
+                        /*
+                         * The mark's centre, measured from this draw scope's own
+                         * origin - which is the box *before* the horizontal
+                         * padding above, so the 20 dp has to go back in. Without
+                         * it the stroke fell 20 dp left of the icons and read as
+                         * a stray rule in the gutter.
+                         *
+                         * The 23 is `ToolRow`'s own indent, which its mark sits
+                         * inside; leaving it out put the stroke between the icons
+                         * and the labels instead of through the icons.
+                         */
+                        /*
+                         * 31.2: measured to put the stroke on the marks' centre
+                         * line (1023 px against icons centred on 1031.5 at 27.8,
+                         * so 3.4 dp more). Measured, not composed - a first
+                         * pass read the 20 as already included and put the stroke
+                         * 19.6 dp right of the icons. `ToolRow`'s mark ends up 7.8 dp inside the
+                         * column here (its indent padding is inside the row, which
+                         * this scope's padding already includes), so adding it a
+                         * second time put the stroke 19.6 dp right of the icons.
+                         * Checked against the pad: the stroke lands on 1080.5 px
+                         * with the marks centred on 1031.5.
+                         */
+                        val x = 31.2.dp.toPx()
+                        drawLine(
+                            color = linkTint,
+                            start = Offset(x, 15.6.dp.toPx()),
+                            end = Offset(x, size.height - 15.6.dp.toPx()),
+                            strokeWidth = 1.2.dp.toPx(),
+                        )
+                    },
+                /* 45.2 dp between the calls' baselines - the reference's own
+                 * pitch, which `ToolRow`'s 5 dp of padding leaves well short. */
+                verticalArrangement = Arrangement.spacedBy(12.4.dp),
+            ) {
+                item.items.forEachIndexed { i, call ->
+                    ToolRow(call, indent = true, linked = false)
+                }
+            }
+        }
+    }
+}
+
 /** A folded run inside a step: the same summary row the timeline draws. */
 @Composable
 private fun RunRow(item: ToolRun) {
@@ -13554,9 +14231,23 @@ private fun RunRow(item: ToolRun) {
      * column. Only a call that opens under the summary is indented, which is
      * what `ToolRow(call, indent = true)` does below.
      */
+    /*
+     * Opening it lifts a sheet, as the reference does.
+     *
+     * Measured off `REF-summarysheet.png`: tapping 「已运行 2 条命令, 读取了 1 个文件」
+     * slides a bottom sheet up over the transcript, headed by a grabber, a ✕ at
+     * x 32 (the same 12 dp cross the diff sheet uses) and that summary line set
+     * centred and bold - ink 18 dp - with one row per call under it. This
+     * expanded in place instead, which threw the reader's own scroll position
+     * away and pushed every reply below the fold.
+     */
+    var sheet by remember { mutableStateOf(false) }
+    if (sheet) {
+        SummarySheet(runSummary(item), item, onClose = { sheet = false })
+    }
     Column {
         Row(
-            Modifier.fillMaxWidth().clickable { open = !open }.padding(vertical = 5.dp),
+            Modifier.fillMaxWidth().clickable { sheet = true }.padding(vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
@@ -13570,15 +14261,10 @@ private fun RunRow(item: ToolRun) {
             )
             Icon(
                 Icons.AutoMirrored.Outlined.KeyboardArrowRight,
-                contentDescription = if (open) "收起" else "展开",
+                contentDescription = "展开",
                 tint = LocalMuted.current,
-                modifier = Modifier.size(14.dp).graphicsLayer { rotationZ = if (open) 90f else 0f },
+                modifier = Modifier.size(14.dp),
             )
-        }
-        if (open) {
-            item.items.forEachIndexed { i, call ->
-                ToolRow(call, indent = true, linked = i < item.items.lastIndex)
-            }
         }
     }
 }
@@ -14480,6 +15166,362 @@ private fun countDiff(diff: String): List<DiffCount> {
     }
     flush()
     return out
+}
+
+/**
+ * A file, or a turn's patch, in a reading sheet of its own.
+ *
+ * Extracted so the composable that owns it can open exactly one thing at a time.
+ * The body of this used to be written inline inside `filePreview?.let`, and the
+ * provider sheet was accidentally nested into that same lambda - so opening a
+ * patch also composed the provider list.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PreviewSheet(name: String, body: String, onClose: () -> Unit) {
+    /*
+     * A patch runs full bleed; anything else keeps the sheet's margin.
+     *
+     * On the phone's own sheet the tinted band and its rule start at the very
+     * edge of the pane (bar at x 904, the sheet's first column) and run to the
+     * last, so the change reads as a band across the sheet rather than as a
+     * highlighted quotation. Prodded in by the page margin, the bar sat 30 dp
+     * inside and the band stopped short of both edges.
+     */
+    val isPatch = body.contains("\n@@ ") || body.startsWith("diff --git") || body.contains("\n--- a/")
+    ModalBottomSheet(
+        onDismissRequest = onClose,
+        containerColor = MaterialTheme.colorScheme.background,
+        /*
+         * A patch gets the phone's own grabber, so the sheet's has to go: it was
+         * drawing a second one 22 dp down and pushing the title to 64 instead of
+         * the reference's 25.6.
+         */
+        dragHandle = if (isPatch) { {} } else null,
+    ) {
+        if (!isPatch) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 25.dp)) {
+                Text(
+                    name,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = LocalText.current,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(10.dp))
+                LazyColumn(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 520.dp)
+                        .background(LocalPill.current, RoundedCornerShape(10.dp))
+                        .padding(10.dp),
+                ) {
+                    val lines = body.lineSequence().take(300).toList()
+                    items(lines.size) { i ->
+                        Text(
+                            lines[i].ifEmpty { " " },
+                            fontSize = 11.sp,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            color = LocalText.current,
+                            softWrap = true,
+                        )
+                    }
+                }
+            }
+        } else {
+            DiffSheet(name, body, onClose = onClose)
+        }
+    }
+}
+
+/**
+ * 差异 +467 -60 ／ 创建 PR: the two things a finished turn offers.
+ *
+ * Measured off `REF-deliv.png` at 2.5 px per dp. Both are white capsules 32 tall
+ * with a 3.2 corner and no border, sitting on the page's own fill:
+ *
+ * - 差异: 110.4 wide, its label in (19,19,19) at 12 dp ink, then the counts -
+ *   (41,97,24) and (131,46,43), 9.6 dp ink - so the size of the change is
+ *   readable before opening it.
+ * - 创建 PR: 91.2 wide, 10.4 to its right, with a blue (57,105,185) branch mark
+ *   and its label in (19,19,19).
+ *
+ * 创建 PR is drawn only where it can work. The reference's turn sits in a git
+ * repository on a GitHub remote; the conversation this was checked against lives
+ * in `D:\Saved Games\StoneAge Classic\assa`, where `git.status` answers
+ * `repo: false` and `git.pullRequest` answers `not-a-repo` - there is no branch to
+ * open a pull request from, so the second capsule is absent rather than dead.
+ */
+@Composable
+private fun TurnActions(
+    add: Int,
+    del: Int,
+    /** Whether this turn's folder is a git repository - the screen already knows. */
+    gitRepo: Boolean,
+    /**
+     * The compare page to open, or null when the remote is not one this can
+     * address. `pullRequestUrl` computes it; the screen hands it down because it
+     * is the one that can read `.git/config`.
+     */
+    prUrl: String?,
+    onDiff: () -> Unit,
+) {
+    val dark = LocalBg.current == DarkBg
+    val plate = if (dark) Color(0xFF232322) else Color(0xFFFFFFFF)
+    val ink = if (dark) Color(0xFFF2F2F0) else Color(0xFF131313)
+    val addInk = if (dark) Color(0xFF6FB055) else Color(0xFF296118)
+    val delInk = if (dark) Color(0xFFC4685F) else Color(0xFF832E2B)
+    val branchInk = if (dark) Color(0xFF6E9AD8) else Color(0xFF3969B9)
+    /*
+     * One question per directory, answered once: whether this turn's folder is a
+     * git repository at all. Asked lazily on first composition and cached, because
+     * a transcript holds many finished turns and each would otherwise pay a round
+     * trip for the same answer. `rpc` lives on the screen, not here, so the answer
+     * arrives as an argument.
+     */
+    Row(
+        Modifier.fillMaxWidth().padding(top = 2.8.dp, bottom = 2.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(
+            Modifier
+                .height(32.dp)
+                .clip(RoundedCornerShape(5.6.dp))
+                .background(plate)
+                /*
+                 * A 0.4 dp hairline, (167,167,167) - not a borderless capsule.
+                 *
+                 * The page is (249,249,247) and the capsule white, one step
+                 * apart; without the edge the capsule dissolved into the page on
+                 * the pad and the row read as loose words rather than as buttons.
+                 */
+                .border(0.4.dp, if (dark) Color(0xFF3A3A38) else Color(0xFFA7A7A7), RoundedCornerShape(5.6.dp))
+                .clickable(remember { MutableInteractionSource() }, indication = null) { onDiff() }
+                .padding(horizontal = 11.6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("差异", fontSize = 12.9.sp, color = ink)
+            if (add > 0 || del > 0) {
+                Spacer(Modifier.width(10.dp))
+                if (add > 0) Text("+$add", fontSize = 12.4.sp, fontFamily = FontFamily.Monospace, color = addInk)
+                if (del > 0) {
+                    Spacer(Modifier.width(4.4.dp))
+                    Text("-$del", fontSize = 12.4.sp, fontFamily = FontFamily.Monospace, color = delInk)
+                }
+            }
+        }
+        if (gitRepo && prUrl != null) {
+            val ctx = androidx.compose.ui.platform.LocalContext.current
+            Row(
+                Modifier
+                    .height(32.dp)
+                    .clip(RoundedCornerShape(5.6.dp))
+                    .background(plate)
+                    .border(0.4.dp, if (dark) Color(0xFF3A3A38) else Color(0xFFA7A7A7), RoundedCornerShape(5.6.dp))
+                    .clickable(remember { MutableInteractionSource() }, indication = null) {
+                        /*
+                         * Opens the forge's own compare page for this branch - the
+                         * same thing the reference's button does. The gateway can
+                         * read a pull request but cannot file one, so the reader
+                         * confirms the title and body where they are actually
+                         * created, rather than this button pretending it did.
+                         */
+                        runCatching {
+                            ctx.startActivity(
+                                android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(prUrl))
+                                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                            )
+                        }.onFailure { Toast.makeText(ctx, "打不开这个地址", Toast.LENGTH_SHORT).show() }
+                    }
+                    .padding(horizontal = 11.6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                MiIcon(
+                    "M6 4.5a2 2 0 1 0 0 4 2 2 0 1 0 0-4M6 8.5v7a2 2 0 1 0 0 4 2 2 0 1 0 0-4M18 4.5a2 2 0 1 0 0 4 2 2 0 1 0 0-4M18 8.5v2a4 4 0 0 1-4 4H6",
+                    modifier = Modifier.size(12.dp),
+                    strokeWidth = 1.7f,
+                    tint = branchInk,
+                )
+                Spacer(Modifier.width(7.dp))
+                Text("创建 PR", fontSize = 12.9.sp, color = ink)
+            }
+        }
+    }
+}
+
+/**
+ * The phone's own diff sheet: a header, one row per changed file, then the patch.
+ *
+ * All of it is measured off `REF-diffview.png` at 2.5 px per dp. What it replaces
+ * was a bare title and a wall of lines, so a reader could not see *which files*
+ * the change touched, how big it was per file, or that part of it was folded
+ * away - the sheet was scrolled, not read.
+ *
+ * The header, top to bottom (dp, from the sheet's top edge):
+ * - a grabber 34 wide on the sheet's own fill, at 5.6
+ * - ✕ at x 32..43.6, 12 dp across
+ * - 「差异」 centred, ink 16, (19,19,19)
+ * - the branch line, ink 12.8, (123,121,116), with a chevron
+ * - a hairline at 70.8
+ * - one row per file on (253,253,251): path in (123,121,116) with the name in
+ *   (19,19,19), then `+N` (41,97,24), `-M` (131,46,43), and an arrow
+ * - a hairline, then the patch itself on white
+ */
+@Composable
+private fun DiffSheet(
+    title: String,
+    patch: String,
+    onClose: () -> Unit,
+    branch: String? = null,
+) {
+    val dark = LocalBg.current == DarkBg
+    val ink = if (dark) Color(0xFFF9F9F7) else Color(0xFF131313)
+    val muted = if (dark) Color(0xFF8A8A8A) else Color(0xFF7B7974)
+    val hair = if (dark) Color(0xFF2E2E2E) else Color(0xFFECECEA)
+    val rowBg = if (dark) Color(0xFF1B1B1A) else Color(0xFFFDFDFB)
+    val addInk = if (dark) Color(0xFF6FB055) else Color(0xFF296118)
+    val delInk = if (dark) Color(0xFFC4685F) else Color(0xFF832E2B)
+    val files = remember(patch) { countDiff(patch) }
+    Column(Modifier.fillMaxWidth().padding(bottom = 25.dp)) {
+        /*
+         * The header's vertical rhythm, from the sheet's top edge (dp):
+         * grabber 5.6..9.6, title ink 25.6..41.2, branch ink 50.4..62.8, hairline
+         * 70.8. Spacers rather than one pad on each block, because each block's
+         * own height is not what the reference measures - the ink is.
+         */
+        Spacer(Modifier.height(5.6.dp))
+        Box(
+            Modifier
+                .align(Alignment.CenterHorizontally)
+                .width(34.dp)
+                .height(4.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(if (dark) Color(0xFF3A3A38) else Color(0xFFD8D8D6)),
+        )
+        Spacer(Modifier.height(7.6.dp))
+        /*
+         * ✕ and the title share one line, centred on each other.
+         *
+         * Measured off `REF-diffview.png`: the ✕ inks 12 × 12 at x 32..43.6 and
+         * the title's ink runs 25.6..41.2 - the same vertical band, which is why
+         * it reads as a bar with a title in it rather than as a stray mark beside
+         * a heading.
+         */
+        Row(
+            Modifier.fillMaxWidth().height(32.dp).padding(horizontal = 20.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                Modifier
+                    .size(32.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .clickable(remember { MutableInteractionSource() }, indication = null) { onClose() },
+                contentAlignment = Alignment.Center,
+            ) {
+                /*
+                 * 24 dp, not 12: this glyph's path spans x 6..18 of the 24 grid,
+                 * so it inks half its declared size. Asking for size 12 drew a
+                 * 6 dp cross - visibly smaller than the title's cap height.
+                 *
+                 * Stroke 1.2, not the icon default 2: the reference's arms are
+                 * 3 px wide (1.2 dp) where 2 on this grid drew 4 px, so the cross
+                 * came out a heavier, blunter mark than the title it sits beside.
+                 */
+                MiIcon(
+                    "M6 6l12 12M18 6L6 18",
+                    modifier = Modifier.size(20.dp),
+                    strokeWidth = 1.4f,
+                    tint = ink,
+                )
+            }
+            Text(
+                "差异",
+                fontSize = 17.2.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = ink,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.weight(1f),
+            )
+            // Mirrors the close button so the title is centred on the sheet, not
+            // on what the ✕ left over.
+            Spacer(Modifier.size(32.dp))
+        }
+        Spacer(Modifier.height(1.2.dp))
+        if (branch != null) {
+            Row(
+                Modifier.fillMaxWidth().padding(top = 3.2.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(branch, fontSize = 13.2.sp, color = muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.width(4.dp))
+                MiIcon("M6 9l6 6 6-6", modifier = Modifier.size(11.dp), strokeWidth = 2f, tint = muted)
+            }
+            Spacer(Modifier.height(4.8.dp))
+        } else {
+            /*
+             * No branch to name, but the header still needs the room it takes.
+             *
+             * The reference's gap between the title's ink (ends 41.2) and the
+             * file row above its hairline (70.8) is the branch line's height. Left
+             * out when there is no branch, the file row rose 21.6 dp and the
+             * header read as cramped against the title.
+             */
+            Spacer(Modifier.height(20.4.dp))
+        }
+        Box(Modifier.fillMaxWidth().height(0.4.dp).background(hair))
+        /*
+         * One row per file the patch touches, with its own counts - the desktop
+         * card's numbers, read as a list so a five-file change says which five.
+         * Tapping a row is not wired: the whole patch is already below it.
+         */
+        for (file in files) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .height(47.2.dp)
+                    .background(rowBg)
+                    .padding(horizontal = 15.2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    buildAnnotatedString {
+                        val cut = maxOf(file.file.lastIndexOf('/'), file.file.lastIndexOf('\\'))
+                        if (cut > 0) {
+                            withStyle(SpanStyle(color = muted)) { append(file.file.substring(0, cut + 1)) }
+                            append(file.file.substring(cut + 1))
+                        } else {
+                            append(file.file)
+                        }
+                    },
+                    fontSize = 13.6.sp,
+                    color = ink,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                if (file.add > 0) {
+                    Spacer(Modifier.width(8.dp))
+                    Text("+${file.add}", fontSize = 11.6.sp, fontFamily = FontFamily.Monospace, color = addInk)
+                }
+                if (file.del > 0) {
+                    Spacer(Modifier.width(5.dp))
+                    Text("-${file.del}", fontSize = 11.6.sp, fontFamily = FontFamily.Monospace, color = delInk)
+                }
+                Spacer(Modifier.width(7.dp))
+                MiIcon(
+                    "M14 3h7v7M21 3l-9 9M19 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5",
+                    modifier = Modifier.size(11.2.dp),
+                    strokeWidth = 1.8f,
+                    tint = muted,
+                )
+            }
+        }
+        Box(Modifier.fillMaxWidth().height(0.4.dp).background(hair))
+        DiffLines(patch, maxLines = 400, boxed = false)
+    }
 }
 
 /**
