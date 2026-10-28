@@ -321,12 +321,25 @@ private val DarkField = Color(0xFF1A1A19)
 private val DarkFieldLine = Color(0xFF484847)
 private val DarkLine = Color(0xFF232323)
 private val DarkText = Color(0xFFF9F9F7)
-private val DarkMuted = Color(0xFF8A8A8A)
+private val DarkMuted = Color(0xFF97958E)
+/*
+ * The third step of the ink ladder: placeholders, and the marks that sit in them.
+ *
+ * A search field's magnifier and 「搜索」 are neither body ink nor the muted line
+ * that carries a time - they are fainter than both, and the reference uses the
+ * **same** value for them in light and dark: (137,135,130), sampled off its search
+ * field in both modes. This app drew them in `InkMuted` (107,104,99), 30 steps too
+ * dark, which made the field look already filled in.
+ */
+private val Faint = Color(0xFF898782)
 
 val LocalBg = staticCompositionLocalOf { Cream }
 val LocalSurface = staticCompositionLocalOf { CreamSurface }
 val LocalText = staticCompositionLocalOf { Ink }
 val LocalMuted = staticCompositionLocalOf { InkMuted }
+
+/** The faintest readable step - placeholders and the marks inside them. */
+val LocalFaint = staticCompositionLocalOf { Faint }
 val LocalPill = staticCompositionLocalOf { CreamPill }
 /** The user's own turn: a shade under the page in dark (13,13,13 on the pad), not above it. */
 val LocalBubble = staticCompositionLocalOf { CreamPill }
@@ -994,6 +1007,7 @@ fun MCodeTheme(content: @Composable () -> Unit) {
         LocalSurface provides surface,
         LocalText provides text,
         LocalMuted provides muted,
+        LocalFaint provides Faint,
         LocalPill provides pill,
         // In dark the reader's turn sits *under* the page (13,13,13 against
         // 21,21,21), not on paper: a white patch measured earlier turned out to
@@ -4427,12 +4441,18 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             Icon(
                                 Icons.Outlined.Search,
                                 contentDescription = null,
-                                tint = LocalMuted.current,
+                                /*
+                                 * The faint step, not the muted one: the
+                                 * reference's magnifier is (137,135,130) in both
+                                 * modes, while the muted line it uses for a time
+                                 * is (151,149,142).
+                                 */
+                                tint = LocalFaint.current,
                                 modifier = Modifier.size(19.dp),
                             )
                             Spacer(Modifier.width(0.4.dp))
                             Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-                                if (search.isEmpty()) Text("搜索", color = LocalMuted.current, fontSize = 14.sp)
+                                if (search.isEmpty()) Text("搜索", color = LocalFaint.current, fontSize = 14.sp)
                                 BasicTextField(
                                     value = search,
                                     onValueChange = { search = it },
@@ -9640,14 +9660,14 @@ private fun DiffFoldBar(skipped: Int, modifier: Modifier = Modifier) {
                 "M6 15l6-6 6 6",
                 modifier = Modifier.size(20.dp),
                 strokeWidth = 1.6f,
-                tint = if (dark) Color(0xFF8A8A8A) else Color(0xFF7B7974),
+                tint = if (dark) DarkMuted else Color(0xFF7B7974),
             )
         }
         Spacer(Modifier.width(22.4.dp))
         Text(
             "+$skipped 行",
             fontSize = 13.2.sp,
-            color = if (dark) Color(0xFF8A8A8A) else Color(0xFF7B7974),
+            color = if (dark) DarkMuted else Color(0xFF7B7974),
         )
     }
 }
@@ -10309,7 +10329,17 @@ fun SessionList(
                                      * this row's 11.2.
                                      */
                                     fontSize = if (flat) 18.sp else 15.sp,
-                                    fontWeight = FontWeight.Medium,
+                                    /*
+                                     * Normal, not Medium. Measured off the
+                                     * reference's own list at 2.5 px per dp: its
+                                     * title strokes run 3 px wide (the commonest
+                                     * run, 243 of them), while this app's ran 5 px
+                                     * (187). Same 18 sp, so the weight was the
+                                     * whole of the difference - the titles here
+                                     * read as headings where the reference reads a
+                                     * list.
+                                     */
+                                    fontWeight = FontWeight.Normal,
                                     lineHeight = if (flat) 22.sp else 20.sp,
                                     color = LocalText.current,
                                     maxLines = 1,
@@ -15421,7 +15451,7 @@ private fun DiffSheet(
 ) {
     val dark = LocalBg.current == DarkBg
     val ink = if (dark) Color(0xFFF9F9F7) else Color(0xFF131313)
-    val muted = if (dark) Color(0xFF8A8A8A) else Color(0xFF7B7974)
+    val muted = if (dark) DarkMuted else Color(0xFF7B7974)
     val hair = if (dark) Color(0xFF2E2E2E) else Color(0xFFECECEA)
     val rowBg = if (dark) Color(0xFF1B1B1A) else Color(0xFFFDFDFB)
     val addInk = if (dark) Color(0xFF6FB055) else Color(0xFF296118)
