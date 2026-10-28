@@ -9725,8 +9725,22 @@ private fun DiffLines(
              * saturated type rather than a column of code with two tinted bands.
              */
             val dark = LocalBg.current == DarkBg
+            /*
+             * Dark: (24,39,31) for an added line and (36,25,29) for a removed
+             * one, sampled off the reference's own diff panel - the first such
+             * reference this project has had, captured by asking Claude on the
+             * pad to create and then edit a throwaway file.
+             *
+             * `0xFF14271E` is not the reference's colour; it is what makes the
+             * pad **draw** the reference's colour. Written as (24,39,31) the row
+             * measured (27,39,32) - three of red and one of blue high - while
+             * `#1B1B1A` on the same sheet measured exactly, so the shift is
+             * particular to this wash and not to the renderer. The compensation
+             * is not 1:1 either: dropping the source 3 landed 2, dropping the
+             * last 1 landed 1. Measured after: (24,39,31), exact.
+             */
             val wash = when (line.side) {
-                1 -> if (dark) Color(0xFF18271F) else Color(0xFFEDF4E3)
+                1 -> if (dark) Color(0xFF14271E) else Color(0xFFEDF4E3)
                 2 -> if (dark) Color(0xFF24191D) else Color(0xFFF7ECEC)
                 else -> Color.Transparent
             }
