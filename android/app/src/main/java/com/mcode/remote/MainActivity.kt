@@ -3699,7 +3699,15 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 drafts.remove(sid)
                 draftStore.edit().remove("draft.$sid").apply()
             },
-            onStop = { currentSession?.let { request(JSONObject().put("type", "session.abort").put("sessionID", it)) } },
+            onStop = {
+                currentSession?.let { sid ->
+                    // Match the desktop: clear the local running mark as soon as
+                    // Stop is pressed, so the next send is a new turn rather than
+                    // a steer into a turn that is already stopping.
+                    setRunning(sid, false)
+                    request(JSONObject().put("type", "session.abort").put("sessionID", sid))
+                }
+            },
         )
     }
 
