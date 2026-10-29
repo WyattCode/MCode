@@ -190,7 +190,15 @@ function handle(f) {
   if (e.type === "session.updated") { state.titles[e.session.id] = e.session.title || e.session.id; refreshSelect(); if (e.session.id === state.current) markBusy(false); }
   if (e.type === "session.idle") markBusy(false);
   if (e.type === "session.error") addLine("errline", e.error);
-  if (e.type === "message.updated") upsertMessage(e.sessionID, e.message);
+  /*
+   * `message.updated` carries the message and nothing else - no `sessionID` at
+   * the top level, unlike every other message event. Reading `e.sessionID` gave
+   * undefined, and `upsertMessage`'s own guard then returned early for every
+   * message, so no bubble was ever drawn. Tool rows still appeared, because they
+   * had no guard - which is what made this look like a drawing bug rather than a
+   * routing one.
+   */
+  if (e.type === "message.updated") upsertMessage(e.message?.sessionID, e.message);
   if (e.type === "message.part.updated") upsertPart(e.sessionID, e.messageID, e.part);
   /*
    * The text itself arrives as `message.delta`, not in `part.updated`.
@@ -273,6 +281,7 @@ function select(id) {
   // decide how this one's fragments are drawn.
   for (const key of Object.keys(partKinds)) delete partKinds[key];
   for (const key of Object.keys(deltas)) delete deltas[key];
+  for (const key of Object.keys(pendingToolRows)) delete pendingToolRows[key];
   if (!id) return;
   frame({ kind: "request", id: "w" + ++state.requestId, request: { type: "session.watch", sessionIDs: [id] } });
   // History first, then the live stream rides on top of it.
@@ -288,13 +297,26 @@ function select(id) {
   markBusy((state.running || []).includes(id));
 }
 
+/*
+ * A message's own box: the speaker line, then whatever runs of text and tool
+ * calls it had, in the order they happened.
+ *
+ * One `<pre>` per message was wrong as soon as tools were involved - every tool
+ * row landed after all the text, so a turn that thought, ran a command and then
+ * wrote a paragraph read as the paragraph first. The blocks are children of the
+ * message and are addressed by part id.
+ */
 function bubble(role, text) {
   const div = document.createElement("div");
   div.className = "msg " + role;
   const who = document.createElement("div"); who.className = "who";
   who.textContent = role === "user" ? "你" : role === "assistant" ? "MCode" : role;
-  const pre = document.createElement("pre"); pre.textContent = text;
-  div.append(who, pre);
+  div.appendChild(who);
+  if (text) {
+    const pre = document.createElement("pre");
+    pre.textContent = text;
+    div.appendChild(pre);
+  }
   $("timeline").appendChild(div);
   scroll();
   return div;
@@ -309,6 +331,8 @@ const deltas = {};
 // part it belongs to, so without this the page cannot tell the reply from the
 // thinking behind it - and would print both as the answer.
 const partKinds = {};
+/** Tool rows that arrived before their message, kept detached per message. */
+const pendingToolRows = {};
 
 /**
  * Read the conversation again after the stream lost something.
@@ -331,6 +355,10 @@ function requestGapRefill(sessionID) {
     for (const key of Object.keys(messages)) delete messages[key];
     for (const key of Object.keys(deltas)) delete deltas[key];
     for (const key of Object.keys(partKinds)) delete partKinds[key];
+    // Rows waiting for a bubble are dropped too: the rebuild recreates the
+    // bubbles they were waiting for, and carrying them over would draw each tool
+    // twice - once from the transcript, once from the waiting copy.
+    for (const key of Object.keys(pendingToolRows)) delete pendingToolRows[key];
     for (const m of res.data.messages) upsertMessage(sessionID, m);
     scroll();
   };
@@ -338,11 +366,105 @@ function requestGapRefill(sessionID) {
 }
 
 function renderText(entry) {
-  // All text parts joined the same way upsertMessage laid them out, so a
-  // streaming update to one part never erases its siblings.
-  const pre = entry.el.querySelector("pre");
-  const text = Object.values(entry.texts).join("\n");
-  if (pre) pre.textContent = text || "…";
+  /*
+   * Each text part is its own block, keyed by part id, drawn in the order the
+   * parts arrived - so a fragment appended to one block never rewrites its
+   * siblings, and a tool call between two paragraphs stays between them.
+   */
+  for (const [partID, text] of Object.entries(entry.texts)) {
+    if (partID === "__solo") continue;
+    let block = entry.blocks[partID];
+    if (!block) {
+      block = document.createElement("pre");
+      block.dataset.part = partID;
+      entry.blocks[partID] = block;
+      placeBlock(entry, partID, block);
+    }
+    block.textContent = text || "…";
+  }
+  settleOrder(entry);
+  // An id-less part has nowhere to sit in the order; it keeps the single slot
+  // the bubble was born with.
+  const solo = entry.texts.__solo;
+  if (solo !== undefined) {
+    let block = entry.blocks.__solo;
+    if (!block) {
+      block = document.createElement("pre");
+      entry.blocks.__solo = block;
+      entry.el.appendChild(block);
+    }
+    block.textContent = solo || "…";
+  }
+  // A message of nothing but thinking and tool calls would otherwise be a bare
+  // speaker label with no body at all.
+  if (!Object.keys(entry.blocks).length) {
+    let placeholder = entry.placeholder;
+    if (!placeholder) {
+      placeholder = document.createElement("pre");
+      placeholder.className = "placeholder";
+      entry.placeholder = placeholder;
+      entry.el.appendChild(placeholder);
+    }
+    placeholder.textContent = "…";
+  } else if (entry.placeholder) {
+    // Real content arrived; the placeholder has done its job.
+    entry.placeholder.remove();
+    entry.placeholder = null;
+  }
+}
+
+/**
+ * Put every block in the message's part order, once.
+ *
+ * Inserting one block at a time cannot get the order right on its own: a block
+ * that belongs first has nothing before it to insert ahead of, so it lands at
+ * the end until its neighbour appears - and if the neighbour never does, it
+ * stays wrong. Sorting the whole set in one pass has no such blind spot, and it
+ * costs a handful of nodes per message.
+ */
+function settleOrder(entry) {
+  const order = entry.partOrder || [];
+  const rank = (id) => {
+    const at = order.indexOf(id);
+    // A part the server never listed goes last, keeping its arrival order among
+    // such parts rather than jumping around as more arrive.
+    return at === -1 ? Number.MAX_SAFE_INTEGER : at;
+  };
+  const blocks = Object.entries(entry.blocks)
+    .map(([id, node]) => ({ id, node }))
+    .sort((a, b) => rank(a.id) - rank(b.id));
+  let previous = entry.el.querySelector(".who");
+  for (const { node } of blocks) {
+    // `insertBefore` with a node already in place is a no-op move, so this
+    // rewrites the order without detaching and re-adding everything.
+    if (previous && previous.nextSibling !== node) entry.el.insertBefore(node, previous.nextSibling);
+    previous = node;
+  }
+}
+
+/**
+ * Put a block where its part sits among the message's parts.
+ *
+ * Insertion follows `partOrder`, which is the order the server listed the parts
+ * in. Without this, a tool row created before its surrounding text was appended
+ * to the end and the transcript read out of order.
+ */
+function placeBlock(entry, partID, block) {
+  const order = entry.partOrder || [];
+  const at = order.indexOf(partID);
+  for (const [laterID, node] of Object.entries(entry.blocks)) {
+    if (laterID === partID) continue;
+    const later = order.indexOf(laterID);
+    // A part not in the order is a late arrival; everything ordered comes first.
+    if (later === -1) continue;
+    if (at === -1 || later > at) {
+      entry.el.insertBefore(block, node);
+      return;
+    }
+  }
+  // Nothing after it: append. The speaker label is the first child and stays
+  // there, so appending never puts a block above it.
+  entry.el.appendChild(block);
 }
 
 function upsertMessage(sessionID, message) {
@@ -351,8 +473,18 @@ function upsertMessage(sessionID, message) {
   if (existing) existing.el?.remove();
   const role = message.role || "assistant";
   const parts = message.parts || [];
-  const texts = parts.filter((p) => p.type === "text").map((p) => p.text).join("\n");
-  const el = bubble(role, texts || "…");
+  /*
+   * A user message carries its words in `text` and has no parts at all; an
+   * assistant message does the opposite. So the bubble takes the text only for
+   * the former.
+   *
+   * For the latter the bubble starts empty: `renderText` draws one block per
+   * text part, in the order the parts arrived. Text given here would be a block
+   * outside that order, so a message with one text part ended up with two
+   * `<pre>` - the first holding everything and the second holding the same
+   * thing again.
+   */
+  const el = bubble(role, role === "user" ? message.text || "" : "");
   const kept = {};
   let solo = "";
   for (const p of parts) {
@@ -391,9 +523,29 @@ function upsertMessage(sessionID, message) {
     if (p.type !== "text" || !p.id) continue;
     kept[p.id] = deltas[message.id + "|" + p.id] || "";
   }
-  messages[message.id] = { el, parts: {}, texts: kept };
-  renderText(messages[message.id]);
-  for (const part of parts) if (part.type === "tool") addToolRow(part);
+  const entry = { el, parts: {}, texts: kept, blocks: {}, partOrder: parts.filter((p) => p.id).map((p) => p.id) };
+  messages[message.id] = entry;
+  /*
+   * Tool rows that arrived before this bubble did are claimed now.
+   *
+   * A tool is announced on its own event, which can beat the `message.updated`
+   * that carries the message, and there is no way to draw the row correctly
+   * without the bubble it belongs to. They were held aside for this.
+   */
+  const waiting = pendingToolRows[message.id];
+  if (waiting) {
+    for (const [partID, row] of Object.entries(waiting)) {
+      entry.blocks[partID] = row;
+      placeBlock(entry, partID, row);
+    }
+    delete pendingToolRows[message.id];
+    settleOrder(entry);
+  }
+  // Only a reply is built from parts. A user message has none - its words are in
+  // `text`, already written into the bubble - and running this for it added a
+  // "…" placeholder under every prompt.
+  if (role !== "user") renderText(entry);
+  for (const part of parts) if (part.type === "tool") addToolRow(part, message.id);
 }
 
 function upsertPart(sessionID, messageID, part) {
@@ -402,14 +554,23 @@ function upsertPart(sessionID, messageID, part) {
   // fragments that arrive before it are dropped, and this is what lets the
   // later ones be kept.
   if (part.id) partKinds[messageID + "|" + part.id] = part.type;
+  /*
+   * A part that arrives after the message was drawn joins the order at the end.
+   * `partOrder` is built once from `message.updated`, and a tool call is
+   * announced after it - without this the new part has no rank and sorts behind
+   * everything, including text that came after it.
+   */
+  const known = messages[messageID];
+  if (known && part.id && !known.partOrder.includes(part.id)) known.partOrder.push(part.id);
   if (!part.id) {
-    // An id-less part has no accumulator; it is the whole text or nothing.
+    // An id-less part has no accumulator and no place in the order; it is the
+    // whole text or nothing.
     const entry = messages[messageID];
     if (entry && part.type === "text") {
       entry.texts.__solo = part.text;
       renderText(entry);
     }
-    if (part.type === "tool") addToolRow(part);
+    if (part.type === "tool") addToolRow(part, messageID);
     return;
   }
   const key = messageID + "|" + part.id;
@@ -428,7 +589,7 @@ function upsertPart(sessionID, messageID, part) {
       renderText(entry);
     }
   }
-  if (part.type === "tool") addToolRow(part);
+  if (part.type === "tool") addToolRow(part, messageID);
 }
 
 /*
@@ -480,15 +641,57 @@ function appendDelta(sessionID, messageID, partID, text, at) {
   renderText(entry);
 }
 
-function addToolRow(part) {
-  const row = document.createElement("div");
-  row.className = "toolrow";
+/*
+ * A tool call as one row that changes, not a row per change, inside the message
+ * it belongs to.
+ *
+ * A tool announces itself and then changes six or seven times before it
+ * finishes; a talkative bash command reports ten times a second. Appending a
+ * row per update drew that many identical lines - the protocol comment on
+ * `message.part.updated` says exactly this, and the desktop window updates one
+ * part in place for the same reason.
+ *
+ * `status` is on the part itself, not under `state`. Reading `part.state.status`
+ * - which is what this did - found nothing on every tool and left the status
+ * column blank for the whole life of the cockpit.
+ */
+function addToolRow(part, messageID) {
   const name = part.name || part.tool || "tool";
-  const status = part.state && part.state.status ? part.state.status : "";
-  row.innerHTML = "<b></b> <span></span>";
-  row.querySelector("b").textContent = name;
+  const status = part.status || "";
+  const id = part.id ? "tool-" + part.id : null;
+  let row = id ? document.getElementById(id) : null;
+  if (!row) {
+    row = document.createElement("div");
+    row.className = "toolrow";
+    if (id) row.id = id;
+    row.innerHTML = "<b></b> <span></span>";
+    const entry = messages[messageID];
+    if (entry && part.id) {
+      entry.blocks[part.id] = row;
+      placeBlock(entry, part.id, row);
+      settleOrder(entry);
+    } else if (entry) {
+      // No id means no position to sort by; it goes last, which is where an
+      // unplaceable part would have gone anyway.
+      entry.el.appendChild(row);
+    } else {
+      /*
+       * The tool call arrived before its message. It is kept, detached, until
+       * `upsertMessage` draws the bubble and claims it - appending to the
+       * timeline instead put the row outside the message it belongs to, so it
+       * could never be ordered among that message's text.
+       */
+      pendingToolRows[messageID] = pendingToolRows[messageID] || {};
+      if (part.id) pendingToolRows[messageID][part.id] = row;
+    }
+  }
+  // The title is the one-liner worth reading (a command, a path); the name alone
+  // says "bash" and nothing else.
+  row.querySelector("b").textContent = part.title || name;
   row.querySelector("span").textContent = status;
-  $("timeline").appendChild(row); scroll();
+  // A detached row has no scroll target yet; scrolling would jump to the tail of
+  // an unrelated conversation.
+  if (row.isConnected) scroll();
 }
 
 function addPermissionCard(asked) {

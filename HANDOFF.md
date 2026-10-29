@@ -221,6 +221,34 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 第七十八轮（续三）：气泡从来没画出来过 —— `message.updated` 没有 sessionID（2026-10-29）
+
+接着修驾驶舱，又挖出一个更早就存在、而且更彻底的 bug。
+
+**症状**：工具行能出现，气泡一个都没有。`#timeline` 里只有孤零零的 `div.toolrow`，没有任何 `.msg`。
+
+**根因**：`message.updated` 的事件体**只有 `message`，没有顶层 `sessionID`**（`protocol.ts:2715`：`{ type: "message.updated"; message: Message }`），会话 id 在 `message.sessionID` 里。驾驶舱一直写 `upsertMessage(e.sessionID, e.message)`，拿到的是 `undefined`，而 `upsertMessage` 第一行就是 `if (sessionID !== state.current) return` —— **每条消息都被自己挡掉了**。
+
+这个 bug 从驾驶舱存在起就在，只是被掩盖了：`addToolRow` 没有那个守卫，所以工具行照画；气泡全部消失。**一个守卫和一个漏掉的守卫，让故障看起来像「画图错了」而不是「路由错了」**。诊断的关键是打印事件里的 sessionID 与 `state.current` 对比，一眼看到有个 `"?"`（undefined）。
+
+**接着修的三件事**（都在同一个文件里）：
+
+1. **工具行按更新次数膨胀**。`addToolRow` 每次 `part.updated` 都 `append` 一行。协议注释写得很清楚：工具从宣布到结束要变六七次，爱说话的 bash 每秒报十次。改成按 part id 复用同一行、原地改写。
+2. **状态列永远是空的**。读的是 `part.state.status`，而字段是顶层的 `part.status`（`protocol.ts:288`；桌面端 `MessageStream.vue` 等处都直接用 `part.status`）。顺带改成显示 `part.title`（「Run seq 1 3」）而不是 `part.name`（「bash」）。
+3. **工具行跑到气泡外面、顺序反了**。原来一个气泡只有一个 `<pre>`，所有工具行 append 到 timeline 末尾，于是「先思考、再跑命令、最后回答」读起来是「回答、命令」。改成气泡内按 part 顺序容纳多个块（文字块 + 工具行），`settleOrder` 一次排序到位，工具行若比气泡先到就先存着（`pendingToolRows`），等气泡建立时认领。
+
+**顺手修的两处**：用户消息被画了个「…」占位（它没有 parts，`renderText` 走了占位分支）；`connect()` 之前每点一次都新开 socket（上一轮已修，这里确认没退化）。
+
+**验证**（真实 Chromium + 真实 bash 回合）：
+```
+final order: [["text:2","tool:completed"],["text:25"]]
+statuses seen: ["running","completed"]
+PASS one row per call / PASS status shown / PASS reply drawn
+```
+第一条消息是「思考 + 工具」，第二条是回答 —— 顺序、状态、行数、文字四项都对。
+
+**这一轮的教训比代码更值钱**：我连续误判了五六次，全是探针的错——选中空会话、把 `…` 占位当成 1 字符回复、只读最后一个气泡而工具在中间那个、`undefined` 被当成 PASS。**每次都是「读数不可信」而不是「产品坏了」**。最后一个诊断动作（打印 `messages` 内部状态和磁盘对照）才把真相摆出来。
+
 ### 发布 0.9.6（2026-10-29）
 
 把这两轮的驾驶舱修复发到 GitHub Release。**本机没有 `gh`**（`binaries/` 第七十八轮初被清空，gh 一起没了），改走 `\.workbuddy/release-api.mjs`——从 git 的 Windows 凭据管理器取出 `gho_` 开头、40 位的 OAuth 令牌（`git credential fill`），直接调 REST API。三个动作：`whoami` 验令牌、`release <tag> <name> <notes>` 建 Release（已存在则跳过）、`upload <tag> <file>` 上传（同名资产先删再传，可重复执行）。
