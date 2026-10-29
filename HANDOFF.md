@@ -223,7 +223,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ### 续二十六：笔记本步骤标签与归因（2026-10-30）
 
-- PR: （打开后填）
+- PR: https://github.com/WyattCode/MCode/pull/124
 - 桌面：tool-meta 把 notebook_edit 当 edit（动词/桶/图标/可打开路径/标题认 notebook_path）；ai-touch 记 notebook_edit/patch；patch-checkpoint 认 notebook_edit。
 - Android：toolVerbOf/bucketOf/touchedPathOf/StepMark/toolTitleOf 认 notebook_edit（修「已读取」误标）。
 - 验证：smoke「Review polish r93」；RunSummaryTest notebook 用例；未合并。
