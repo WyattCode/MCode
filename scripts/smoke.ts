@@ -2145,6 +2145,22 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r100")
+  {
+    const root = process.cwd()
+    const main = await fs.readFile(
+      path.join(root, "android/app/src/main/java/com/mcode/remote/MainActivity.kt"),
+      "utf8",
+    )
+    check("r100: remove failure toast", main.includes("没能移除项目"))
+    check("r100: remove uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}project\.remove/.test(main))
+    check("r100: remove success only onSuccess", /project\.remove[\s\S]{0,400}onSuccess[\s\S]{0,300}已移除项目/.test(main))
+    check("r100: rename failure toast", main.includes("没能重命名项目"))
+    check("r100: createBlank add failure toast", main.includes("没能加入项目列表"))
+    check("r100: no wide project.add path stub", !main.includes('put("type", "project.add").put("path"'))
+    check("r100: project.remove rpcOrThrow count", (main.match(/rpcOrThrow\([\s\S]{0,80}project\.remove/g) || []).length >= 2)
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }

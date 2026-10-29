@@ -3222,11 +3222,17 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     if (made.isBlank()) {
                         Toast.makeText(context, "没有创建成功", Toast.LENGTH_SHORT).show()
                     } else {
-                        runCatching {
-                            rpc(JSONObject().put("type", "project.add").put("directory", made).put("used", true))
+                        val added = runCatching {
+                            rpcOrThrow(JSONObject().put("type", "project.add").put("directory", made).put("used", true))
                         }
-                        refreshCommandsTick++
-                        newSession(made)
+                        if (added.isFailure) {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, "没能加入项目列表", Toast.LENGTH_SHORT).show()
+                            }
+                        } else {
+                            refreshCommandsTick++
+                            newSession(made)
+                        }
                     }
                 }
             },
@@ -3272,19 +3278,31 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             m
                         } ?: org.json.JSONObject()
                         names.put(directory, name)
-                        rpc(JSONObject().put("type", "config.set").put("patch", JSONObject().put("projectNames", names)))
+                        rpcOrThrow(JSONObject().put("type", "config.set").put("patch", JSONObject().put("projectNames", names)))
+                    }.onSuccess {
+                        refreshCommandsTick++
+                    }.onFailure {
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(context, "没能重命名项目", Toast.LENGTH_SHORT).show()
+                        }
                     }
-                    refreshCommandsTick++
                 }
             },
             onRemove = { directory ->
                 scope.launch {
                     runCatching {
-                        rpc(JSONObject().put("type", "project.remove").put("directories", org.json.JSONArray().put(directory)))
+                        rpcOrThrow(JSONObject().put("type", "project.remove").put("directories", org.json.JSONArray().put(directory)))
+                    }.onSuccess {
+                        withContext(Dispatchers.Main) {
+                            if (projectFilter == directory) projectFilter = null
+                            refreshCommandsTick++
+                            Toast.makeText(context, "已移除项目", Toast.LENGTH_SHORT).show()
+                        }
+                    }.onFailure {
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(context, "没能移除项目", Toast.LENGTH_SHORT).show()
+                        }
                     }
-                    if (projectFilter == directory) projectFilter = null
-                    refreshCommandsTick++
-                    Toast.makeText(context, "已移除项目", Toast.LENGTH_SHORT).show()
                 }
             },
         )
@@ -4580,24 +4598,90 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                     scope.launch {
                                         val made = runCatching {
                                             rpc(JSONObject().put("type", "project.createBlank").put("name", name))
-                                        }.getOrNull()
-                                        if (made != null) {
-                                            projects.add(name)
-                                            projectNames[name] = name
+                                        }.getOrNull()?.optJSONObject("data")?.optString("directory").orEmpty()
+                                        if (made.isBlank()) {
+                                            withContext(Dispatchers.Main) {
+                                                Toast.makeText(context, "没有创建成功", Toast.LENGTH_SHORT).show()
+                                            }
+                                        } else {
+                                            val added = runCatching {
+                                                rpcOrThrow(JSONObject().put("type", "project.add").put("directory", made).put("used", true))
+                                            }
+                                            if (added.isFailure) {
+                                                withContext(Dispatchers.Main) {
+                                                    Toast.makeText(context, "没能加入项目列表", Toast.LENGTH_SHORT).show()
+                                                }
+                                            } else {
+                                                refreshCommandsTick++
+                                                newSession(made)
+                                            }
                                         }
                                     }
                                 },
-                                onAddFolder = { path ->
+                                onAddFolder = { directory ->
+                                    scope.launch {
+                                        val exists = runCatching {
+                                            rpc(
+                                                JSONObject().put("type", "file.listDir")
+                                                    .put("directory", directory).put("sub", ""),
+                                                8_000,
+                                            ).optJSONObject("data")?.has("entries") == true
+                                        }.getOrDefault(false)
+                                        if (!exists) {
+                                            withContext(Dispatchers.Main) {
+                                                Toast.makeText(context, "文件夹不存在：$directory", Toast.LENGTH_LONG).show()
+                                            }
+                                            return@launch
+                                        }
+                                        val reply = runCatching {
+                                            rpcOrThrow(JSONObject().put("type", "project.add").put("directory", directory).put("used", true))
+                                        }.getOrNull()?.optJSONObject("data")
+                                        refreshCommandsTick++
+                                        withContext(Dispatchers.Main) {
+                                            if (reply == null) Toast.makeText(context, "文件夹没有添加成功", Toast.LENGTH_SHORT).show()
+                                            else if (reply.optBoolean("existed")) Toast.makeText(context, "该项目已在列表中", Toast.LENGTH_SHORT).show()
+                                            else Toast.makeText(context, "已添加项目：${directory.substringAfterLast('\\').substringAfterLast('/')}", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                },
+                                onRename = { directory, name ->
                                     scope.launch {
                                         runCatching {
-                                            rpc(JSONObject().put("type", "project.add").put("path", path))
+                                            val config = runCatching { rpc(JSONObject().put("type", "config.get")) }.getOrNull()
+                                                ?.optJSONObject("data")?.optJSONObject("config")
+                                            val names = config?.optJSONObject("projectNames")?.let { obj ->
+                                                val m = org.json.JSONObject()
+                                                for (key in obj.keys()) m.put(key, obj.optString(key))
+                                                m
+                                            } ?: org.json.JSONObject()
+                                            names.put(directory, name)
+                                            rpcOrThrow(JSONObject().put("type", "config.set").put("patch", JSONObject().put("projectNames", names)))
+                                        }.onSuccess {
+                                            refreshCommandsTick++
+                                        }.onFailure {
+                                            withContext(Dispatchers.Main) {
+                                                Toast.makeText(context, "没能重命名项目", Toast.LENGTH_SHORT).show()
+                                            }
                                         }
-                                        projects.add(path)
-                                        projectNames[path] = path.substringAfterLast('\\').substringAfterLast('/')
                                     }
                                 },
-                                onRename = { dir, name -> projectNames[dir] = name },
-                                onRemove = { dir -> projects.remove(dir); projectNames.remove(dir) },
+                                onRemove = { directory ->
+                                    scope.launch {
+                                        runCatching {
+                                            rpcOrThrow(JSONObject().put("type", "project.remove").put("directories", org.json.JSONArray().put(directory)))
+                                        }.onSuccess {
+                                            withContext(Dispatchers.Main) {
+                                                if (projectFilter == directory) projectFilter = null
+                                                refreshCommandsTick++
+                                                Toast.makeText(context, "已移除项目", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }.onFailure {
+                                            withContext(Dispatchers.Main) {
+                                                Toast.makeText(context, "没能移除项目", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    }
+                                },
                                 embedded = true,
                                 modifier = Modifier.weight(1f).fillMaxWidth(),
                             )
