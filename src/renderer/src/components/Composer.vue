@@ -1158,8 +1158,9 @@ const goalMode = computed(() => (sessionID.value ? (session.value?.goalMode ?? f
 
 /* A switch rather than a command, because it stays on; the menu stays open, as MiMo's does. */
 async function toggleGoalMode() {
-  await app.setGoalMode(!goalMode.value, sessionID.value)
-  notify(t(goalMode.value ? "toast.goalOn" : "toast.goalOff"))
+  const next = !goalMode.value
+  await app.setGoalMode(next, sessionID.value)
+  notify(t(next ? "toast.goalOn" : "toast.goalOff"))
 }
 
 /* MiMo's skill chip: a picked skill waits above the text and goes with the next message. */
