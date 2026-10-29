@@ -695,6 +695,8 @@ function addToolRow(part, messageID) {
 }
 
 function addPermissionCard(asked) {
+  // The event and the replay can both name the same request; one card answers it.
+  if ($("pc-" + asked.id)) return;
   const card = document.createElement("div");
   card.className = "pcard";
   card.id = "pc-" + asked.id;
@@ -702,13 +704,34 @@ function addPermissionCard(asked) {
   const d = document.createElement("div"); d.className = "d";
   d.textContent = [asked.title, asked.meta && asked.meta.path, JSON.stringify(asked.input || "").slice(0, 200)].filter(Boolean).join(" · ");
   const btns = document.createElement("div"); btns.className = "btns";
-  for (const [label, value, cls] of [["允许一次", "once", "allow"], ["总是允许", "always", "allow"], ["拒绝", "reject", "reject"]]) {
+  // A forced request is confirmed every time, so "always" is not offered: the
+  // record would claim a standing allow the server never granted.
+  const choices = asked.forced
+    ? [["允许一次", "once", "allow"], ["拒绝", "reject", "reject"]]
+    : [["允许一次", "once", "allow"], ["总是允许", "always", "allow"], ["拒绝", "reject", "reject"]];
+  const buttons = [];
+  for (const [label, value, cls] of choices) {
     const b = document.createElement("button");
     b.className = cls; b.textContent = label;
-    b.onclick = () => { request({ type: "permission.respond", requestID: asked.id, response: value }); card.remove(); };
+    b.onclick = () => {
+      // The card stays until the server acks: a reply that never lands must
+      // leave the buttons pressable instead of dropping the only way to answer.
+      buttons.forEach((x) => { x.disabled = true; });
+      const id = request({ type: "permission.respond", requestID: asked.id, response: value });
+      state.pending[id] = (res) => {
+        if (res && res.ok) card.remove();
+        else buttons.forEach((x) => { x.disabled = false; });
+      };
+    };
+    buttons.push(b);
     btns.appendChild(b);
   }
   card.append(t, d, btns);
+  if (asked.forced) {
+    const hint = document.createElement("div"); hint.className = "d";
+    hint.textContent = "此操作每次都要确认";
+    card.appendChild(hint);
+  }
   $("timeline").appendChild(card); scroll();
 }
 function removePermissionCard(id) { const el = $("pc-" + id); if (el) el.remove(); }
@@ -733,7 +756,18 @@ function addQuestionCard(asked) {
   t.textContent = asked.loop ? "重复调用确认" : "需要你的决定";
   card.appendChild(t);
   const answers = asked.questions.map(() => []);
-  const send = () => { request({ type: "question.reply", requestID: asked.id, answers }); card.remove(); };
+  // Every button on the card, so a reply that never lands can hand them all back.
+  const buttons = [];
+  const send = () => {
+    // The card stays until the server acks: a reply that never lands must
+    // leave the choices pressable instead of dropping the only way to answer.
+    buttons.forEach((x) => { x.disabled = true; });
+    const id = request({ type: "question.reply", requestID: asked.id, answers });
+    state.pending[id] = (res) => {
+      if (res && res.ok) card.remove();
+      else buttons.forEach((x) => { x.disabled = false; });
+    };
+  };
 
   asked.questions.forEach((q, qi) => {
     const label = document.createElement("div"); label.className = "qtext";
@@ -751,6 +785,7 @@ function addQuestionCard(asked) {
         // Answered or skipped everywhere - the dock submits in one reply, so this does too.
         if (answers.every((a) => a.length > 0)) send();
       };
+      buttons.push(b);
       btns.appendChild(b);
     });
     card.appendChild(btns);
@@ -758,7 +793,10 @@ function addQuestionCard(asked) {
 
   const skip = document.createElement("button");
   skip.className = "reject"; skip.textContent = "跳过（Unanswered）";
-  skip.onclick = () => { request({ type: "question.reply", requestID: asked.id, answers: asked.questions.map(() => []) }); card.remove(); };
+  // Skip sends the answers already chosen on this card, not a fresh set of
+  // empty ones: the choices made so far are still the user's answer.
+  skip.onclick = () => send();
+  buttons.push(skip);
   // In a row of its own: `.pcard button` is `flex: 1` and only stretches inside
   // `.btns`, so a bare child would collapse to the width of its own label.
   const skipRow = document.createElement("div"); skipRow.className = "btns";

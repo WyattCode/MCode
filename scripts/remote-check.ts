@@ -174,6 +174,45 @@ let phone: WebSocket
       let skipped: unknown = "no button"
       try { skip?.onclick(); skipped = sent.find((f) => f.request?.type === "question.reply" && f.request.requestID === "q-2") } catch (error) { skipped = error instanceof Error ? error.message : error }
       check("and skipping it sends empty answers", JSON.stringify((skipped as any)?.request?.answers) === "[[]]", skipped)
+      const textOf = (node: any): string => {
+        if (!node) return ""
+        const own = typeof node.textContent === "string" ? node.textContent : ""
+        const kids = Array.isArray(node.children) ? node.children.map(textOf).join(" ") : ""
+        return `${own} ${kids}`.trim()
+      }
+
+      context.addPermissionCard({ id: "perm-f", kind: "bash", title: "rm x", forced: true })
+      const forcedCard = byId.timeline.children.find((child: any) => child.id === "pc-perm-f")
+      const forcedButtons = buttonsOf("pc-perm-f")
+      check(
+        "a forced card offers only once and reject, and says it asks every time",
+        forcedButtons.length === 2 && !forcedButtons.some((button: any) => textOf(button).includes("总是允许")) && textOf(forcedCard).includes("此操作每次都要确认"),
+        { buttons: forcedButtons.map((button: any) => textOf(button)), card: textOf(forcedCard) },
+      )
+
+      context.addPermissionCard({ id: "perm-ack", kind: "bash", title: "ls" })
+      const ackCard = byId.timeline.children.find((child: any) => child.id === "pc-perm-ack")
+      const ackAllow = buttonsOf("pc-perm-ack")[0]
+      let ackFrame: any = "no button"
+      try { ackAllow?.onclick(); ackFrame = sent.find((f) => f.request?.type === "permission.respond" && f.request.requestID === "perm-ack") } catch (error) { ackFrame = error instanceof Error ? error.message : error }
+      const ackFrameId = (ackFrame as any)?.id
+      const ackWaits = !!ackCard && ackCard.removed !== true && ackAllow?.disabled === true
+      vm.runInContext(`state.pending[${JSON.stringify(ackFrameId)}]({ ok: false })`, context)
+      const ackReEnabled = ackAllow?.disabled === false
+      vm.runInContext(`state.pending[${JSON.stringify(ackFrameId)}]({ ok: true })`, context)
+      check("a permission card waits for the server's ack before it goes away", ackWaits && ackReEnabled && ackCard?.removed === true, { waits: ackWaits, reEnabled: ackReEnabled, removed: ackCard?.removed })
+
+      context.addPermissionCard({ id: "perm-dup", kind: "bash", title: "ls" })
+      context.addPermissionCard({ id: "perm-dup", kind: "bash", title: "ls" })
+      const dupCards = byId.timeline.children.filter((child: any) => child.id === "pc-perm-dup")
+      check("adding the same permission card twice keeps one card", dupCards.length === 1, dupCards.length)
+
+      context.addQuestionCard({ id: "q-keep", sessionID: "s", questions: [{ question: "First?", options: [{ label: "A" }, { label: "B" }] }, { question: "Second?", options: [{ label: "C" }, { label: "D" }] }] })
+      let keepClickError: unknown = null
+      try { buttonsOf("qc-q-keep")[0]?.onclick() } catch (error) { keepClickError = error instanceof Error ? error.message : error }
+      let keepSkipped: unknown = "no button"
+      try { buttonsOf("qc-q-keep").pop()?.onclick(); keepSkipped = sent.filter((f) => f.request?.type === "question.reply" && f.request.requestID === "q-keep").pop() } catch (error) { keepSkipped = error instanceof Error ? error.message : error }
+      check("skipping a question keeps the answers already given", !keepClickError && JSON.stringify((keepSkipped as any)?.request?.answers) === '[["A"],[]]', keepClickError ?? keepSkipped)
     }
   }
 }
