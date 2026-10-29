@@ -676,6 +676,9 @@ async function onDrop(event: DragEvent) {
   // Text dragged into the box - a word from a page, or a selection moved within the box - is the browser's to insert.
   if (!acceptsDrop(event.dataTransfer?.types)) return
   event.preventDefault()
+  // The draft this drop belonged to: switching conversations while the
+  // directories are being read must not drop its mentions into the other one.
+  const originKey = draftKey.value
 
   /*
    * MiMo only turns a text file into an @mention: the main process fills in a
@@ -697,6 +700,8 @@ async function onDrop(event: DragEvent) {
   }
   if (inside.length) {
     const folders = new Set(await window.mcode.directoriesOf(inside.map((entry) => entry.absolute)).catch(() => [] as string[]))
+    // The reader may have left this draft while the directories were read.
+    if (!composerMounted || draftKey.value !== originKey) return
     addDroppedMentions(inside.map((entry) => ({ rel: entry.rel, file: !folders.has(entry.absolute) })))
   }
   if (attach.length) await take(attach)

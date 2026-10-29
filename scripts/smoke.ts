@@ -2145,6 +2145,24 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r86")
+  {
+    const composer = await fs.readFile(new URL("../src/renderer/src/components/Composer.vue", import.meta.url), "utf8")
+    const dropAt = composer.indexOf("async function onDrop")
+    const drop = dropAt < 0 ? "" : composer.slice(dropAt, dropAt + 4500)
+    const asked = drop.indexOf("directoriesOf")
+    const guarded = asked < 0 ? -1 : drop.indexOf("draftKey.value !== originKey", asked)
+    check("drop mentions keep their draft across directoriesOf", asked >= 0 && guarded > asked && guarded - asked <= 300)
+    check("drop captures the draft before directoriesOf", drop.includes("const originKey = draftKey.value"))
+
+    const android = await fs.readFile(new URL("../android/app/src/main/java/com/mcode/remote/MainActivity.kt", import.meta.url), "utf8")
+    check("a deleted conversation drops its draft from prefs", android.includes('draftStore.edit().remove("draft.$gone")'))
+    check("goal resend refuses a second tap while the first is out", android.includes("goalResending") && android.includes("goalResending.compareAndSet(false, true)"))
+    const deletedAt = android.indexOf('"session.deleted"')
+    const deleted = deletedAt < 0 ? "" : android.slice(deletedAt, deletedAt + 1800)
+    check("deleting the open conversation clears its pending files", deleted.includes("attachments.clear()"))
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }
