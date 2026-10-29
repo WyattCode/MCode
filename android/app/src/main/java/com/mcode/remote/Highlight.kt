@@ -35,6 +35,13 @@ object Highlight {
      * the light values by holding hue and lifting lightness, so a dark block
      * keeps the same reading order - keyword loudest, punctuation quietest -
      * without claiming to be sampled.
+     *
+     * The *chrome* around these inks was calibrated in 第七十八轮（续七）: the
+     * fence's head, body, label ink and expand plate now come from
+     * `RemoteChrome`, and `plain` #CFCDC6 was checked to stay readable on the
+     * new #3A3A38 body. The syntax colours themselves remain derived - a dark
+     * fence reference on the Fold is still owed before any of them can claim to
+     * be sampled.
      */
     data class Ink(
         val keyword: Color,

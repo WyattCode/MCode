@@ -221,6 +221,24 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 第七十八轮（续七）：代码块与摘要/diff sheet 深色值整套校准（2026-10-30）
+
+上一轮留下的尾巴是「代码块与摘要 sheet 的深色值未整套校准」——diff 的 wash 早前量过，但深色下的代码墨色、sheet 的抬升、代码块的三块板子，有几处是猜的，有几处干脆只有浅色值。
+
+**这一轮把能量到的都量了**（Claude 手机，2.5 px/dp，10-28 那批截图）：
+
+- **diff sheet 里改动行的代码墨色，深色是 (93,99,111) = `#5D636F`**。`DiffLines` 之前写的是 `#B9BDC6`，比周围的代码亮一整级——wash 和左边那条竖条已经说了这一行是加还是删，字不必再喊一遍。浅色 `#383A41` 本来就对，不动。
+- **sheet 要抬升，不能等于页面**。我们自己的深色页面就是 `DarkBg #151515`，而 `SummarySheet` 和 diff 的 `ModalBottomSheet` 都用了 `MaterialTheme.colorScheme.background`——于是 sheet 和它背后的页面同色，边界消失，读起来像一个洞而不是一块板。参考里页面 (14,14,14)、摘要 sheet (21,21,21)、diff sheet (32,32,31)，所以深色下统一用 `#20201F`（也就是已有的 `DarkSurface` / `LocalCard`）。
+- **代码块深色三件套**：head `#313131`（= `DarkPill`，对应浅色 head 就是 `CreamPill #F0EFEC`）、body `#3A3A38`（比 head 亮一级，和浅色 240/243 的关系一致）、label/icon 墨色 `#97958E`（= `DarkMuted`）、展开对话框的板子 `#20201F`（原来是 `#1F1F1F`，这个值在主题里别处都不存在）。圆角 22.4、字号、`Highlight.colorize` 的接线都不动。
+- **`ToolMark` 只有浅色值 `#383835`**，画在深色的工具行上几乎看不见。补 `DarkToolMark = #9A9A96`（154,154,150，和 `DarkToolWhat` 同一族），`ToolRow` 的 `StepMark` 在深色下用它。
+- **`changePatch` 的底部 sheet 还在用 Material 的绿/红画 `+`/`-` 行**（`0xFF2E7D32` / `0xFFC62828`），和 `DiffLines` 的「同一种墨色 + wash + 竖条」自相矛盾。现在直接调 `DiffLines(patch, maxLines = 400, boxed = false)`，文件标题那行 `Text` 保留，那个 `when` 删掉。
+
+**新增 `RemoteChrome.kt`**：把这一整套校准过的 ARGB 常量（代码块浅/深 head/body/ink/expand、diff 深/浅代码墨色、补偿过的 wash、摘要 sheet 的容器/抓手/标题墨色/连接线、`DarkToolMark`）收在一个纯 Kotlin object 里，每个值在 KDoc 里注明来自哪张截图。主代码通过 `RemoteChrome.c(...)` 拿 `Color`，单元测试直接读 `Long`——`const val` 会被内联，所以 `RemoteChromeTest` 不需要 Android SDK 就能跑，和 `DiffNumberTest` 一样是纯 JVM JUnit。
+
+**补丁（同轮）**：模型第一遍漏了 `PreviewSheet` / `changesSheet` / `DiffSheet` 抓手与文件行底，以及终端、文件树、模型服务、设置、会话菜单、PDF/Office 等其余 `ModalBottomSheet`——凡深色下仍等于 `MaterialTheme.colorScheme.background`（= 页面 `#151515`）的，一律改为 `RemoteChrome.SheetDark` `#20201F`。`DiffSheet` 标题墨色与抓手走 `RemoteChrome`；文件行底 `#262625`（比 sheet 板子亮一级）。
+
+**验证**：Fold / 模拟器上 `adb shell cmd uimode night yes`，依次打开一个代码块（含展开对话框）、摘要 sheet、差异 sheet、`本次改动` / `changePatch`、终端、文件树、设置，确认 sheet 与页面有边界、代码块三块板子层次正确、改动行墨色不再发亮、工具行前的图标看得见。盒子上无 Android SDK，以 `RemoteChromeTest`（纯 JVM）+ 源码常量断言代替编译。**PR 未合并**。
+
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
 Pad 9 Pro Max（`M367FC`）接上后，第一次把「平板发指令 → 主机跑模型 → 回复回画到平板」整条链路走通。
@@ -354,7 +372,7 @@ PASS one row per call / PASS status shown / PASS reply drawn
 
 **配局域网模型时的一个真问题。** 用户给的模型名是 `DeepSeek-V4.1-Flash-1017`，但该端点 `/v1/models` 实际只暴露 **`deepseek-v4.1-flash`**（小写、无后缀）。照用户给的字符串写进配置，每次请求都会 404 —— **配置模型 id 必须先查一次 `/v1/models`，别信手抄的名字**。另一个老坑复现：凭据只认 `storage/credentials.json` 的 `keys.<providerId>`，写 `customProviders[].apiKey` 无效（第二轮那条判据仍然成立）。
 
-**仍未做**：平板上的真实对话验证（平板从 adb 掉线，USB 与无线端口都没了）；设置页视觉无参考件；artifacts 应用类预览需渲染器；代码块与摘要 sheet 的深色值未整套校准。
+**仍未做**：平板上的真实对话验证（平板从 adb 掉线，USB 与无线端口都没了）；设置页视觉无参考件；artifacts 应用类预览需渲染器。~~代码块与摘要 sheet 的深色值未整套校准~~：第七十八轮（续七）已校准（`RemoteChrome`）。
 
 ### 第七十七轮：Claude 手机端逐项校准 —— artifacts 卡片、行内代码、diff sheet、创建 PR（2026-10-28）
 
@@ -383,7 +401,7 @@ PASS one row per call / PASS status shown / PASS reply drawn
 
 **测试**：129 → **132**（新增 `PullRequestUrlTest` 13 个、`DiffNumberTest` 11、`DiffFoldTest` 8）。
 
-**仍未做**：artifacts 应用类预览（需渲染器，本机语料无应用记录）；设置页视觉无参考件；代码块逐项与摘要 sheet 的深色值未整套校准。
+**仍未做**：artifacts 应用类预览（需渲染器，本机语料无应用记录）；设置页视觉无参考件。~~代码块逐项与摘要 sheet 的深色值未整套校准~~：第七十八轮（续七）已校准（`RemoteChrome`；语法高亮深色仍为派生，待 Fold 深色 fence 参考件）。
 
 ### 第七十六轮：语法高亮、工具行图标列、四页进左栏（2026-10-22 晚间）
 
