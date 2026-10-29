@@ -223,7 +223,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ### 续三十七：文件浏览/差异/终端输入失败提示（2026-10-30）
 
-- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- PR: https://github.com/WyattCode/MCode/pull/135 （未合并）
 - Android：文件浏览器 `file.listDir` 改 `rpcOrThrow`（ok:false 不再假装空目录）+ Toast「没能打开文件夹」；`git.diff` 失败 Toast「没能加载差异」；终端 `shell.input` await 成功才清空输入 + Toast「没能发送到终端」。
 - 验证：smoke「Review polish r104」；未合并。
 
