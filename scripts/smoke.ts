@@ -2145,6 +2145,32 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r103")
+  {
+    const root = process.cwd()
+    const main = await fs.readFile(
+      path.join(root, "android/app/src/main/java/com/mcode/remote/MainActivity.kt"),
+      "utf8",
+    )
+    const respondAt = main.indexOf("fun respondPerm(")
+    const respond = respondAt >= 0 ? main.slice(respondAt, respondAt + 900) : ""
+    check("r103: respondPerm uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,120}permission\.respond/.test(respond))
+    check("r103: respondPerm does not clear on plain rpc success", !/runCatching \{\s*\n\s*rpc\(JSONObject\(\)\.put\("type", "permission\.respond"/.test(respond))
+    const reasonAt = main.indexOf("fun respondPermReason(")
+    const reason = reasonAt >= 0 ? main.slice(reasonAt, reasonAt + 700) : ""
+    check("r103: respondPermReason uses rpcOrThrow", reason.includes("rpcOrThrow(req)"))
+    const askAt = main.indexOf("fun answerQuestion(")
+    const ask = askAt >= 0 ? main.slice(askAt, askAt + 900) : ""
+    check("r103: answerQuestion uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,120}question\.reply/.test(ask))
+    const shellAt = main.indexOf('put("type", "shell.open")')
+    const shell = shellAt >= 0 ? main.slice(Math.max(0, shellAt - 200), shellAt + 900) : ""
+    check("r103: shell.open uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}shell\.open/.test(shell))
+    check("r103: shell.open toasts on failure", shell.includes("没能打开终端"))
+    const stopAt = main.indexOf("onStop = {")
+    const stop = stopAt >= 0 ? main.slice(stopAt, stopAt + 280) : ""
+    check("r103: onStop pins sid", /val sid = currentSession/.test(stop) && stop.includes("session.abort"))
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }
