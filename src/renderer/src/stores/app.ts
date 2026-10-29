@@ -1917,13 +1917,16 @@ export const useApp = defineStore("app", () => {
    * The turn takes its agent from the session, so writing only the config left
    * the choice with nothing to act on.
    */
-  async function setAgent(agent: AgentName) {
-    if (currentID.value) {
-      const result = await api().request({ type: "session.agent", sessionID: currentID.value, agent })
+  async function setAgent(agent: AgentName, to?: string) {
+    // The optional id is the conversation the chip named, so a switch
+    // mid-flight cannot retarget the write.
+    const target = to ?? currentID.value
+    if (target) {
+      const result = await api().request({ type: "session.agent", sessionID: target, agent })
       const at = sessions.value.findIndex((entry) => entry.id === result.session.id)
       if (at >= 0) sessions.value[at] = result.session
     }
-    await patchConfig({ agent })
+    if (!target || !isSide(target)) await patchConfig({ agent })
   }
 
   /*

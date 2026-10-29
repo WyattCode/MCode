@@ -2145,6 +2145,42 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r89")
+  {
+    const root = process.cwd()
+    const appStore = await fs.readFile(path.join(root, "src/renderer/src/stores/app.ts"), "utf8")
+    const setAgentAt = appStore.indexOf("async function setAgent(")
+    const setAgentBody = setAgentAt >= 0 ? appStore.slice(setAgentAt, setAgentAt + 800) : ""
+    check("r89: setAgent takes an optional session id", /setAgent\(agent: AgentName, to\?: string\)/.test(setAgentBody))
+    check("r89: setAgent resolves its target once", /const target = to \?\? currentID\.value/.test(setAgentBody))
+    check(
+      "r89: setAgent leaves a side chat's default alone",
+      /!isSide\(target\)/.test(setAgentBody) && /patchConfig\(\{ agent \}\)/.test(setAgentBody),
+    )
+
+    const composer = await fs.readFile(path.join(root, "src/renderer/src/components/Composer.vue"), "utf8")
+    const chooseAgentAt = composer.indexOf("async function chooseAgent(")
+    const chooseAgentBody = chooseAgentAt >= 0 ? composer.slice(chooseAgentAt, chooseAgentAt + 600) : ""
+    check("r89: chooseAgent captures one target", /const target = sessionID\.value/.test(chooseAgentBody))
+    check("r89: chooseAgent writes to that target", /setAgent\(next, target\)/.test(chooseAgentBody))
+
+    const appVue = await fs.readFile(path.join(root, "src/renderer/src/App.vue"), "utf8")
+    const cycleAgentAt = appVue.indexOf("async function cycleAgent(")
+    const cycleAgentBody = cycleAgentAt >= 0 ? appVue.slice(cycleAgentAt, cycleAgentAt + 700) : ""
+    check("r89: cycleAgent captures currentID", /const target = app\.currentID/.test(cycleAgentBody))
+    check("r89: cycleAgent writes to that target", /setAgent\(next, target\)/.test(cycleAgentBody))
+
+    const main = await fs.readFile(
+      path.join(root, "android/app/src/main/java/com/mcode/remote/MainActivity.kt"),
+      "utf8",
+    )
+    const goalAt = main.indexOf("持续推进，直到目标彻底达成")
+    const goalRegion = goalAt >= 0 ? main.slice(Math.max(0, goalAt - 1600), goalAt + 1600) : ""
+    check("r89: settings goalMode reverts on failure", /goalMode = !next/.test(goalRegion))
+    check("r89: settings goalMode toasts on failure", /Toast\.makeText\(context, "无法开启目标模式"/.test(goalRegion))
+    check("r89: settings goalMode handles the failure", /onFailure/.test(goalRegion))
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }

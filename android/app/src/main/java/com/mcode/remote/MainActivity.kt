@@ -6230,9 +6230,25 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 Row(
                     Modifier.fillMaxWidth().padding(top = 14.dp).clickable(enabled = currentSession != null) {
                         val next = !goalMode
+                        val sid = currentSession
                         goalMode = next
-                        currentSession?.let { sid ->
-                            scope.launch { runCatching { rpc(JSONObject().put("type", "session.goalMode").put("sessionID", sid).put("on", next)) } }
+                        if (sid != null) {
+                            scope.launch {
+                                runCatching {
+                                    rpc(JSONObject().put("type", "session.goalMode").put("sessionID", sid).put("on", next))
+                                }.onFailure {
+                                    // A write that fails puts the switch back, as the
+                                    // desktop's does, rather than lying about it.
+                                    if (currentSession == sid) goalMode = !next
+                                    withContext(Dispatchers.Main) {
+                                        Toast.makeText(context, "无法开启目标模式", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                                .onSuccess {
+                                    val at = sessions.indexOfFirst { it.id == sid }
+                                    if (at >= 0) sessions[at] = sessions[at].copy(goalMode = next)
+                                }
+                            }
                         }
                     },
                     verticalAlignment = Alignment.CenterVertically,
