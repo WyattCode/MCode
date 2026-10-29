@@ -125,12 +125,19 @@ async function commitEdit() {
   await app.setGoal(props.sessionID, next)
 }
 
+const rerunning = ref(false)
+
 /** MiMo's 重新执行: the goal goes in again as a message of its own, which sets it afresh. */
 async function rerun() {
   const condition = goal.value?.condition
-  if (!condition || restricted.value) return
-  await app.setGoal(props.sessionID, condition)
-  await app.send(condition, [], props.sessionID)
+  if (!condition || restricted.value || rerunning.value) return
+  rerunning.value = true
+  try {
+    await app.setGoal(props.sessionID, condition)
+    await app.send(condition, [], props.sessionID)
+  } finally {
+    rerunning.value = false
+  }
 }
 </script>
 
@@ -173,7 +180,7 @@ async function rerun() {
             class="goal-act"
             type="button"
             data-goal-rerun
-            :disabled="restricted"
+            :disabled="restricted || rerunning"
             v-tip="{ label: restricted ? t('composer.reviewRestricted') : t('composer.goalBar.resend'), placement: 'top' }"
             @click="rerun"
           >

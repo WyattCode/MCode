@@ -221,6 +221,14 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 续二十八：目标重跑防双发、帮我审批钉会话、Android 朗读/记忆等步骤词（2026-10-30）
+
+- PR: （打开后填）
+- 桌面 GoalBar：rerun 用 rerunning 挡住连点，避免 setGoal+send 打两遍（对照 Android #117 goalResending）。
+- questions.acceptEdits：捕获 currentID 再 setAccess，避免 await 中途切会话改到别的对话。
+- Android：toolVerbOf/TOOL_LABELS/StepMark 认 speak/memory/contacts/actor/invalid（修「已读取」误标，#124 notebook_edit 同系）。
+- 验证：smoke「Review polish r95」；未合并。
+
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
 Pad 9 Pro Max（`M367FC`）接上后，第一次把「平板发指令 → 主机跑模型 → 回复回画到平板」整条链路走通。

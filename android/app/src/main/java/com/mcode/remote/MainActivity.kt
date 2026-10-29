@@ -434,6 +434,11 @@ fun toolVerbOf(name: String, status: String): String {
         "skill_search" -> "skill_search"
         "present_files" -> "present_files"
         "pdf_locate" -> "pdf_locate"
+        "speak" -> "speak"
+        "memory" -> "memory"
+        "contacts" -> "contacts"
+        "actor" -> "actor"
+        "invalid" -> "invalid"
         else -> ""
     }
     val doing = when (status) {
@@ -465,6 +470,11 @@ private val TOOL_LABELS = mapOf(
     "done.skill_search" to "搜索技能",
     "done.present_files" to "展示文件",
     "done.pdf_locate" to "定位 PDF",
+    "done.speak" to "已朗读",
+    "done.memory" to "记忆",
+    "done.contacts" to "已查看通讯录",
+    "done.actor" to "子任务",
+    "done.invalid" to "工具参数无效",
     "running.read" to "正在读取",
     "running.edit" to "正在编辑",
     "running.write" to "正在写入",
@@ -481,6 +491,11 @@ private val TOOL_LABELS = mapOf(
     "running.skill_search" to "正在搜索技能",
     "running.present_files" to "正在展示文件",
     "running.pdf_locate" to "正在定位 PDF",
+    "running.speak" to "正在朗读",
+    "running.memory" to "正在记忆",
+    "running.contacts" to "正在查看通讯录",
+    "running.actor" to "子任务进行中",
+    "running.invalid" to "工具参数无效",
     "error.read" to "读取失败",
     "error.edit" to "编辑失败",
     "error.write" to "写入失败",
@@ -497,6 +512,11 @@ private val TOOL_LABELS = mapOf(
     "error.skill_search" to "技能搜索失败",
     "error.present_files" to "展示文件失败",
     "error.pdf_locate" to "PDF 定位失败",
+    "error.speak" to "朗读失败",
+    "error.memory" to "记忆失败",
+    "error.contacts" to "查看通讯录失败",
+    "error.actor" to "子任务失败",
+    "error.invalid" to "工具参数无效",
     "rejected.read" to "已拒绝读取",
     "rejected.edit" to "已拒绝编辑",
     "rejected.write" to "已拒绝写入",
@@ -513,6 +533,11 @@ private val TOOL_LABELS = mapOf(
     "rejected.skill_search" to "已拒绝搜索技能",
     "rejected.present_files" to "已拒绝展示文件",
     "rejected.pdf_locate" to "已拒绝定位 PDF",
+    "rejected.speak" to "已拒绝朗读",
+    "rejected.memory" to "已拒绝记忆",
+    "rejected.contacts" to "已拒绝查看通讯录",
+    "rejected.actor" to "已拒绝子任务",
+    "rejected.invalid" to "工具参数无效",
     "skipped.read" to "未执行：读取",
     "skipped.edit" to "未执行：编辑",
     "skipped.write" to "未执行：写入",
@@ -529,6 +554,11 @@ private val TOOL_LABELS = mapOf(
     "skipped.skill_search" to "未执行：搜索技能",
     "skipped.present_files" to "未执行：展示文件",
     "skipped.pdf_locate" to "未执行：定位 PDF",
+    "skipped.speak" to "未执行：朗读",
+    "skipped.memory" to "未执行：更新记忆",
+    "skipped.contacts" to "未执行：查看通讯录",
+    "skipped.actor" to "未执行：创建子任务",
+    "skipped.invalid" to "工具参数无效",
 )
 
 /** Monotone ids for error rows, so two of them can never collide. */
@@ -14591,6 +14621,9 @@ fun StepMark(name: String, tint: Color, modifier: Modifier = Modifier) {
         "todowrite" -> "todo"
         "skill" -> "skill"
         "memory" -> "memory"
+        "speak" -> "speaker"
+        "actor", "contacts" -> "actor"
+        "invalid" -> "invalid"
         else -> "fallback"
     }
     MiIcon(
@@ -14621,6 +14654,9 @@ private val STEP_MARKS = mapOf(
     "list" to "M9 6.5h11M9 12h11M9 17.5h11M4.5 5.5h1v2h-1zM4.5 11h1v2h-1zM4.5 16.5h1v2h-1z",
     "globe" to "M12 3c5 0 9 4 9 9s-4 9-9 9-9-4-9-9 4-9 9-9zM3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z",
     "todo" to "M4.7 4.5h4.6c.7 0 1.2.5 1.2 1.2v4.6c0 .7-.5 1.2-1.2 1.2H4.7c-.7 0-1.2-.5-1.2-1.2V5.7c0-.7.5-1.2 1.2-1.2zM4.8 17l1.6 1.6 3-3.2M13 7.5h7.5M13 17h7.5",
+    "speaker" to "M11.5 5 7 8.8H3.8v6.4H7l4.5 3.8zM15.4 9.6a3.4 3.4 0 0 1 0 4.8M18.2 6.8a7.3 7.3 0 0 1 0 10.4",
+    "actor" to "M5 8h14a3.5 3.5 0 0 1 0 7H5a3.5 3.5 0 0 1 0-7zM12 4.5V8M9.5 13h.01M14.5 13h.01",
+    "invalid" to "M10.3 4.2 2.8 17.5a2 2 0 0 0 1.7 3h15a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0zM12 9.5v4M12 17h.01",
     "browser" to "M5.5 4h13C19.9 4 21 5.1 21 6.5v11c0 1.4-1.1 2.5-2.5 2.5h-13C4.1 20 3 18.9 3 17.5v-11C3 5.1 4.1 4 5.5 4zM3 9h18M6.5 6.5h.01M9 6.5h.01M11.5 6.5h.01",
     "skill" to "M19.5 4.5c-5.8.4-10.4 4.4-12 10.6L6 20M19.5 4.5c.3 5.6-3.4 10-9.9 10.9M10.2 11.2 13 8.4",
     "memory" to "M12 5.5a3.5 3.5 0 0 0-6.6 1.6A3.3 3.3 0 0 0 4 13a3.4 3.4 0 0 0 3 5 3 3 0 0 0 5 .5zM12 5.5a3.5 3.5 0 0 1 6.6 1.6A3.3 3.3 0 0 1 20 13a3.4 3.4 0 0 1-3 5 3 3 0 0 1-5 .5zM12 5.5v13",
