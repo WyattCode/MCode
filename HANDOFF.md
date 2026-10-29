@@ -223,7 +223,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ### 续二十八：目标重跑防双发、帮我审批钉会话、Android 朗读/记忆等步骤词（2026-10-30）
 
-- PR: （打开后填）
+- PR: https://github.com/WyattCode/MCode/pull/126
 - 桌面 GoalBar：rerun 用 rerunning 挡住连点，避免 setGoal+send 打两遍（对照 Android #117 goalResending）。
 - questions.acceptEdits：捕获 currentID 再 setAccess，避免 await 中途切会话改到别的对话。
 - Android：toolVerbOf/TOOL_LABELS/StepMark 认 speak/memory/contacts/actor/invalid（修「已读取」误标，#124 notebook_edit 同系）。
