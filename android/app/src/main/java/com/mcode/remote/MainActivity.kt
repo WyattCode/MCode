@@ -6577,6 +6577,9 @@ fun SettingsScreen(
                     SetLabel("默认新建项目位置", str("projectRoot").ifBlank { "还没有设置" })
                     SetLabel("不添加可见 AI 标识", "导出的图片不加水印。")
                     SetToggle(flag("watermark", false)) { onPatch(JSONObject().put("watermark", it)) }
+                    SetHead("浏览器")
+                    SetLabel("联网搜索", "允许 MCode 使用联网搜索；关闭后「搜索网络」工具不再出现，可以在这里重新打开")
+                    SetToggle(WebSearchSetting.enabled(config)) { onPatch(WebSearchSetting.patch(it)) }
                 }
                 SetPage.Usage -> SetUsage(usage)
                 SetPage.Appearance -> {

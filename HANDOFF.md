@@ -199,7 +199,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 6. **留着的小尾巴**：
    - ~~消息 id 的「单调递增」只在一个进程里成立~~：第七十八轮已修（`adopt()`，读取时把磁盘 id 作为下限）。
    - 一轮对话**中途**因溢出而压缩时，圆环会一直显示估算值到这一轮结束（没有逐步的时间戳能分辨；估算值很接近）。
-   - ~~联网搜索在确认卡片里选了「关闭网络搜索」之后，只能把 `config.json` 的 `websearch` 改回 `"auto"`~~：第七十八轮已在设置页「浏览器」分组加开关（18 语言表补齐）。**平板端没有**这个开关。
+   - ~~联网搜索在确认卡片里选了「关闭网络搜索」之后，只能把 `config.json` 的 `websearch` 改回 `"auto"`~~：第七十八轮已在设置页「浏览器」分组加开关（18 语言表补齐）。~~**平板端没有**这个开关~~：第七十八轮（续六）已在平板 `SettingsScreen` 常规 › 浏览器补上（关=`false`，开=`auto`）。
    - 全新配置第一次运行时，第一条 bash 命令要 16 秒左右，之后正常（第三十五轮探针看到的，原因未查；只影响新装后的第一条命令）。
    - ~~Linux 托盘图标仍是把 512 的配色图缩成一张 16 交给托盘~~：第七十八轮已修（每配色 7 个尺寸 PNG + `addRepresentation`，注意必须走 `dataURL` 不能走 `buffer`）。
    - ~~`command -v rm` 这种只查命令位置的写法也被当成删除来问~~：第七十八轮已修（`-v`/`-V` 不派生程序）。
@@ -220,6 +220,17 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 更早的下一步建议留作记录，见文末「附录 C」。
 
 ## 逐轮记录（新到旧）
+
+### 第七十八轮（续六）：平板设置补联网搜索开关（2026-10-30）
+
+桌面端从第七十八轮起就有「设置 › 常规 › 浏览器 › 联网搜索」这个开关，平板端一直缺：`SettingsScreen` 里只有工具名映射，没有对应的行，待办里也一直记着这一条。协议其实早就够了——`config.get` / `config.set` 里的 `AppConfig.websearch` 支持 `"auto"`、具体 provider id 和 `false`，Android 的 `onPatch` 也一直在走这两个 RPC，所以这次没有动网关。
+
+做法：新增 `WebSearchSetting`（纯 JVM，不依赖 Compose），把桌面的判定原样搬过来——`websearch` 不是布尔字段，`"auto"` 和 provider 字符串都算开，只有显式的布尔 `false` 才算关；`JSONObject.optBoolean` 会把 `"auto"` 读成 false，所以不能用 `flag(...)`。打开时 patch `{"websearch": "auto"}`，关闭时 patch `{"websearch": false}`（布尔，不是字符串 `"false"`）。UI 加在 `SetPage.General` 里水印开关之后，一个「浏览器」小节 + 「联网搜索」开关，文案对齐桌面 `set.webSearch` / `set.webSearchSub`。
+
+验证：`WebSearchSettingTest` 覆盖了 null / 缺键 / `false` / `"auto"` / `"exa"` / 字符串 `"false"` 以及 patch 往返，本机（无 Android SDK）只靠这些 JVM 单测。Wyatt 那边请 `./gradlew :app:testDebugUnitTest`，再装 Fold / VM 的 APK，进 设置 › 常规 拨一下「联网搜索」，确认 `config.json` 里 `websearch` 跟着变，且下一轮对话里「搜索网络」工具按开关出现或消失。
+
+范围：Windows + Android。PR 未合并。
+
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
@@ -340,7 +351,7 @@ PASS one row per call / PASS status shown / PASS reply drawn
 
 2. **消息 id 的「单调递增」只在单进程内成立**（第三十轮记下）。`shared/id.ts` 的 `counters` 是内存里的 Map，只挡住了同一次运行中时钟回拨。**退出应用、把系统时钟往回拨一天、再启动**，新消息的 48 位时间前缀仍会排在已有消息前面 —— 转写乱序，「从此条删除」切错范围，正是高位标记当初要防的那件事，隔一次重启就复发。修法：新增 `adopt(prefix, existingId)`，`SessionStore.messages()`／`messageIDs()`／`readAll()` 读完就把磁盘上的 id 作为下限（`seq` 借 `SEQ_LIMIT-1`，只借时间不借序号，否则同一毫秒内新 id 会排到旧 id 前面）。只借时间的理由写在函数注释里。
 
-3. **联网搜索关掉后没有入口重开**（第三十一轮记下）。`websearch` 只能在首次确认卡里设 `false`，此后要手改 `config.json`。已在设置页「浏览器」分组加开关（`data-websearch-switch`）：关是 `false`，开恢复 `auto`。**18 张语言表全部补齐**（`set.webSearch` / `set.webSearchSub`），脚本按表顺序插入并 `assert` 张数，避免写错语言。注意这**只对桌面端 Vue 设置页生效** —— 平板端设置页是 Kotlin 独立实现，那边只有工具名映射，没有这个开关。
+3. **联网搜索关掉后没有入口重开**（第三十一轮记下）。`websearch` 只能在首次确认卡里设 `false`，此后要手改 `config.json`。已在设置页「浏览器」分组加开关（`data-websearch-switch`）：关是 `false`，开恢复 `auto`。**18 张语言表全部补齐**（`set.webSearch` / `set.webSearchSub`），脚本按表顺序插入并 `assert` 张数，避免写错语言。当时这**只对桌面端 Vue 设置页生效** —— 平板端设置页是 Kotlin 独立实现。第七十八轮（续六）已在平板补上同一语义的开关。
 
 4. **Linux 托盘图标发虚**（第三十四轮记下）。`nativeImage` 不读 `.ico`，Linux 分支只能把 512 的图缩成单个 16，高分屏再拉伸回去。修法：`scripts/icons.mjs` 每种配色额外输出 7 个尺寸的 PNG（16/22/24/32/44/48/64，22 与 44 是 GNOME/KDE 面板的 100%/200%），主进程 `trayLinuxImage()` 用 `addRepresentation` 把全部倍率装进一个 image。**踩了一个坑**：`addRepresentation` 的 `buffer` 是**裸位图**，塞 PNG 上去会在面板上显示噪点，必须走 `dataURL`。
 
