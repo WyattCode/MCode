@@ -2929,17 +2929,24 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         artifactsFailed = false
         val ask = JSONObject().put("type", "artifact.list").put("limit", 50)
         if (artCategory.isNotEmpty()) ask.put("category", artCategory)
-        val reply = runCatching { rpc(ask, 45_000) }.getOrNull()
-        val data = reply?.optJSONObject("data")
-        artifacts.clear()
-        data?.optJSONArray("artifacts")?.let { list ->
-            for (i in 0 until list.length()) list.optJSONObject(i)?.let { artifacts.add(it) }
+        runCatching {
+            val reply = rpcOrThrow(ask, 45_000)
+            val data = reply.optJSONObject("data") ?: error("no data")
+            artifacts.clear()
+            data.optJSONArray("artifacts")?.let { list ->
+                for (i in 0 until list.length()) list.optJSONObject(i)?.let { artifacts.add(it) }
+            }
+            // The facet counts cover files this page has not loaded, so they are the
+            // server's, not a count of what is here.
+            if (artCategory.isEmpty()) artFacets = data.optJSONObject("facets")
+            artBuilding = data.optBoolean("building")
+        }.onFailure {
+            artifacts.clear()
+            artifactsFailed = true
+            withContext(Dispatchers.Main) {
+                Toast.makeText(context, "没能加载作品", Toast.LENGTH_SHORT).show()
+            }
         }
-        // The facet counts cover files this page has not loaded, so they are the
-        // server's, not a count of what is here.
-        if (artCategory.isEmpty()) artFacets = data?.optJSONObject("facets")
-        artBuilding = data?.optBoolean("building") ?: false
-        artifactsFailed = data == null
         artifactsLoading = false
     }
 
@@ -3511,20 +3518,20 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     LaunchedEffect(commandDir) {
         commands.clear()
         skills.clear()
-        val ticket = "cmd${System.nanoTime()}"
-        val deferred = client.awaitResponse(ticket)
-        request(JSONObject().put("type", "command.list").put("directory", commandDir), ticket)
-        val res = try {
-            runCatching { deferred.await() }.getOrNull()
-        } finally {
-            client.forgetResponse(ticket)
-        } ?: return@LaunchedEffect
-        val arr = res.optJSONObject("data")?.optJSONArray("commands") ?: return@LaunchedEffect
-        for (i in 0 until arr.length()) {
-            val c = arr.optJSONObject(i) ?: continue
-            val name = c.optString("name")
-            if (name.isNotBlank()) commands.add(name to c.optString("description", ""))
-            if (name.isNotBlank() && c.optString("source") == "skill") skills.add(name)
+        runCatching {
+            val res = rpcOrThrow(JSONObject().put("type", "command.list").put("directory", commandDir))
+            val arr = res.optJSONObject("data")?.optJSONArray("commands")
+                ?: error("no commands")
+            for (i in 0 until arr.length()) {
+                val c = arr.optJSONObject(i) ?: continue
+                val name = c.optString("name")
+                if (name.isNotBlank()) commands.add(name to c.optString("description", ""))
+                if (name.isNotBlank() && c.optString("source") == "skill") skills.add(name)
+            }
+        }.onFailure {
+            withContext(Dispatchers.Main) {
+                Toast.makeText(context, "没能加载命令", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
@@ -6261,7 +6268,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 currentSession?.let { sid ->
                                     scope.launch {
                                         try {
-                                            rpc(JSONObject().put("type", "session.model").put("sessionID", sid).put("model", JSONObject().put("provider", providerId).put("model", modelId)))
+                                            rpcOrThrow(JSONObject().put("type", "session.model").put("sessionID", sid).put("model", JSONObject().put("provider", providerId).put("model", modelId)))
                                             // The picker closes on the press, so without this the
                                             // pill keeps the old name until some other event
                                             // happens to refresh the row.

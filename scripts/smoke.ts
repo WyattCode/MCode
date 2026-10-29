@@ -2145,6 +2145,27 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r107")
+  {
+    const root = process.cwd()
+    const main = await fs.readFile(
+      path.join(root, "android/app/src/main/java/com/mcode/remote/MainActivity.kt"),
+      "utf8",
+    )
+    const modelAt = main.indexOf('put("type", "session.model")')
+    const model = modelAt >= 0 ? main.slice(Math.max(0, modelAt - 80), modelAt + 200) : ""
+    check("r107: session.model uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}session\.model/.test(model))
+    check("r107: session.model does not use plain rpc", !/rpc\(JSONObject\(\)\.put\("type", "session\.model"/.test(model))
+    const artAt = main.indexOf('put("type", "artifact.list")')
+    const art = artAt >= 0 ? main.slice(Math.max(0, artAt - 80), artAt + 1200) : ""
+    check("r107: artifact.list uses rpcOrThrow", /rpcOrThrow\(ask/.test(art))
+    check("r107: artifact.list toasts on failure", art.includes("没能加载作品"))
+    const cmdAt = main.indexOf('put("type", "command.list")')
+    const cmd = cmdAt >= 0 ? main.slice(Math.max(0, cmdAt - 200), cmdAt + 1000) : ""
+    check("r107: command.list uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}command\.list/.test(cmd))
+    check("r107: command.list toasts on failure", cmd.includes("没能加载命令"))
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }
