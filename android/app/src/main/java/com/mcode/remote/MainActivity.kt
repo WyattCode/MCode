@@ -13278,6 +13278,12 @@ fun InputCapsule(
     var text by remember(draftKey) { mutableStateOf(draft) }
     LaunchedEffect(draftKey) { text = draft }
     LaunchedEffect(text) { onDraftChange(text) }
+    /*
+     * Covers the gap between tapping send and `running` flipping true. Without
+     * it a second tap can launch another session.prompt before the Stop mark
+     * recomposes.
+     */
+    var sending by remember { mutableStateOf(false) }
     LaunchedEffect(inject) { if (!inject.isNullOrEmpty()) { text = inject; onInjected() } }
     /*
      * Claude's composer card is inset from its pane on both sides - 59dp on the
@@ -14061,10 +14067,18 @@ fun InputCapsule(
                          * disc inside a 44 touch target. A 44 box with a small
                          * disc inside left the row's right edge looking empty.
                          */
-                        Modifier.size(35.2.dp).clickable(enabled = enabled && !transcribing) {
+                        Modifier.size(35.2.dp).clickable(enabled = enabled && !transcribing && !sending) {
                             if (running) onStop()
                             else if (listening) onMic()
-                            else if (text.isNotBlank() || attachments.isNotEmpty()) { onSend(text, attachments); text = "" }
+                            else if (text.isNotBlank() || attachments.isNotEmpty()) {
+                                sending = true
+                                try {
+                                    onSend(text, attachments)
+                                    text = ""
+                                } finally {
+                                    sending = false
+                                }
+                            }
                         },
                         contentAlignment = Alignment.Center,
                     ) {

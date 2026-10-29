@@ -282,6 +282,19 @@ export function firstInstall(): Pick<AppConfig, "accessLevel" | "allowFullAccess
 }
 
 /**
+ * Whether a settings write may proceed (file is not an unreadable lock).
+ *
+ * A config.json that is there but could not be read is left exactly as it is:
+ * writing this run's defaults over it would replace every setting, provider and
+ * project on the machine. `persist` refuses quietly for that reason, and `apply`
+ * refuses out loud, before it has changed anything, so the window is told rather
+ * than shown settings that quietly do not stick.
+ */
+export function settingsWritable(blocked: boolean): boolean {
+  return !blocked
+}
+
+/**
  * What a config document on disk says about permissions.
  *
  * A document written by a build that had the map is read straight off. One
@@ -1149,6 +1162,15 @@ export class Config {
   }
 
   private async apply(patch: Partial<AppConfig>, forget: readonly string[]): Promise<AppConfig> {
+    /*
+     * A file this run could not read is never written over - and refusing only
+     * in `persist` was not enough: the change was already in memory and already
+     * announced, so it looked saved and was gone at the next launch. Refusing
+     * here, before anything is touched, is what `setNow` rolls back from.
+     */
+    if (!settingsWritable(this.blocked)) {
+      throw new CodedError("The settings file could not be read and must not be written over", "error.configInvalid")
+    }
     if (typeof patch.projectRoot === "string" && patch.projectRoot.trim()) await this.projectLocations.assert(patch.projectRoot)
     const existing = new Set([...this.current.projects, ...this.current.closedProjects])
     for (const directory of [...(Array.isArray(patch.projects) ? patch.projects : []), ...(Array.isArray(patch.closedProjects) ? patch.closedProjects : [])]) {

@@ -102,7 +102,7 @@ import {
   voiceFetchFailure,
   voiceHttpFailure,
 } from "../src/server/handlers"
-import { PROJECT_LIST_MIGRATION, customModelOf } from "../src/server/config"
+import { PROJECT_LIST_MIGRATION, customModelOf, settingsWritable } from "../src/server/config"
 import { listedProjects, projectsByRecency, reconciledProjects } from "../src/shared/projects"
 import { sessionGroup } from "../src/shared/session-group"
 import { askGithub, githubRepository, hasGithubRemote, pullRequestFrom, pullRequestState, type FetchLike, type GitRunner } from "../src/server/pull-request"
@@ -2143,6 +2143,29 @@ async function main() {
     check("a multi choice toggles each label", JSON.stringify(toggleChoice(["a"], "b", true)) === '["a","b"]' && JSON.stringify(toggleChoice(["a", "b"], "a", true)) === '["b"]')
     check("typed text is appended once", JSON.stringify(mergeCustom([["a"], []], ["b", " "])) === '[["a","b"],[]]' && JSON.stringify(mergeCustom([["a"]], ["a"])) === '[["a"]]')
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
+  }
+
+
+  section("Review polish r84")
+  {
+    const form = await fs.readFile(new URL("../src/renderer/src/components/parts/QuestionForm.vue", import.meta.url), "utf8")
+    const primaryAt = form.indexOf('data-cnav-primary')
+    const primaryEnd = primaryAt < 0 ? -1 : form.indexOf("/>", primaryAt)
+    const primary = primaryAt >= 0 && primaryEnd > primaryAt ? form.slice(primaryAt, primaryEnd) : ""
+    check("question primary refuses Enter while a reply is in flight", primary.includes(':disabled="sending"'))
+    check("question pager waits out a reply", form.includes(':disabled="page === 0 || sending"') && form.includes(':disabled="last || sending"'))
+    check("question advance and custom Enter refuse while busy", form.includes("if (sending.value) return") && form.split("if (sending.value) return").length >= 3)
+
+    check("an unreadable settings file is not writable", settingsWritable(true) === false)
+    check("a readable settings file is writable", settingsWritable(false) === true)
+    const config = await fs.readFile(new URL("../src/server/config.ts", import.meta.url), "utf8")
+    const applyAt = config.indexOf("private async apply(patch")
+    const applyBody = applyAt < 0 ? "" : config.slice(applyAt, applyAt + 900)
+    check("apply refuses a blocked settings file before mutating", applyBody.includes("settingsWritable(this.blocked)") && applyBody.includes("error.configInvalid"))
+    check("persist still quietly skips a blocked settings file", /if \(this\.blocked\) return Promise\.resolve\(\)/.test(config))
+
+    const capsule = await fs.readFile(new URL("../android/app/src/main/java/com/mcode/remote/MainActivity.kt", import.meta.url), "utf8")
+    check("Android send locks until the prompt has left", capsule.includes("var sending by remember { mutableStateOf(false) }") && capsule.includes("enabled = enabled && !transcribing && !sending"))
   }
 
   section("Permission guide")
