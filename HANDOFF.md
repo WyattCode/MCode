@@ -221,6 +221,14 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 续二十七：编辑重发/重试钉会话、自定义服务商模型钉会话、用量累加空值守卫（2026-10-30）
+
+- PR: （打开后填）
+- 桌面 MessageStream：sendEdit / retry 把已捕获的 sessionID 传给 app.send（不再 undefined / 主窗 ternary），避免 truncate 后切会话把问题发到新会话。
+- CustomProviderForm：standalone 保存前捕获 currentID，setModel(model, target)。
+- session store addUsage：`session.usage ?? emptyUsage()`，缺 usage 的旧会话不再把回合打崩。
+- 验证：smoke「Review polish r94」；未合并。
+
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
 Pad 9 Pro Max（`M367FC`）接上后，第一次把「平板发指令 → 主机跑模型 → 回复回画到平板」整条链路走通。
