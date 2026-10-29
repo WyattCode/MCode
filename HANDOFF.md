@@ -200,7 +200,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
    - ~~消息 id 的「单调递增」只在一个进程里成立~~：第七十八轮已修（`adopt()`，读取时把磁盘 id 作为下限）。
    - 一轮对话**中途**因溢出而压缩时，圆环会一直显示估算值到这一轮结束（没有逐步的时间戳能分辨；估算值很接近）。
    - ~~联网搜索在确认卡片里选了「关闭网络搜索」之后，只能把 `config.json` 的 `websearch` 改回 `"auto"`~~：第七十八轮已在设置页「浏览器」分组加开关（18 语言表补齐）。**平板端没有**这个开关。
-   - 全新配置第一次运行时，第一条 bash 命令要 16 秒左右，之后正常（第三十五轮探针看到的，原因未查；只影响新装后的第一条命令）。
+   - ~~全新配置第一次运行时，第一条 bash 命令要 16 秒左右~~：续九 / PR #107（`fix/first-bash-cold-start`，未合并）——根因是 Windows PowerShell/.NET 冷启动；启动时 `prewarmBashShell`，仍冷则进度「正在启动 shell…」。Linux 只验接线；Windows 墙钟可再验。
    - ~~Linux 托盘图标仍是把 512 的配色图缩成一张 16 交给托盘~~：第七十八轮已修（每配色 7 个尺寸 PNG + `addRepresentation`，注意必须走 `dataURL` 不能走 `buffer`）。
    - ~~`command -v rm` 这种只查命令位置的写法也被当成删除来问~~：第七十八轮已修（`-v`/`-V` 不派生程序）。
    - 12 条提示在 MiMo 的所有语言里都是英文，MCode 照参照保留（名单在 `scripts/i18n-check.ts` 的 `REFERENCE_ENGLISH`）；若决定翻译，要同时改参照比对。
@@ -220,6 +220,21 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 更早的下一步建议留作记录，见文末「附录 C」。
 
 ## 逐轮记录（新到旧）
+
+### 第七十八轮（续十）：Windows Hello 显示密钥门闩（2026-10-30）
+
+接着续九（#107 首条 bash 冷启动预热，未合并）。本轮做 **Windows Hello / OS 用户验证作为「显示密钥」的额外门闩**，不替代 DPAPI。
+
+**调查**：Electron 41 的 `systemPreferences.promptTouchID` 仅 darwin；无内置 Windows Hello API。路径：主进程用 PowerShell 调 WinRT `UserConsentVerifier`（无原生插件），模式照 `login-item.ts`。
+
+**范围（最小可交付）**：
+- 设置 → 权限：Windows 上「显示密钥前验证」开关（`user-verify.json`）
+- 打开 MCP 环境变量/请求头「显示」、自定义供应商 API Key 眼睛前先验证；会话内解锁，锁屏/`suspend` 清掉
+- `safeStorage` 仍封存 credentials；模型调用不弹 Hello
+- Linux：接线 + 纯逻辑 smoke（60）；真 Hello 需 Windows 手测
+
+**验证**：`smoke-user-verify` 60 过；typecheck / i18ncheck（18 表补 `set.userVerify*`）绿。PR 未合并（`feat/windows-hello-lock`）。
+
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
