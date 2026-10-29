@@ -1571,6 +1571,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     var prUrl by remember { mutableStateOf<String?>(null) }
     /** Parked permission requests per session, replayed from session.list. */
     val pendingPerms = remember { java.util.concurrent.ConcurrentHashMap<String, MutableList<JSONObject>>() }
+    /** Request ids with a reply still in flight, so a double-tap cannot send two. */
+    val respondingIds = remember { java.util.concurrent.ConcurrentHashMap.newKeySet<String>() }
     /**
      * Conversations whose turn finished while the reader was elsewhere.
      *
@@ -1963,6 +1965,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     }
 
     fun respondPerm(requestId: String, response: String) {
+        if (!respondingIds.add(requestId)) return
         /*
          * The card is cleared only once the server has taken the answer.
          *
@@ -1973,11 +1976,15 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
          * nothing in the transcript either, because the model was still waiting.
          */
         scope.launch {
-            val ok = runCatching {
-                rpc(JSONObject().put("type", "permission.respond").put("requestID", requestId).put("response", response))
-            }.isSuccess
-            if (ok) clearPerm(requestId)
-            else Toast.makeText(context, "答复没有送达，请重试", Toast.LENGTH_LONG).show()
+            try {
+                val ok = runCatching {
+                    rpc(JSONObject().put("type", "permission.respond").put("requestID", requestId).put("response", response))
+                }.isSuccess
+                if (ok) clearPerm(requestId)
+                else Toast.makeText(context, "答复没有送达，请重试", Toast.LENGTH_LONG).show()
+            } finally {
+                respondingIds.remove(requestId)
+            }
         }
     }
 
@@ -1986,13 +1993,18 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * it knows what to do differently rather than just that it was stopped.
      */
     fun respondPermReason(requestId: String, reason: String) {
+        if (!respondingIds.add(requestId)) return
         val req = JSONObject().put("type", "permission.respond").put("requestID", requestId).put("response", "reject")
         if (reason.isNotBlank()) req.put("reason", reason)
         // Same rule as `respondPerm`: the card goes only after the server took it.
         scope.launch {
-            val ok = runCatching { rpc(req) }.isSuccess
-            if (ok) clearPerm(requestId)
-            else Toast.makeText(context, "答复没有送达，请重试", Toast.LENGTH_LONG).show()
+            try {
+                val ok = runCatching { rpc(req) }.isSuccess
+                if (ok) clearPerm(requestId)
+                else Toast.makeText(context, "答复没有送达，请重试", Toast.LENGTH_LONG).show()
+            } finally {
+                respondingIds.remove(requestId)
+            }
         }
     }
 
@@ -2011,17 +2023,22 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
 
 
     fun answerQuestion(requestId: String, answer: List<String>) {
+        if (!respondingIds.add(requestId)) return
         // Same reason as `clearPerm`: an answered question is no longer parked,
         // and a card that comes back on the next open would be a question the
         // model has already been told the answer to.
         scope.launch {
-            val ok = runCatching {
-                rpc(JSONObject().put("type", "question.reply").put("requestID", requestId).put("answers", org.json.JSONArray().put(org.json.JSONArray(answer))))
-            }.isSuccess
-            // An answer that never arrived left the question card gone and the
-            // model still waiting for it - the same silence either way.
-            if (ok) clearPerm(requestId)
-            else Toast.makeText(context, "回答没有送达，请重试", Toast.LENGTH_LONG).show()
+            try {
+                val ok = runCatching {
+                    rpc(JSONObject().put("type", "question.reply").put("requestID", requestId).put("answers", org.json.JSONArray().put(org.json.JSONArray(answer))))
+                }.isSuccess
+                // An answer that never arrived left the question card gone and the
+                // model still waiting for it - the same silence either way.
+                if (ok) clearPerm(requestId)
+                else Toast.makeText(context, "回答没有送达，请重试", Toast.LENGTH_LONG).show()
+            } finally {
+                respondingIds.remove(requestId)
+            }
         }
     }
 

@@ -142,6 +142,7 @@ import {
   accessPatch,
   fullAccessOff,
   composerAnswers,
+  composerTarget,
   confirmQueue,
   guideShown,
   mergeCustom,
@@ -2138,6 +2139,11 @@ async function main() {
     check("1/N counts both kinds, this session only", queued.length === 3)
     check("a question that arrived first is shown first", confirmQueue("s1", [perm("p1", "s1", 100)], [ask("q0", "s1", 90)])[0]?.kind === "question")
     check("no session, no queue", confirmQueue(undefined, [perm("p1", "s1", 1)], []).length === 0)
+    const permFirst = confirmQueue("s1", [perm("p1", "s1", 100)], [ask("q1", "s1", 200)])
+    check("composer ignores a question while a permission leads the dock", composerTarget(permFirst) === undefined)
+    const qFirst = confirmQueue("s1", [perm("p1", "s1", 200)], [ask("q0", "s1", 90)])
+    check("composer answers only when the dock head is the question", composerTarget(qFirst)?.id === "q0")
+    check("empty dock, no composer answer", composerTarget([]) === undefined)
 
     check("a single choice picks, and a second click clears it", JSON.stringify(toggleChoice([], "a", false)) === '["a"]' && toggleChoice(["a"], "a", false).length === 0)
     check("a multi choice toggles each label", JSON.stringify(toggleChoice(["a"], "b", true)) === '["a","b"]' && JSON.stringify(toggleChoice(["a", "b"], "a", true)) === '["b"]')

@@ -42,6 +42,12 @@ export function composerAnswers(text: string, count: number): QuestionAnswer[] |
   return Array.from({ length: count }, (_, index) => (index === 0 ? [trimmed] : []))
 }
 
+/** Plain composer text answers the dock only when a question is what it is showing (MiMo's hx). */
+export function composerTarget(queue: readonly ConfirmItem[]): QuestionRequest | undefined {
+  const head = queue[0]
+  return head?.kind === "question" ? head.request : undefined
+}
+
 /** A click on an option: multi choice toggles it, single choice picks it or clears it again. */
 export function toggleChoice(chosen: readonly string[], label: string, multiple: boolean): string[] {
   if (multiple) return chosen.includes(label) ? chosen.filter((item) => item !== label) : [...chosen, label]
