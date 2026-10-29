@@ -223,7 +223,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ### 续三十八：变更列表/对话搜索/用量失败提示（2026-10-30）
 
-- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- PR: https://github.com/WyattCode/MCode/pull/136 （未合并）
 - Android：变更轨 `git.status` 改 `rpcOrThrow`（失败不再假装干净树）+ Toast「没能加载变更」；会话列表 `search.messages` 失败 Toast「没能搜索对话」；设置 `usage.summary` 失败 Toast「没能加载用量」。
 - 验证：smoke「Review polish r105」；未合并。
 
