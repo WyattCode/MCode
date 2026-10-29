@@ -1158,8 +1158,13 @@ const goalMode = computed(() => (sessionID.value ? (session.value?.goalMode ?? f
 
 /* A switch rather than a command, because it stays on; the menu stays open, as MiMo's does. */
 async function toggleGoalMode() {
-  await app.setGoalMode(!goalMode.value, sessionID.value)
-  notify(t(goalMode.value ? "toast.goalOn" : "toast.goalOff"))
+  // Capture both before the await: a switch mid-flight must not retarget
+  // the write, and the toast must name the value that was asked for — not
+  // whatever the newly opened conversation happens to show.
+  const target = sessionID.value
+  const next = !goalMode.value
+  await app.setGoalMode(next, target)
+  notify(t(next ? "toast.goalOn" : "toast.goalOff"))
 }
 
 /* MiMo's skill chip: a picked skill waits above the text and goes with the next message. */
@@ -2726,12 +2731,15 @@ const effortLabel = computed(() => {
  */
 async function chooseModelEffort(provider: string, model: string, level: Effort) {
   menu.value = undefined
-  const before = app.modelPick(sessionID.value)
-  if (!sessionID.value) {
+  // One conversation for both writes and the toast — a switch mid-flight
+  // cannot retarget the model or the effort onto a different session.
+  const target = sessionID.value
+  const before = app.modelPick(target)
+  if (!target) {
     await app.patchConfig({ model: { provider, model }, smart: false, effort: level })
   } else {
-    await app.setModel({ provider, model }, sessionID.value)
-    await app.setEffort(level, sessionID.value)
+    await app.setModel({ provider, model }, target)
+    await app.setEffort(level, target)
   }
   app.announceModel(before, { provider, model })
 }

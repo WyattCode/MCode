@@ -3167,9 +3167,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 scope.launch {
                     runCatching {
                         rpc(JSONObject().put("type", "session.archive").put("sessionID", id).put("archived", false))
+                    }.onSuccess {
+                        leftMode = LeftMode.Recent
+                        select(id)
+                    }.onFailure {
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(context, "没能恢复会话", Toast.LENGTH_SHORT).show()
+                        }
                     }
-                    leftMode = LeftMode.Recent
-                    select(id)
                 }
             },
             onClose = { leftMode = LeftMode.Recent },
