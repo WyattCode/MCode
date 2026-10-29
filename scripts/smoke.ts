@@ -2145,6 +2145,28 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r105")
+  {
+    const root = process.cwd()
+    const main = await fs.readFile(
+      path.join(root, "android/app/src/main/java/com/mcode/remote/MainActivity.kt"),
+      "utf8",
+    )
+    const gitAt = main.indexOf('put("type", "git.status").put("directory", root)')
+    const git = gitAt >= 0 ? main.slice(Math.max(0, gitAt - 280), gitAt + 500) : ""
+    check("r105: git.status uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}git\.status/.test(git))
+    check("r105: git.status toasts on failure", git.includes("没能加载变更"))
+    check("r105: git.status skips blank root", git.includes("root.isBlank()"))
+    const searchAt = main.indexOf('put("type", "search.messages")')
+    const search = searchAt >= 0 ? main.slice(Math.max(0, searchAt - 200), searchAt + 700) : ""
+    check("r105: search.messages uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}search\.messages/.test(search))
+    check("r105: search.messages toasts on failure", search.includes("没能搜索对话"))
+    const usageAt = main.indexOf('put("type", "usage.summary")')
+    const usage = usageAt >= 0 ? main.slice(Math.max(0, usageAt - 200), usageAt + 500) : ""
+    check("r105: usage.summary uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}usage\.summary/.test(usage))
+    check("r105: usage.summary toasts on failure", usage.includes("没能加载用量"))
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }
