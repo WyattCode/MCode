@@ -221,6 +221,12 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 续三十九：作品打开失败提示；插件/分支加载失败提示（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- Android：`openArtifact` 改 `rpcOrThrow`，空/过大/不支持类型 Toast；插件页任一侧 `mcp.list`/`skill.list` 失败即 `pluginsFailed` + Toast「没能加载插件」；变更轨 `git.branches` 失败 Toast「没能加载分支」。
+- 验证：smoke「Review polish r106」；未合并。
+
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
 Pad 9 Pro Max（`M367FC`）接上后，第一次把「平板发指令 → 主机跑模型 → 回复回画到平板」整条链路走通。
