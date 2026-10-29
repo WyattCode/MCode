@@ -3637,6 +3637,10 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             // the one that started running, so the id is taken
                             // before the calls rather than re-read after them.
                             withContext(Dispatchers.Main) { setRunning(sessionID, true) }
+                        }.onFailure {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, "没能重新执行目标", Toast.LENGTH_SHORT).show()
+                            }
                         }
                     }
                 }
@@ -6041,6 +6045,10 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                         .put("text", text)
                                         .put("attachments", org.json.JSONArray()),
                                 )
+                            }.onFailure {
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(context, "没能发送，请重试", Toast.LENGTH_SHORT).show()
+                                }
                             }
                         }
                     }
