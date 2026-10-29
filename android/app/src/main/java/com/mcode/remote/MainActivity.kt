@@ -6059,8 +6059,18 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             text = { Text("「${row.title}」及其对话记录将被永久移除。") },
             confirmButton = {
                 TextButton({
-                    request(JSONObject().put("type", "session.delete").put("sessionID", row.id))
-                    deleteTarget = null
+                    val sid = row.id
+                    scope.launch {
+                        runCatching {
+                            rpc(JSONObject().put("type", "session.delete").put("sessionID", sid))
+                        }.onSuccess {
+                            withContext(Dispatchers.Main) { deleteTarget = null }
+                        }.onFailure {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, "没能删除会话", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
                 }) { Text("删除", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = { TextButton({ deleteTarget = null }) { Text("取消") } },
@@ -6077,8 +6087,24 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             text = { OutlinedTextField(newTitle, { newTitle = it }, singleLine = true) },
             confirmButton = {
                 TextButton({
-                    if (newTitle.isNotBlank()) request(JSONObject().put("type", "session.rename").put("sessionID", row.id).put("title", newTitle.trim()))
-                    renameTarget = null
+                    val title = newTitle.trim()
+                    if (title.isBlank()) return@TextButton
+                    val sid = row.id
+                    scope.launch {
+                        runCatching {
+                            rpc(JSONObject().put("type", "session.rename").put("sessionID", sid).put("title", title))
+                        }.onSuccess {
+                            withContext(Dispatchers.Main) {
+                                val at = sessions.indexOfFirst { it.id == sid }
+                                if (at >= 0) sessions[at] = sessions[at].copy(title = title)
+                                renameTarget = null
+                            }
+                        }.onFailure {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, "没能重命名", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
                 }) { Text("保存") }
             },
             dismissButton = { TextButton({ renameTarget = null }) { Text("取消") } },
@@ -6111,18 +6137,35 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             confirmButton = {
                 TextButton({
                     val next = draft.trim()
-                    if (next.isNotBlank() && currentSession != null) {
-                        scope.launch {
-                            runCatching {
-                                rpc(JSONObject().put("type", "session.goal").put("sessionID", currentSession).put("condition", next))
-                            }.onFailure {
-                                withContext(Dispatchers.Main) {
-                                    Toast.makeText(context, "没能保存目标", Toast.LENGTH_SHORT).show()
+                    val sid = currentSession
+                    if (next.isBlank() || sid == null) return@TextButton
+                    scope.launch {
+                        runCatching {
+                            rpc(JSONObject().put("type", "session.goal").put("sessionID", sid).put("condition", next))
+                        }.onSuccess {
+                            withContext(Dispatchers.Main) {
+                                val at = sessions.indexOfFirst { it.id == sid }
+                                if (at >= 0) {
+                                    val prev = sessions[at].goal
+                                    sessions[at] = sessions[at].copy(
+                                        goal = GoalInfo(
+                                            condition = next,
+                                            startedAt = prev?.startedAt ?: System.currentTimeMillis(),
+                                            attempts = prev?.attempts ?: 1,
+                                            doneStatus = prev?.doneStatus,
+                                            doneReason = prev?.doneReason ?: "",
+                                            doneAt = prev?.doneAt ?: 0L,
+                                        ),
+                                    )
                                 }
+                                goalEdit = null
+                            }
+                        }.onFailure {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, "没能保存目标", Toast.LENGTH_SHORT).show()
                             }
                         }
                     }
-                    goalEdit = null
                 }) { Text("保存") }
             },
             dismissButton = { TextButton({ goalEdit = null }) { Text("取消") } },
