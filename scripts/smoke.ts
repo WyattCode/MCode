@@ -2145,6 +2145,29 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r104")
+  {
+    const root = process.cwd()
+    const main = await fs.readFile(
+      path.join(root, "android/app/src/main/java/com/mcode/remote/MainActivity.kt"),
+      "utf8",
+    )
+    const filesAt = main.indexOf("LaunchedEffect(root, sub)")
+    const files = filesAt >= 0 ? main.slice(filesAt, filesAt + 1400) : ""
+    check("r104: files listDir uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}file\.listDir/.test(files))
+    check("r104: files listDir toasts on failure", files.includes("没能打开文件夹"))
+    check("r104: files listDir skips blank root", files.includes("root.isBlank()"))
+    const diffAt = main.indexOf('put("type", "git.diff")')
+    const diff = diffAt >= 0 ? main.slice(Math.max(0, diffAt - 200), diffAt + 700) : ""
+    check("r104: git.diff uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}git\.diff/.test(diff))
+    check("r104: git.diff toasts on failure", diff.includes("没能加载差异"))
+    const inputAt = main.indexOf('put("type", "shell.input")')
+    const input = inputAt >= 0 ? main.slice(Math.max(0, inputAt - 350), inputAt + 500) : ""
+    check("r104: shell.input uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}shell\.input/.test(input))
+    check("r104: shell.input toasts on failure", input.includes("没能发送到终端"))
+    check("r104: shell.input clears only on success", /onSuccess[\s\S]{0,80}terminalInput = ""/.test(input))
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }
