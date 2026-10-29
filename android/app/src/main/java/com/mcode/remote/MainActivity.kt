@@ -1846,6 +1846,9 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             return
         }
         voiceBusy = true
+        // The recording belonged to this conversation; the reader may leave
+        // while the round trip is out, and the words must not land in another.
+        val forSession = currentSession
         scope.launch {
             try {
                 val bytes = withContext(Dispatchers.IO) { file.readBytes() }
@@ -1857,12 +1860,17 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         .put("mime", "audio/mp4")
                         .put("mode", "fast")
                         .put("language", "zh-CN")
-                        .put("sessionID", currentSession),
+                        .put("sessionID", forSession),
                     90_000,
                 )
                 val heard = reply.optJSONObject("data")?.optString("text").orEmpty()
-                if (heard.isNotBlank()) voiceText = heard
-                else Toast.makeText(context, "没听清，请再说一次", Toast.LENGTH_SHORT).show()
+                if (heard.isNotBlank()) {
+                    if (currentSession == forSession) voiceText = heard
+                    else if (forSession != null) {
+                        drafts[forSession] = heard
+                        draftStore.edit().putString("draft.$forSession", heard).apply()
+                    }
+                } else Toast.makeText(context, "没听清，请再说一次", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
                 Toast.makeText(context, "语音识别失败：${e.message?.take(60) ?: "未知错误"}", Toast.LENGTH_LONG).show()
             } finally {
@@ -6111,10 +6119,12 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             confirmButton = {
                 TextButton({
                     val next = draft.trim()
-                    if (next.isNotBlank() && currentSession != null) {
+                    val sid = currentSession
+                    goalEdit = null
+                    if (next.isNotBlank() && sid != null) {
                         scope.launch {
                             runCatching {
-                                rpc(JSONObject().put("type", "session.goal").put("sessionID", currentSession).put("condition", next))
+                                rpc(JSONObject().put("type", "session.goal").put("sessionID", sid).put("condition", next))
                             }.onFailure {
                                 withContext(Dispatchers.Main) {
                                     Toast.makeText(context, "没能保存目标", Toast.LENGTH_SHORT).show()
@@ -6122,7 +6132,6 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             }
                         }
                     }
-                    goalEdit = null
                 }) { Text("保存") }
             },
             dismissButton = { TextButton({ goalEdit = null }) { Text("取消") } },
