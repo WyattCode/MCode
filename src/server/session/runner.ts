@@ -368,6 +368,9 @@ export class SessionRunner {
    */
   private readonly steering = new Map<string, Steering>()
 
+  /** Conversations that already said Not now to this folder's MCP trust prompt. */
+  private readonly mcpTrustSkipped = new Set<string>()
+
   /** Turns being carried on after the app went away, and how many times each has been: written into the claim as the turn starts. */
   private readonly restartResumes = new Map<string, number>()
 
@@ -2169,6 +2172,7 @@ export class SessionRunner {
    */
   private async ensureMcpTrust(sessionID: string, directory: string, signal?: AbortSignal): Promise<void> {
     if (!this.mcp) return
+    if (this.mcpTrustSkipped.has(sessionID)) return
     if (!(await this.mcp.needsTrustPrompt(directory))) return
     try {
       const [answer] = await this.questions.ask({
@@ -2187,8 +2191,9 @@ export class SessionRunner {
       })
       const chosen = (answer ?? []).map((entry) => entry.trim()).filter(Boolean)
       if (chosen.includes("Trust")) await this.mcp.trust(directory)
+      else this.mcpTrustSkipped.add(sessionID)
     } catch {
-      // Dismissed or stopped: leave untrusted; ready() will not start them.
+      // Dismissed or stopped: leave untrusted; do not skip — a later turn may ask again.
     }
   }
 
@@ -5069,6 +5074,7 @@ export class SessionRunner {
     this.retrying.delete(sessionID)
     this.repeatsAllowed.delete(sessionID)
     this.loopWatches.delete(sessionID)
+    this.mcpTrustSkipped.delete(sessionID)
     for (const key of [...this.numbering.keys()]) if (key.startsWith(`${sessionID}:`)) this.numbering.delete(key)
   }
 

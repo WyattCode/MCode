@@ -146,6 +146,7 @@ import {
   guideShown,
   mergeCustom,
   nextStop,
+  permissionTarget,
   questionOutcome,
   toggleChoice,
 } from "../src/renderer/src/lib/confirm-queue"
@@ -2138,6 +2139,9 @@ async function main() {
     check("1/N counts both kinds, this session only", queued.length === 3)
     check("a question that arrived first is shown first", confirmQueue("s1", [perm("p1", "s1", 100)], [ask("q0", "s1", 90)])[0]?.kind === "question")
     check("no session, no queue", confirmQueue(undefined, [perm("p1", "s1", 1)], []).length === 0)
+    check("permission respond uses the card id even when another leads the list", permissionTarget("b", [perm("a", "s1", 1), perm("b", "s1", 2)], perm("a", "s1", 1))?.id === "b")
+    check("permission respond without an id keeps the head", permissionTarget(undefined, [perm("a", "s1", 1), perm("b", "s1", 2)], perm("a", "s1", 1))?.id === "a")
+    check("permission respond ignores a stale id", permissionTarget("gone", [perm("a", "s1", 1)], perm("a", "s1", 1)) === undefined)
 
     check("a single choice picks, and a second click clears it", JSON.stringify(toggleChoice([], "a", false)) === '["a"]' && toggleChoice(["a"], "a", false).length === 0)
     check("a multi choice toggles each label", JSON.stringify(toggleChoice(["a"], "b", true)) === '["a","b"]' && JSON.stringify(toggleChoice(["a", "b"], "a", true)) === '["b"]')
@@ -2148,6 +2152,15 @@ async function main() {
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }
+    const mcpSkipped = new Set<string>()
+    function afterMcpTrustAnswer(sessionID: string, chosen: string[]) {
+      if (chosen.includes("Trust")) return "trust"
+      mcpSkipped.add(sessionID)
+      return "skip"
+    }
+    check("Not now skips further MCP trust prompts in that conversation", afterMcpTrustAnswer("s1", ["Not now"]) === "skip" && mcpSkipped.has("s1"))
+    mcpSkipped.clear()
+    check("Trust does not skip MCP trust prompts", afterMcpTrustAnswer("s1", ["Trust"]) === "trust" && !mcpSkipped.has("s1"))
     check("offered after three approvals by hand", guideShown(counted, "ask", "permission", false))
     check("not before", !guideShown({ ...counted, allowCount: 2 }, "ask", "permission", false))
     check(

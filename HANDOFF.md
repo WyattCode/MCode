@@ -221,6 +221,21 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 续十五：权限卡 busy/子代理计数 + MCP「Not now」同会话不再重问（2026-10-30）
+
+复核主线（避开未合并的 #102–#112）时确认三处：
+
+1. **PermissionDialog** 的 `answer()` 在 `app.respond` 的 busy 闸之前就 `noteAllowed`，双击/连按会把「想减少审批」的计数加两次；子代理权限卡还把计数记在子会话 id 上，而引导读的是 `currentID`（父会话），子代理审批永远不计。
+2. **`app.respond`** 只答 `permission.value`（队列头），卡片若与头不一致会答错请求；现改为可带卡片 `requestID`，经 `permissionTarget` 解析。
+3. **MCP trust** 选「Not now」后同会话下一轮仍 `ensureMcpTrust` 再弹；现用 `mcpTrustSkipped` 按会话记住，abort/dismiss 不记（下次还可问），`forgetSession` 清掉。
+
+**修法**（`fix/review-polish-r82`，未合并）：PermissionDialog busy 闸 + `rootOf` 计数 + 传入卡片 id；`confirm-queue.permissionTarget`；runner `mcpTrustSkipped`。
+
+**回归**：`permissionTarget` 三条（卡片 id / 无 id 用头 / 过期 id）；MCP Not now / Trust 文档烟测。`permissionTarget` 改回「只回头」时前两条必红（mutate-fail 已证）。
+
+未做：中途压缩圆环（#109）、驾驶舱 ack（#110）、storage remove（#111）、composerTarget（#112）、新 CSS token、REFERENCE_ENGLISH。
+
+
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
 Pad 9 Pro Max（`M367FC`）接上后，第一次把「平板发指令 → 主机跑模型 → 回复回画到平板」整条链路走通。

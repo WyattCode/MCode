@@ -35,6 +35,16 @@ export function confirmQueue(
   return items.sort((a, b) => a.time - b.time)
 }
 
+/** The permission card answers this id; ignore a different head of the queue. */
+export function permissionTarget(
+  requestID: string | undefined,
+  permissions: readonly PermissionRequest[],
+  head: PermissionRequest | undefined,
+): PermissionRequest | undefined {
+  if (requestID) return permissions.find((entry) => entry.id === requestID)
+  return head
+}
+
 /** Text sent from the composer answers question one and leaves the rest empty (MiMo's `Wpe`). */
 export function composerAnswers(text: string, count: number): QuestionAnswer[] | undefined {
   const trimmed = text.trim()
