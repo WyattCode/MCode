@@ -19,7 +19,7 @@ import { readStorageLayout } from "./storage-layout"
 import { projectDirectoriesOf } from "@shared/projects"
 import { SessionRunner } from "./session/runner"
 import { Shells } from "./shell"
-import { stopBashCommands } from "./tool/bash"
+import { stopBashCommands, prewarmBashShell } from "./tool/bash"
 import { McpServers } from "./mcp"
 import { createSampler } from "./mcp-sampling"
 import { handle } from "./handlers"
@@ -455,6 +455,9 @@ export async function startBackend(dataDirectory: string, options: BackendOption
 
   // The listening server's own errors reach the socket server; said here rather than thrown as unhandled.
   server.on("error", (error) => console.warn(`[socket] the window's socket failed: ${error.message}`))
+
+  // Windows PowerShell cold start (~10–20s) paid here so the first bash tool call is warm (HANDOFF 续九).
+  prewarmBashShell(config.get().shell)
 
   return {
     runtime,

@@ -1,5 +1,6 @@
 import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_process"
 import fs from "node:fs/promises"
+import os from "node:os"
 import path from "node:path"
 import type { ToolDefinition } from "./types"
 import { ToolError } from "./types"
@@ -356,6 +357,87 @@ export function liveBashCommands(): number {
 
 
 /**
+ * Whether the bash tool's shell has already paid its process cold start.
+ *
+ * On Windows the first `powershell`/`pwsh` spawn after a cold period often
+ * takes ~10–20 seconds (.NET + AMSI); later ones are ~0.2s, and restarting
+ * the app while the OS cache is warm stays fast. Paying that cost at backend
+ * boot (see `prewarmBashShell`) keeps the first mid-turn bash from looking
+ * hung. HANDOFF 续九.
+ */
+let bashShellWarm: Promise<void> | undefined
+let bashShellWarmed = false
+
+/** A no-op of the same shell the bash tool will use; fire-and-forget. */
+export function prewarmBashShell(configured?: string): void {
+  if (bashShellWarmed || bashShellWarm) return
+  bashShellWarm = (async () => {
+    try {
+      const call = shell(configured)
+      const name = shellName(call.command)
+      const script = call.powershell || (process.platform === "win32" && name === "cmd") ? "exit 0" : "true"
+      await new Promise<void>((resolve) => {
+        let settled = false
+        const done = () => {
+          if (settled) return
+          settled = true
+          resolve()
+        }
+        let child: ChildProcess
+        try {
+          child = spawn(call.command, call.args(script), {
+            cwd: os.tmpdir(),
+            env: process.env,
+            stdio: ["ignore", "pipe", "pipe"],
+            windowsHide: true,
+            windowsVerbatimArguments: call.verbatim,
+            detached: process.platform !== "win32",
+          })
+        } catch {
+          done()
+          return
+        }
+        const timer = setTimeout(() => {
+          try {
+            child.kill()
+          } catch {
+            /* ignore */
+          }
+          done()
+        }, 60_000)
+        child.once("close", () => {
+          clearTimeout(timer)
+          done()
+        })
+        child.once("error", () => {
+          clearTimeout(timer)
+          done()
+        })
+      })
+    } finally {
+      bashShellWarmed = true
+      bashShellWarm = undefined
+    }
+  })()
+  void bashShellWarm.catch(() => undefined)
+}
+
+/** Whether a warm-up (or a real bash) has finished at least once in this process. */
+export function bashShellIsWarmed(): boolean {
+  return bashShellWarmed
+}
+
+/** Waits for an in-flight warm-up, up to `ms`. */
+export async function awaitBashShellWarm(ms = 15_000): Promise<boolean> {
+  if (bashShellWarmed) return true
+  if (!bashShellWarm) return false
+  await Promise.race([bashShellWarm, new Promise<void>((resolve) => setTimeout(resolve, ms))])
+  return bashShellWarmed
+}
+
+
+
+/**
  * How several commands are chained in the shell this machine will use.
  *
  * Windows PowerShell 5.1 has no `&&` at all: a line carrying one fails to
@@ -514,6 +596,14 @@ export const BashTool: ToolDefinition = {
 
     const identity = await gitIdentityEnv(context.directory)
 
+    const shellCold = !bashShellWarmed
+    /*
+     * If boot prewarm has not finished (or was skipped), say so on the card
+     * before the spawn: on a cold Windows PowerShell the next line can sit
+     * silent for ~10–20s, which otherwise looks like a hung turn (续九).
+     */
+    if (shellCold) context.progress("正在启动 shell…")
+
     return await new Promise((resolve, reject) => {
       /*
        * No stdin, as the reference spawns it (`stdin: "ignore"`). The command
@@ -572,7 +662,10 @@ export const BashTool: ToolDefinition = {
        */
       live.add(child)
       child.once("exit", () => live.delete(child))
-      child.once("close", () => live.delete(child))
+      child.once("close", () => {
+        live.delete(child)
+        bashShellWarmed = true
+      })
       const closed = new Promise<void>((done) => {
         child.once("close", () => done())
         child.once("error", () => done())
@@ -723,6 +816,7 @@ export const BashTool: ToolDefinition = {
             description,
             truncated: cut,
             ...(cut && file ? { outputPath: file } : {}),
+            ...(shellCold ? { shellCold: true } : {}),
           },
         })
       }
