@@ -580,5 +580,51 @@ export async function storageChecks(check: Check, section: (name: string) => voi
     check("and its marker is left exactly as it was", untouched.schemaVersion === STORAGE_LAYOUT_VERSION + 1, untouched)
   }
 
+  // ------------------------------------------------------------------ R80
+  section("Round 80: remove waits out a queued write (resurrect)")
+  {
+    const storage = new Storage(path.join(root, "race", "storage"))
+
+    /*
+     * A save still in its queue slot when the document is removed. A bare
+     * `fs.rm` runs beside it and the save's rename puts the file back
+     * afterwards - a deleted message reappearing. The busy wait keeps the
+     * slot occupied long enough that a parallel remove would win the race on
+     * the old code; the remove has to join the key's queue instead.
+     */
+    await storage.write("race/doc", { v: 1 })
+    const pending = storage.writeText("race/doc", (current) => {
+      const until = Date.now() + 80
+      while (Date.now() < until) {
+        /* hold the queue slot */
+      }
+      return JSON.stringify({ v: 2, held: Boolean(current) })
+    })
+    await storage.remove("race/doc")
+    await pending
+    const left = await storage.readText("race/doc")
+    check("a remove queued behind a write leaves nothing behind", left === undefined, left)
+
+    /*
+     * The same race one level up: a conversation's folder removed while one of
+     * its documents is still being written, and the write recreating the
+     * folder - a deleted conversation coming back with one message in it.
+     */
+    await storage.write("session/ghost/info", { id: "ghost" })
+    const ghost = storage.writeText("session/ghost/info", (current) => {
+      const until = Date.now() + 80
+      while (Date.now() < until) {
+        /* hold the queue slot */
+      }
+      return JSON.stringify({ id: "ghost", held: Boolean(current) })
+    })
+    await storage.removeDirectory("session/ghost")
+    await ghost.catch(() => {})
+    const directories = await storage.listDirectories("session")
+    check("a directory remove waits out a write queued under it", !directories.includes("ghost"), directories)
+    const ghostInfo = await storage.read("session/ghost/info")
+    check("and the document under it is gone too", ghostInfo === undefined, ghostInfo)
+  }
+
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
 }

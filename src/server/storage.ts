@@ -327,11 +327,13 @@ export class Storage {
   }
 
   /**
-   * The last write queued for each key.
+   * The last write or remove queued for each key.
    *
    * Unique temp names stop the crash; ordering stops the quieter problem, where
    * two overlapping saves of the same message land in the wrong order and the
-   * older one wins.
+   * older one wins. A remove joins the same queue, so a save still ahead of it
+   * lands first and is then removed, rather than the remove running beside the
+   * save and the save putting the document back afterwards.
    */
   private readonly queued = new Map<string, Promise<void>>()
 
@@ -480,11 +482,47 @@ export class Storage {
     return removed
   }
 
+  /**
+   * Removes a document, in this key's queue.
+   *
+   * A bare `fs.rm` ran beside whatever save was still in flight for the key,
+   * and the save's rename then put the document back - a deleted message that
+   * reappeared, a conversation's record resurrected after the folder went. The
+   * remove waits its turn instead: everything queued ahead of it lands first,
+   * and the file is gone afterwards.
+   */
   async remove(key: string): Promise<void> {
-    await fs.rm(this.file(key), { force: true })
+    const previous = this.queued.get(key) ?? Promise.resolve()
+    const next = previous.catch(() => {}).then(() => fs.rm(this.file(key), { force: true }))
+    this.queued.set(key, next)
+    try {
+      await next
+    } finally {
+      if (this.queued.get(key) === next) this.queued.delete(key)
+    }
   }
 
+  /**
+   * Removes a key's whole directory, after everything queued under it.
+   *
+   * The same race as `remove`, one level up: a conversation's folder was
+   * deleted while a message or its record was still being written, and the
+   * write recreated the folder - so a deleted conversation came back, with one
+   * message in it. Every queued promise for the key or anything beneath it is
+   * waited out first, and the wait repeats because a write can be queued while
+   * this one is waiting.
+   */
   async removeDirectory(key: string): Promise<void> {
+    const prefix = key + "/"
+    const awaited = new Set<Promise<void>>()
+    for (;;) {
+      const pending = [...this.queued.entries()]
+        .filter(([queued, write]) => (queued === key || queued.startsWith(prefix)) && !awaited.has(write))
+        .map(([, write]) => write)
+      if (!pending.length) break
+      for (const write of pending) awaited.add(write)
+      await Promise.allSettled(pending)
+    }
     await fs.rm(path.join(this.root, ...key.split("/")), { recursive: true, force: true })
   }
 

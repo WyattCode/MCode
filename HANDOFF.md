@@ -221,6 +221,20 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 续十三：Storage.remove 与队列竞态 —— 删掉的消息/会话被未完成的写入复活（2026-10-30）
+
+复核主线（避开未合并的 #102–#110）时确认：`Storage.write`/`writeText` 按 key 串行，但 `remove` / `removeDirectory` 直接 `fs.rm`。流式回合里 `void saveMessage(..., true, false)` 还在队列里时，编辑/重试/`truncate`/`commitRevert` 的 `deleteMessage`、或删会话的 `removeDirectory`，会先删掉文件，随后未完成的 `writeAtomic`（`mkdir` + rename）把文档甚至整个会话目录写回来——删掉的助手回复又进历史，删掉的会话又出现在侧栏。
+
+**修法**（`fix/review-polish-r80`，未合并）：
+1. `remove` 加入同一 `queued` 链，排在既有写入之后。
+2. `removeDirectory` 先排空该前缀下所有 queued 写入（循环 drain，等待期间新入队的也算），再 `rm -rf`。
+3. `SessionStore.delete` 先打 tombstone（`deleted` Set）、等掉 in-flight `exclusive` info 写，再删目录；`writeInfo` 落盘前若已 tombstone 则抛错。会话 id 不复用，Set 不清。
+
+**回归**：`scripts/smoke-storage.ts` Round 80 三条；用 `writeText` 忙等占住队列槽，裸 `fs.rm` 变异时第一条必红（复活 `{"v":2,"held":true}`），修好后 storageChecks 70/0。
+
+未做：ConfirmDock/Android 本轮未挖到可上主线的 P0/P1（驾驶舱权限卡已在 #110）。
+
+
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
 Pad 9 Pro Max（`M367FC`）接上后，第一次把「平板发指令 → 主机跑模型 → 回复回画到平板」整条链路走通。
