@@ -223,7 +223,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ### 续三十六：权限/提问 ok:false 不撤卡；终端打开失败提示（2026-10-30）
 
-- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- PR: https://github.com/WyattCode/MCode/pull/134 （未合并）
 - Android：`respondPerm` / `respondPermReason` / `answerQuestion` 改 `rpcOrThrow`（plain `rpc` 把 ok:false 当成功会撤卡）；终端 `shell.open` 失败 Toast；停止钮捕获 sid。
 - 验证：smoke「Review polish r103」；未合并。
 
