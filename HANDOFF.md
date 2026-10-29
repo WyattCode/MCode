@@ -223,7 +223,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ### 续三十：模型强度目标捕获、目标开关 toast、归档恢复失败提示（2026-10-30）
 
-- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- PR: https://github.com/WyattCode/MCode/pull/128 （未合并）
 - 桌面：`chooseModelEffort` 一次捕获 `target`；`toggleGoalMode` 捕获 `next`/`target`，toast 用捕获值。
 - Android：归档恢复成功才切回会话列表并打开，失败 Toast。
 - 验证：smoke「Review polish r97」；未合并。
