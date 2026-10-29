@@ -223,7 +223,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ### 续二十五：笔记本改动进文件表/产物、编辑重发失败提示（2026-10-30）
 
-- PR: （打开后填）
+- PR: https://github.com/WyattCode/MCode/pull/123
 - 桌面：`files-tab` EDITING + `editTargets` 认 notebook_edit/patch/`notebook_path`；`session-files` 把 notebook_edit 记入 written。
 - Android：编辑并重发在 prompt 失败时 Toast「没能重新发送，请重试」。
 - 验证：smoke「Review polish r92」；未合并。
