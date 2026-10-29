@@ -164,7 +164,7 @@ import { globToRegExp } from "../src/server/tool/ignore"
 import { discoverSubscriptionModels } from "../src/server/provider/discover"
 import { workspaceInfo } from "../src/server/workspace"
 import * as gitOps from "../src/server/git"
-import { sessionArtifacts, sessionReferences } from "../src/shared/session-files"
+import { sessionArtifacts, sessionFiles, sessionReferences } from "../src/shared/session-files"
 import { artifactGroups, infoTasks } from "../src/renderer/src/lib/session-info"
 import type { TaskItem } from "../src/shared/protocol"
 import { TASK_ARCHIVE_MS, applyTask, listedTasks, nextTaskID } from "../src/server/tool/task"
@@ -2143,6 +2143,71 @@ async function main() {
     check("a multi choice toggles each label", JSON.stringify(toggleChoice(["a"], "b", true)) === '["a","b"]' && JSON.stringify(toggleChoice(["a", "b"], "a", true)) === '["b"]')
     check("typed text is appended once", JSON.stringify(mergeCustom([["a"], []], ["b", " "])) === '[["a","b"],[]]' && JSON.stringify(mergeCustom([["a"]], ["a"])) === '[["a"]]')
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
+  }
+
+  section("Review polish r92")
+  {
+    let root = process.cwd()
+    for (let i = 0; i < 6; i++) {
+      try {
+        await fs.access(path.join(root, "src/renderer/src/lib/files-tab.ts"))
+        break
+      } catch {
+        root = path.dirname(root)
+      }
+    }
+    const filesTab = await fs.readFile(path.join(root, "src/renderer/src/lib/files-tab.ts"), "utf8")
+    const sessionFilesSrc = await fs.readFile(path.join(root, "src/shared/session-files.ts"), "utf8")
+    const activity = await fs.readFile(path.join(root, "android/app/src/main/java/com/mcode/remote/MainActivity.kt"), "utf8")
+
+    const editingAt = filesTab.indexOf("const EDITING = new Set(")
+    const editingLine = editingAt < 0 ? "" : filesTab.slice(editingAt, filesTab.indexOf("\n", editingAt))
+    check("files-tab EDITING includes notebook_edit", editingLine.includes("notebook_edit"), editingLine)
+    check("files-tab EDITING includes patch", editingLine.includes('"patch"') || editingLine.includes("'patch'"), editingLine)
+    const targetsAt = filesTab.indexOf("export function editTargets")
+    const targets = targetsAt < 0 ? "" : filesTab.slice(targetsAt, targetsAt + 700)
+    check("editTargets reads notebook_path", targets.includes("notebook_path"), targets.slice(0, 300))
+
+    const writersAt = sessionFilesSrc.indexOf("const WRITERS = new Set(")
+    const writersLine = writersAt < 0 ? "" : sessionFilesSrc.slice(writersAt, sessionFilesSrc.indexOf("\n", writersAt))
+    check("session-files WRITERS includes notebook_edit", writersLine.includes("notebook_edit"), writersLine)
+    const targetAt = sessionFilesSrc.indexOf("const target = part.input")
+    const targetLine = targetAt < 0 ? "" : sessionFilesSrc.slice(targetAt, sessionFilesSrc.indexOf("\n", targetAt))
+    check("session-files target reads notebook_path", targetLine.includes("notebook_path"), targetLine)
+
+    const nbTurns = [
+      { role: "user", id: "u", sessionID: "s", text: "", attachments: [], time: { created: 0 } },
+      {
+        role: "assistant",
+        id: "a",
+        sessionID: "s",
+        parts: [
+          {
+            type: "tool",
+            id: "t1",
+            callID: "c1",
+            name: "notebook_edit",
+            status: "completed",
+            input: { notebook_path: "nb.ipynb" },
+            metadata: {},
+            time: { created: 1, completed: 2 },
+          },
+        ],
+        time: { created: 1 },
+      },
+    ] as unknown as Message[]
+    const tally = editCounts(nbTurns, "/proj", "nb.ipynb")
+    check("editCounts tallies a finished notebook_edit", tally.total === 1 && tally.onFile === 1, tally)
+    const files = sessionFiles(nbTurns, "/proj")
+    check("sessionFiles lists notebook_edit under written", files.written.some((entry) => entry.path === "nb.ipynb"), files.written)
+
+    const editAt = activity.indexOf("editTarget?.let")
+    check("editTarget dialog is present", editAt >= 0)
+    const editRegion = editAt < 0 ? "" : activity.slice(editAt, editAt + 4500)
+    const promptAt = editRegion.indexOf('put("type", "session.prompt")')
+    check("edit-resend sends session.prompt", promptAt >= 0)
+    const afterPrompt = promptAt < 0 ? "" : editRegion.slice(promptAt, promptAt + 450)
+    check("edit-resend toasts when prompt fails", afterPrompt.includes("onFailure") && afterPrompt.includes("没能重新发送"), afterPrompt)
   }
 
   section("Permission guide")

@@ -6041,6 +6041,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                         .put("text", text)
                                         .put("attachments", org.json.JSONArray()),
                                 )
+                            }.onFailure {
+                                Toast.makeText(context, "没能重新发送，请重试", Toast.LENGTH_SHORT).show()
                             }
                         }
                     }
