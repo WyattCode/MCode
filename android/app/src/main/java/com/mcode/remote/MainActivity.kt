@@ -555,8 +555,18 @@ sealed class Item {
         val steered: Boolean = false,
         val files: List<String> = emptyList(),
         val finish: String = "",
-        /** Characters of thinking the turn produced, which the phone does not draw. */
+        /**
+         * Characters of thinking the turn produced. Kept for `thinkOnly`: a
+         * turn that thought but never answered is written up as a failure
+         * rather than as an empty reply.
+         */
         val thought: Int = 0,
+        /**
+         * The thinking itself, drawn as a collapsed 「思考过程」 fold above the
+         * reply - the same fold the cockpit shows. It is never mixed into
+         * [text]: the model did not say its thinking to the reader.
+         */
+        val reasoning: String = "",
         /**
          * The turn's file changes were taken back with the card's 撤销. The
          * words stay; only the files moved, so the card says so in place of its
@@ -1704,10 +1714,18 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * The desktop treats a turn that thought but never answered as a FAILURE
      * rather than an empty reply (`thinkOnly` in MessageStream.vue): there was
      * output, just not the part that counts, and MiMo writes it up as something
-     * to retry. The phone drops reasoning parts on purpose, so the only way to
-     * know this happened is to remember that some arrived.
+     * to retry. The phone used to drop reasoning parts on purpose, so the only
+     * way to know this happened was to remember that some arrived; now the text
+     * is kept too, and this map is the count the fold and the note read.
      */
     val reasoningSeen = remember { java.util.HashMap<String, Int>() }
+    /**
+     * The thinking itself, by message id and part id, so the fold can show it.
+     *
+     * Kept apart from `partTexts` on purpose: the reply is rebuilt from text
+     * parts alone, and reasoning must never leak into it.
+     */
+    val reasoningParts = remember { ReasoningParts() }
     /**
      * What the last turn spent, for the composer's context ring.
      *
@@ -2173,15 +2191,29 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         }
                     }
                     /*
-                     * Counted but not drawn: a stored turn whose only part is
-                     * reasoning is the desktop's `thinkOnly`, and it has to be
-                     * recognised from the history as well as from the stream -
-                     * this loop is the one a conversation read from disk goes
-                     * through, and it used to drop reasoning entirely.
+                     * Kept for the fold and counted for `thinkOnly`: a stored
+                     * turn whose only part is reasoning is the desktop's
+                     * `thinkOnly`, and it has to be recognised from the history
+                     * as well as from the stream - this loop is the one a
+                     * conversation read from disk goes through, and it used to
+                     * drop reasoning entirely.
                      */
                     "reasoning" -> {
                         val so = part.optString("text")
-                        if (so.isNotBlank()) reasoningSeen[id] = (reasoningSeen[id] ?: 0) + so.length
+                        val pid = part.optString("id")
+                        if (pid.isNotBlank()) {
+                            reasoningParts.rememberKind(pid, "reasoning")
+                            reasoningParts.putSnapshot(id, pid, so)
+                        }
+                        /*
+                         * The count is the joined length, never a running sum.
+                         * A whole-message update repeats every part it carries,
+                         * so adding each snapshot's length again counted the
+                         * same words twice on every refresh - and a `thought`
+                         * that kept growing made `thinkOnly` fire on turns that
+                         * had answered.
+                         */
+                        reasoningSeen[id] = reasoningParts.charCount(id)
                     }
                 }
             }
@@ -2245,6 +2277,11 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     // A whole-message update can arrive before the reasoning
                     // part was counted; taking the larger keeps what is known.
                     thought = maxOf(existing.thought, reasoningSeen[id] ?: 0),
+                    // The fold's text, rebuilt from every reasoning part the
+                    // message has shown so far. Blank keeps what the row had,
+                    // so an update that arrives before the parts does not wipe
+                    // a fold already on screen.
+                    reasoning = reasoningParts.joined(id).ifBlank { existing.reasoning },
                     reverted = message.optBoolean("reverted", existing.reverted),
                     /*
                      * The retry rides only on the published copy: the next
@@ -2307,6 +2344,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         message.optBoolean("steered"), sentFiles,
                         finish = message.optString("finish"),
                         thought = reasoningSeen[id] ?: 0,
+                        reasoning = reasoningParts.joined(id),
                         reverted = message.optBoolean("reverted"),
                         retryAttempt = message.optJSONObject("retry")?.optInt("attempt") ?: 0,
                         retryReason = message.optJSONObject("retry")?.optString("message").orEmpty(),
@@ -2370,9 +2408,22 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     fun appendDelta(sessionID: String, messageID: String, partID: String, text: String) {
         if (sessionID != currentSession || messageID.isBlank() || text.isEmpty()) return
         if (partKinds[partID] == "reasoning") {
-            // Counted, not shown: a turn whose only output is thinking is
-            // written up as a failure rather than as an empty reply.
+            // Kept for the fold, never appended to the reply: a turn whose only
+            // output is thinking is written up as a failure rather than as an
+            // empty reply, and the thinking itself is shown collapsed above it.
+            reasoningParts.appendDelta(messageID, partID, text)
+            // A fragment is new text, so adding its length is right here. The
+            // snapshot paths set the count from `charCount` instead, because
+            // they repeat what is already held; both end at the joined length.
             reasoningSeen[messageID] = once(reasoningSeen[messageID]) + text.length
+            val at = rowOfMessage(messageID).takeIf { it >= 0 }
+            if (at != null) {
+                val row = items[at]
+                if (row is Item.Msg) items[at] = row.copy(
+                    reasoning = reasoningParts.joined(messageID),
+                    thought = maxOf(row.thought, reasoningSeen[messageID] ?: 0),
+                )
+            }
             return
         }
         val known = rowOfMessage(messageID).takeIf { it >= 0 }
@@ -2397,7 +2448,17 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         }
         if (part.optString("type") == "reasoning") {
             val so = part.optString("text")
-            if (so.isNotBlank()) reasoningSeen[messageID] = once(reasoningSeen[messageID]) + so.length
+            if (partID.isNotBlank()) {
+                // Remembered here too, not only on the history path: a part is
+                // announced before its first delta, and the delta path asks
+                // this store which kind the id names.
+                reasoningParts.rememberKind(partID, "reasoning")
+                reasoningParts.putSnapshot(messageID, partID, so)
+            }
+            // Set from the store, not added to: a part is announced and then
+            // updated many times, and summing each snapshot counted the same
+            // words again on every update.
+            reasoningSeen[messageID] = reasoningParts.charCount(messageID)
         }
         val known = rowOfMessage(messageID).takeIf { it >= 0 } ?: return
         val existing = items[known]
@@ -2415,6 +2476,13 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     .filter { it.isNotBlank() }
                     .joinToString("\n\n")
                 if (joined.isNotBlank()) items[known] = existing.copy(text = joined)
+            }
+            "reasoning" -> {
+                // The fold's text, refreshed in place; the reply is untouched.
+                items[known] = existing.copy(
+                    reasoning = reasoningParts.joined(messageID),
+                    thought = maxOf(existing.thought, reasoningSeen[messageID] ?: 0),
+                )
             }
             "tool" -> {
                 // Same rule as a whole message: a call streams in many times,
@@ -2462,6 +2530,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         partOrder.clear()
         partSeq = 0
         reasoningSeen.clear()
+        reasoningParts.clear()
         loadingThread = id != null
         if (id == null) return
         // Parked permissions ride along: a turn can be sitting on an answer
@@ -8416,6 +8485,14 @@ fun Timeline(
                                         )
                                     }
                                 } else {
+                                    /*
+                                     * The thinking behind the reply, folded away
+                                     * by default - the same 「思考过程」 the
+                                     * cockpit shows. Drawn before the words so
+                                     * the reader meets the answer first and can
+                                     * open the working if they want it.
+                                     */
+                                    if (item.reasoning.isNotBlank()) ReasonFold(item.reasoning)
                                     if (item.text.isNotBlank()) {
                                         /*
                                          * A reply can be selected.

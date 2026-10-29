@@ -241,6 +241,22 @@ Pad 9 Pro Max（`M367FC`）接上后，第一次把「平板发指令 → 主机
 
 **这轮验证的正是前两轮修的东西**：气泡能画出来（`message.updated` 的 sessionID 修复）、文字能流式出现（`message.delta`）、工具行不膨胀。平板侧看到的是最终效果——**一个此前完全不显示回复的界面，现在能正常对话了**。
 
+### 第七十八轮（续五）：安卓原生折叠显示推理过程（2026-10-30）
+
+**问题**：驾驶舱那边已经把推理折进「思考过程」了（续四，PR #102），安卓原生这边还停在「数一数、不显示」。`reasoningSeen` 只记长度，`Item.Msg.thought` 只用来判断 `thinkOnly`，推理正文在 `appendDelta` 和 `upsertPart` 里被直接丢掉。结果是同一轮对话，浏览器里能展开看它想了什么，手机上只剩工具行和最后的正文，中间那段空白没有任何入口。
+
+**做法**：新加一个纯 JVM 的 `ReasoningParts`，按 `messageId|partId` 存推理正文、到达顺序和种类。`putSnapshot` 取「更长的那份」（和驾驶舱 `deltas` 的规则一致），`appendDelta` 往后接，`joined` 按到达顺序用 `\n\n` 拼起来、跳过空片段。它和 `partTexts` 完全分开：回复正文的重建只认 `type == "text"`，推理一个字都不会漏进去。
+
+**界面**：`ReasonFold.kt` 里一个 `@Composable fun ReasonFold(text, modifier)`，默认折叠，标题就是「思考过程」，前面一个 `▸` / `▾` 的文字箭头（和驾驶舱一样，不用图标）。样式刻意做次要：`LocalMuted` 的墨色、12–13sp、左边一条 `LocalLine` 的 2dp 竖线，展开后正文用等宽字体。`text.isBlank()` 直接 return，所以折叠块跟着第一个字符出现，不会先挂一个空盒子。
+
+**接线**：`Item.Msg` 加 `val reasoning: String = ""`，`thought` 保留给 `thinkOnly`（「这一轮只生成了思考过程」）。历史读取、`upsertMessage`、`appendDelta`、`upsertPart` 四条路径都同时更新 `reasoningSeen` 和 `ReasoningParts`，行上的 `reasoning` 用 `joined(messageId)` 刷新；`appendDelta` 仍然不往 `Msg.text` 里写。会话切换时 `reasoningParts.clear()` 和 `reasoningSeen.clear()` 一起清。助手分支在 `MarkdownBody` 之前画 `ReasonFold(item.reasoning)`，正文路径一个字没动。
+
+**计数只认拼接结果**：`reasoningSeen` 一开始写成「每来一段就加长度」，可 `message.updated` 会把同一条消息的所有 part 再报一遍，`part.updated` 也会对同一个 part 反复报快照——同一段思考于是被加了两次、三次，`thought` 越滚越大，`thinkOnly` 就会在一轮明明答过话的回合上误报。现在两条快照路径（历史读取、`upsertPart`）一律写成 `reasoningSeen[id] = reasoningParts.charCount(id)`，只有 `appendDelta` 还按片段长度累加（片段是新的，累加是对的），两条路最后都等于 `joined` 的长度。顺带在 `upsertPart` 的推理分支补了 `rememberKind`，历史路径本来就有。
+
+**验证**：`ReasoningPartsTest` 覆盖空起点、快照后追加变长、更短的快照不回缩、多片段按到达顺序、`clear()`、`charCount` 跟 `joined` 一致、空快照不产生可见内容。这台机器上没有 Android SDK，跑不了 Gradle，所以单测只在盒子里写了、没在盒子里跑过；Wyatt 需要跑 `./gradlew :app:testDebugUnitTest`，再用 Fold / VM 的 APK 看流式推理时折叠块是不是跟着长。`scripts/remote-check.ts` 这次不用动——它探的是驾驶舱的页内 VM，原生这一片没有对应的探针。
+
+**范围**：只动 Windows 桌面和 Android 远程端。macOS / iOS 不涉及，桌面 Vue 也没有改成显示推理。PR 未合并。
+
 ### 第七十八轮（续三）：气泡从来没画出来过 —— `message.updated` 没有 sessionID（2026-10-29）
 
 接着修驾驶舱，又挖出一个更早就存在、而且更彻底的 bug。
