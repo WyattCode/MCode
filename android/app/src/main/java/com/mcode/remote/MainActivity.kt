@@ -6164,7 +6164,18 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             color = if (active) MaterialTheme.colorScheme.primary else LocalPill.current,
                             modifier = Modifier.clickable(enabled = currentSession != null) {
                                 currentSession?.let { sid ->
-                                    scope.launch { runCatching { rpc(JSONObject().put("type", "session.agent").put("sessionID", sid).put("agent", agent)) } }
+                                    scope.launch {
+                                        runCatching {
+                                            rpc(JSONObject().put("type", "session.agent").put("sessionID", sid).put("agent", agent))
+                                        }.onSuccess {
+                                            val at = sessions.indexOfFirst { it.id == sid }
+                                            if (at >= 0) sessions[at] = sessions[at].copy(agent = agent)
+                                        }.onFailure {
+                                            withContext(Dispatchers.Main) {
+                                                Toast.makeText(context, "没能切换 Agent", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    }
                                 }
                             },
                         ) {
@@ -6197,9 +6208,16 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             modifier = Modifier.clickable(enabled = currentSession != null) {
                                 currentSession?.let { sid ->
                                     scope.launch {
-                                        runCatching { rpc(JSONObject().put("type", "session.access").put("sessionID", sid).put("access", level)) }
-                                        val at2 = sessions.indexOfFirst { it.id == sid }
-                                    if (at2 >= 0) sessions[at2] = sessions[at2].copy(access = level, goalMode = sessions[at2].goalMode)
+                                        runCatching {
+                                            rpc(JSONObject().put("type", "session.access").put("sessionID", sid).put("access", level))
+                                        }.onSuccess {
+                                            val at2 = sessions.indexOfFirst { it.id == sid }
+                                            if (at2 >= 0) sessions[at2] = sessions[at2].copy(access = level, goalMode = sessions[at2].goalMode)
+                                        }.onFailure {
+                                            withContext(Dispatchers.Main) {
+                                                Toast.makeText(context, "没能更改权限", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
                                     }
                                 }
                             },
@@ -6218,7 +6236,18 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             color = if (active) MaterialTheme.colorScheme.primary else LocalPill.current,
                             modifier = Modifier.clickable(enabled = currentSession != null) {
                                 currentSession?.let { sid ->
-                                    scope.launch { runCatching { rpc(JSONObject().put("type", "session.effort").put("sessionID", sid).put("effort", effort)) } }
+                                    scope.launch {
+                                        runCatching {
+                                            rpc(JSONObject().put("type", "session.effort").put("sessionID", sid).put("effort", effort))
+                                        }.onSuccess {
+                                            val at = sessions.indexOfFirst { it.id == sid }
+                                            if (at >= 0) sessions[at] = sessions[at].copy(effort = effort)
+                                        }.onFailure {
+                                            withContext(Dispatchers.Main) {
+                                                Toast.makeText(context, "没能切换 Effort", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    }
                                 }
                             },
                         ) {

@@ -3663,19 +3663,23 @@ async function cycleEffort() {
    * and the keyboard disagreeing about what the control is. A model with no
    * steps at all draws no pill and this does nothing.
    */
+  // The optional id is the conversation that owned the keypress, so a switch mid-await cannot retarget it.
+  const target = app.currentID
   const variants = findModel(app.providers, app.shownModel(app.current?.model) ?? app.config?.model)?.variants ?? []
   const next = cycleVariant(variants, app.current?.effort ?? app.config?.effort)
-  if (next) await app.setEffort(next)
+  if (next) await app.setEffort(next, target)
 }
 
 /** MiMo's decrease and increase rows: one step along this model's efforts, stopping at either end. */
 async function stepEffort(by: 1 | -1) {
+  // The optional id is the conversation that owned the keypress, so a switch mid-await cannot retarget it.
+  const target = app.currentID
   const variants = findModel(app.providers, app.shownModel(app.current?.model) ?? app.config?.model)?.variants ?? []
   if (!variants.length) return
   const current = app.current?.effort ?? app.config?.effort
   const at = current ? variants.indexOf(current) : -1
   const next = at === -1 ? variants[0] : variants[at + by]
-  if (next && next !== current) await app.setEffort(next)
+  if (next && next !== current) await app.setEffort(next, target)
 }
 
 let offMenu: (() => void) | undefined

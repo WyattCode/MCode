@@ -2145,6 +2145,55 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r90")
+  {
+    const root = process.cwd()
+    const appVue = await fs.readFile(path.join(root, "src/renderer/src/App.vue"), "utf8")
+    const fnBody = (src: string, name: string) => {
+      const at = src.indexOf(`async function ${name}(`)
+      if (at < 0) return ""
+      const brace = src.indexOf("{", at)
+      let depth = 0
+      for (let i = brace; i < src.length; i++) {
+        if (src[i] === "{") depth++
+        else if (src[i] === "}") {
+          depth--
+          if (depth === 0) return src.slice(at, i + 1)
+        }
+      }
+      return ""
+    }
+    const cycle = fnBody(appVue, "cycleEffort")
+    const step = fnBody(appVue, "stepEffort")
+    check("r90: cycleEffort captures the conversation", /const target = app\.currentID/.test(cycle))
+    check("r90: cycleEffort passes the captured id", /setEffort\(next, target\)/.test(cycle))
+    check("r90: stepEffort captures the conversation", /const target = app\.currentID/.test(step))
+    check("r90: stepEffort passes the captured id", /setEffort\(next, target\)/.test(step))
+
+    const main = await fs.readFile(
+      path.join(root, "android/app/src/main/java/com/mcode/remote/MainActivity.kt"),
+      "utf8",
+    )
+    // The settings sheet — not InputCapsule — owns these chips.
+    const sheetAt = main.indexOf("会话设置")
+    const sheet = sheetAt >= 0 ? main.slice(sheetAt, sheetAt + 9000) : ""
+    const accessAt = sheet.indexOf('"session.access"')
+    const access = accessAt >= 0 ? sheet.slice(accessAt, accessAt + 700) : ""
+    check(
+      "r90: settings access updates only on success",
+      /onSuccess/.test(access) && access.indexOf("onSuccess") < access.indexOf("copy(access"),
+    )
+    check("r90: settings access toasts on failure", access.includes("没能更改权限"))
+    const agentAt = sheet.indexOf('"session.agent"')
+    const agent = agentAt >= 0 ? sheet.slice(agentAt, agentAt + 700) : ""
+    check("r90: settings agent updates the row", /copy\(agent/.test(agent))
+    check("r90: settings agent toasts on failure", agent.includes("没能切换 Agent"))
+    const effortAt = sheet.indexOf('"session.effort"')
+    const effort = effortAt >= 0 ? sheet.slice(effortAt, effortAt + 700) : ""
+    check("r90: settings effort updates the row", /copy\(effort/.test(effort))
+    check("r90: settings effort toasts on failure", effort.includes("没能切换 Effort"))
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }

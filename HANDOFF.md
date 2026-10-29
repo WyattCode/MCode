@@ -221,6 +221,13 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 续二十三：Effort 键盘目标捕获、设置页 Agent/权限/Effort 失败提示（2026-10-30）
+
+- PR: （打开后填）
+- 桌面：`cycleEffort` / `stepEffort` 一次捕获 `target` 传给 `setEffort`.
+- Android：会话设置 Agent / 权限 / Effort 成功才改本地行，失败 Toast；权限不再在失败后也改 pill。
+- 验证：smoke「Review polish r90」；未合并。
+
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
 Pad 9 Pro Max（`M367FC`）接上后，第一次把「平板发指令 → 主机跑模型 → 回复回画到平板」整条链路走通。
