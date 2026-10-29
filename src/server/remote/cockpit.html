@@ -91,7 +91,7 @@
   <button id="new">新会话</button>
 </header>
 <div class="panes">
-  <div id="timeline"><p class="hint">连接后这里显示实时消息流</p></div>
+  <div id="timeline"><p class="hint">连接后这里显示实时消息流</p><p class="hint" id="busy" style="display:none">正在回答…</p></div>
   <aside id="detail"><p class="hint">选中消息的详情与 diff 显示在这里</p></div>
 </div>
 <footer>
@@ -115,6 +115,23 @@ function request(request) {
 }
 
 function connect(url, token) {
+  /*
+   * One socket at a time.
+   *
+   * The page reconnects itself from a saved address on load, and the connect
+   * button reconnects too. Pressing it after the automatic attempt - or twice
+   * quickly - used to leave two sockets open, both feeding one timeline: every
+   * message drawn twice, every fragment appended to a line that had already
+   * taken it. Closing the old one first is what makes the button idempotent.
+   */
+  if (state.ws) {
+    const previous = state.ws;
+    state.ws = null;
+    try {
+      previous.onclose = null;
+      previous.close();
+    } catch {}
+  }
   state.ws = new WebSocket(url, ["mcode", "mcode.remote." + token]);
   state.ws.onopen = () => {
     $("dot").classList.add("on");
@@ -133,7 +150,17 @@ function connect(url, token) {
     // Back off: 2.5s, 5s, 10s … capped at 60s, so a wrong token cannot hammer the host forever.
     const delay = Math.min(2500 * Math.pow(2, state.retries || 0), 60000);
     state.retries = (state.retries || 0) + 1;
-    setTimeout(() => connect(url, token), delay);
+    /*
+     * One pending retry, not one per drop. A socket that fails repeatedly would
+     * otherwise stack a timer each time, and the page would reconnect several
+     * times over - the same double-delivery the connect button used to cause,
+     * arriving from the other direction.
+     */
+    if (state.retry) clearTimeout(state.retry);
+    state.retry = setTimeout(() => {
+      state.retry = null;
+      connect(url, token);
+    }, delay);
   };
   state.ws.onerror = () => {};
   state.ws.onmessage = (ev) => { try { handle(JSON.parse(ev.data)); } catch {} };
@@ -178,7 +205,7 @@ function handle(f) {
    * accumulate per part rather than overwrite: keeping the last one would show
    * a single syllable.
    */
-  if (e.type === "message.delta") appendDelta(e.sessionID, e.messageID, e.partID, e.text);
+  if (e.type === "message.delta") appendDelta(e.sessionID, e.messageID, e.partID, e.text, e.at);
   if (e.type === "permission.requested") addPermissionCard(e.request);
   if (e.type === "permission.resolved") removePermissionCard(e.requestID);
   if (e.type === "question.asked") addQuestionCard(e.request);
@@ -186,7 +213,34 @@ function handle(f) {
   if (e.type === "session.deleted") { delete state.titles[e.sessionID]; refreshSelect(); }
 }
 
-function markBusy(busy) {}
+/*
+ * Whether the conversation on screen is mid-turn.
+ *
+ * A phone shows "…" while the answer streams; without this the empty bubble of
+ * a turn that has not produced a word yet is indistinguishable from a page that
+ * failed. `session.idle` is the end, and sending a prompt is the beginning -
+ * there is no "started" event to wait for.
+ */
+function markBusy(busy) {
+  state.busy = busy;
+  /*
+   * The hint is rebuilt rather than looked up: `select()` and a gap refill both
+   * empty the timeline, which takes it with them. Recreating it here means the
+   * indicator survives a conversation switch instead of disappearing for good
+   * the first time one happens.
+   */
+  let hint = document.getElementById("busy");
+  if (!hint) {
+    hint = document.createElement("p");
+    hint.className = "hint";
+    hint.id = "busy";
+    hint.textContent = "正在回答…";
+    $("timeline").appendChild(hint);
+  }
+  hint.style.display = busy ? "" : "none";
+  if (!busy) return;
+  scroll();
+}
 
 function renderSessions(sessions, running) {
   state.running = running;
@@ -215,6 +269,10 @@ function select(id) {
   state.current = id;
   $("timeline").innerHTML = "";
   for (const key of Object.keys(messages)) delete messages[key];
+  // The kinds go with the bubbles: a part id from another conversation would
+  // decide how this one's fragments are drawn.
+  for (const key of Object.keys(partKinds)) delete partKinds[key];
+  for (const key of Object.keys(deltas)) delete deltas[key];
   if (!id) return;
   frame({ kind: "request", id: "w" + ++state.requestId, request: { type: "session.watch", sessionIDs: [id] } });
   // History first, then the live stream rides on top of it.
@@ -225,6 +283,9 @@ function select(id) {
     scroll();
   };
   frame({ kind: "request", id: ticket, request: { type: "session.get", sessionID: id } });
+  // A conversation that was already working when it was picked up keeps its
+  // indicator: the turn was running before this page looked at it.
+  markBusy((state.running || []).includes(id));
 }
 
 function bubble(role, text) {
@@ -244,6 +305,38 @@ function scroll() { const t = $("timeline"); t.scrollTop = t.scrollHeight; }
 const messages = {};
 // Fragments seen before their message existed, keyed `messageID|partID`.
 const deltas = {};
+// What kind of part each id is (text, reasoning, tool). A delta says only which
+// part it belongs to, so without this the page cannot tell the reply from the
+// thinking behind it - and would print both as the answer.
+const partKinds = {};
+
+/**
+ * Read the conversation again after the stream lost something.
+ *
+ * Asking twice in a row would be two full transcripts for one gap, so a session
+ * already waiting is left alone; the flag clears when the answer lands.
+ */
+const refilling = {};
+function requestGapRefill(sessionID) {
+  if (refilling[sessionID] || sessionID !== state.current) return;
+  refilling[sessionID] = true;
+  const ticket = "g" + ++state.requestId;
+  state.pending[ticket] = (res) => {
+    refilling[sessionID] = false;
+    if (!res.ok || !Array.isArray(res.data?.messages)) return;
+    if (sessionID !== state.current) return;
+    // Rebuild from what disk says, fragments included: the gap is exactly the
+    // part this page got wrong, so its own copy must not survive the repair.
+    $("timeline").innerHTML = "";
+    for (const key of Object.keys(messages)) delete messages[key];
+    for (const key of Object.keys(deltas)) delete deltas[key];
+    for (const key of Object.keys(partKinds)) delete partKinds[key];
+    for (const m of res.data.messages) upsertMessage(sessionID, m);
+    scroll();
+  };
+  frame({ kind: "request", id: ticket, request: { type: "session.get", sessionID } });
+}
+
 function renderText(entry) {
   // All text parts joined the same way upsertMessage laid them out, so a
   // streaming update to one part never erases its siblings.
@@ -270,18 +363,33 @@ function upsertMessage(sessionID, message) {
   // An id-less text part must join `texts` too, or the next renderText rebuild
   // (from texts alone) would erase it.
   if (solo) kept.__solo = solo;
+  // Which kind each part is, so a later delta knows whether its words are the
+  // reply or the thinking behind it.
+  for (const p of parts) if (p.id) partKinds[message.id + "|" + p.id] = p.type;
   /*
-   * Fragments that beat this message onto the wire are folded in here, and win:
-   * `message.updated` carries the text as it stood when the event was made,
-   * while the accumulator has every fragment since. Where they agree the value
-   * is the same; where the message arrived early they are the only text there
-   * is.
+   * What each part holds now is the baseline its next fragment counts from.
+   *
+   * `at` on a fragment is the length the part had just before it, so the
+   * accumulator must start where the part already is.
+   *
+   * Never *shorter* than what is already there - tested by length, not by
+   * truthiness. `message.updated` arrives as soon as a part is announced, when
+   * its text is still "", and an `!held` test let that empty string overwrite
+   * fragments already applied. Every later fragment then began at zero against
+   * an `at` that had moved on, the gap guard fired on all of them, and the
+   * reply stalled - exactly what the trace showed: `at=3 held=0`, `at=9 held=0`.
    */
-  for (const [key, text] of Object.entries(deltas)) {
-    const at = key.indexOf("|");
-    if (key.slice(0, at) !== message.id) continue;
-    const partID = key.slice(at + 1);
-    if (text) kept[partID] = text;
+  for (const p of parts) {
+    if (!p.id || typeof p.text !== "string") continue;
+    const key = message.id + "|" + p.id;
+    const held = deltas[key] || "";
+    if (p.text.length >= held.length) deltas[key] = p.text;
+  }
+  // What is drawn: the accumulated text of the text parts, never reasoning -
+  // the model did not say its thinking to the reader.
+  for (const p of parts) {
+    if (p.type !== "text" || !p.id) continue;
+    kept[p.id] = deltas[message.id + "|" + p.id] || "";
   }
   messages[message.id] = { el, parts: {}, texts: kept };
   renderText(messages[message.id]);
@@ -290,12 +398,35 @@ function upsertMessage(sessionID, message) {
 
 function upsertPart(sessionID, messageID, part) {
   if (sessionID !== state.current) return;
-  const entry = messages[messageID];
-  if (!entry) return;
-  if (part.type === "text") {
-    if (part.id) entry.texts[part.id] = part.text;
-    else entry.texts.__solo = part.text;
-    renderText(entry);
+  // The kind is recorded even for a message this page has not drawn yet: the
+  // fragments that arrive before it are dropped, and this is what lets the
+  // later ones be kept.
+  if (part.id) partKinds[messageID + "|" + part.id] = part.type;
+  if (!part.id) {
+    // An id-less part has no accumulator; it is the whole text or nothing.
+    const entry = messages[messageID];
+    if (entry && part.type === "text") {
+      entry.texts.__solo = part.text;
+      renderText(entry);
+    }
+    if (part.type === "tool") addToolRow(part);
+    return;
+  }
+  const key = messageID + "|" + part.id;
+  /*
+   * The part's text is a snapshot and the accumulator is the truth, so the
+   * longer of the two wins. Overwriting with `part.text` outright set the line
+   * back to "" each time a part was re-announced, and the next fragment then
+   * measured against zero.
+   */
+  if (part.type === "text" && typeof part.text === "string") {
+    const held = deltas[key] || "";
+    if (part.text.length >= held.length) deltas[key] = part.text;
+    const entry = messages[messageID];
+    if (entry) {
+      entry.texts[part.id] = deltas[key];
+      renderText(entry);
+    }
   }
   if (part.type === "tool") addToolRow(part);
 }
@@ -303,18 +434,49 @@ function upsertPart(sessionID, messageID, part) {
 /*
  * One fragment of a reply, appended to its part.
  *
- * The message may not be on screen yet - a delta can beat the `message.updated`
- * that would have created its bubble - so the accumulator is kept here and
- * `upsertMessage` folds it in when the bubble arrives. Written the other way
- * round, the first fragments of every reply were dropped.
+ * Two things this has to get right, both of which the first version got wrong:
+ *
+ * `at` is the length the part had *before* this append (N11-32). A cockpit that
+ * connected mid-step holds the copy written to disk, which lags by up to 500ms,
+ * so appending blindly leaves a hole in the middle of a paragraph that nothing
+ * closes until the part ends - minutes, on a long answer. A length that does not
+ * line up means fragments were missed, so the transcript is read again instead.
+ *
+ * Reasoning streams through this same event. Drawing it as the answer would put
+ * the model's thinking on screen as if it had said it.
+ *
+ * The message may not exist yet - a delta can beat the `message.updated` that
+ * creates its bubble - so the accumulator is kept here and `upsertMessage` folds
+ * it in when the bubble arrives.
  */
-function appendDelta(sessionID, messageID, partID, text) {
+function appendDelta(sessionID, messageID, partID, text, at) {
   if (sessionID !== state.current) return;
-  const key = messageID + "|" + (partID || "__solo");
-  deltas[key] = (deltas[key] || "") + text;
+  const part = partID || "__solo";
+  const key = messageID + "|" + part;
+  /*
+   * Every fragment is accumulated, whatever kind of part it belongs to, and the
+   * kind only decides whether it is drawn. Dropping the ones whose part has not
+   * been announced yet would lose them for good - and then every later fragment
+   * would fail the length check below, turning one unknown part into a re-read
+   * loop.
+   */
+  const held = deltas[key] || "";
+  if (typeof at === "number" && held.length !== at) {
+    /*
+     * N11-32: `at` is the length this part had before the append. A cockpit that
+     * connected mid-step holds the copy written to disk, which lags by up to
+     * 500ms, so appending onto it leaves a hole in the middle of the paragraph
+     * that nothing closes until the part ends - minutes, on a long answer. The
+     * transcript is read again instead of guessing where the hole is.
+     */
+    requestGapRefill(sessionID);
+    return;
+  }
+  deltas[key] = held + text;
+  if (partKinds[key] === "reasoning") return;
   const entry = messages[messageID];
   if (!entry) return;
-  entry.texts[partID || "__solo"] = deltas[key];
+  entry.texts[part] = deltas[key];
   renderText(entry);
 }
 
@@ -419,6 +581,10 @@ function sendInput() {
   // steer only joins a running turn; an idle session gets a plain prompt.
   const req = { type: "session.prompt", sessionID: state.current, text };
   if ((state.running || []).includes(state.current)) req.delivery = "steer";
+  // From here until `session.idle`, the conversation is working on it. Without
+  // this, a prompt that takes a few seconds to produce its first word looked
+  // like a send that went nowhere.
+  markBusy(true);
   request(req);
   $("input").value = "";
 }
