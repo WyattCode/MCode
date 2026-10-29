@@ -1169,56 +1169,17 @@ private object NoIndication : androidx.compose.foundation.IndicationNodeFactory 
     override fun equals(other: Any?): Boolean = other === this
 }
 
-/* MCode's own mark, straight from the desktop build. */
-/**
- * Claude's asterisk, for the empty pane at phone width.
+/*
+ * MCode's own mark, straight from the desktop build.
  *
- * Measured off its own screenshot rather than guessed, twice: the first
- * attempt drew four lines through the centre (they met, and it read as a
- * starfish), the second alternated long and short (wrong - it does not).
- * A radial profile of the real mark, 112 px across at 450 dpi:
+ * It replaces the asterisk this file used to draw for the empty pane. That one
+ * was a hand-drawn imitation of the reference's star, measured and re-measured
+ * across several rounds; the product has its own mark, and an empty pane is
+ * exactly where a product should show it.
  *
- *   12 spokes, 30 degrees apart, reaching 0.95-1.12 of the radius between
- *   them - equal length, within the error of reading a 112 px PNG;
- *   starting at 0.05 of the radius, so they meet at the centre;
- *   about 4-5 degrees wide, round-capped.
+ * The drawable is a square canvas with the mark inside it at its own ratio -
+ * wider than it is tall - so a `size(n)` box draws slightly less ink than n.
  */
-@Composable
-fun SparkMark(modifier: Modifier = Modifier, tint: Color = Ember) {
-    androidx.compose.foundation.Canvas(modifier) {
-        val cx = size.width / 2f
-        val cy = size.height / 2f
-        val outer = size.minDimension / 2f
-        /*
-         * 12 spokes, uneven lengths, around a small solid core.
-         *
-         * A ray sweep around the reference's asterisk reports a peak every 15
-         * degrees, which reads as 24 - but that count is the round caps on 12
-         * spokes, each producing two shoulders. Drawing 24 on a 15-degree step
-         * filled the middle into a solid disc, which is plainly not the mark.
-         *
-         * What the reference actually shows: 12 spokes at 30 degrees, of two
-         * lengths (the short ones about 0.72 of the long), radiating from a
-         * core roughly a fifth of the mark, with clear paper between them.
-         */
-        val stroke = outer * 0.155f
-        // The core, so the spokes read as one burst rather than as a wheel.
-        drawCircle(tint, radius = outer * 0.30f, center = androidx.compose.ui.geometry.Offset(cx, cy))
-        for (i in 0 until 12) {
-            // Off vertical by 11 degrees, as the original's spokes sit.
-            val angle = Math.toRadians((i * 30.0) + 11.0)
-            val r1 = if (i % 3 == 0) outer else outer * 0.80f
-            drawLine(
-                tint,
-                androidx.compose.ui.geometry.Offset(cx, cy),
-                androidx.compose.ui.geometry.Offset(cx + (Math.cos(angle) * r1).toFloat(), cy + (Math.sin(angle) * r1).toFloat()),
-                strokeWidth = stroke,
-                cap = androidx.compose.ui.graphics.StrokeCap.Round,
-            )
-        }
-    }
-}
-
 @Composable
 fun MCodeMark(modifier: Modifier = Modifier) {
     androidx.compose.foundation.Image(
@@ -6340,6 +6301,16 @@ fun WelcomePane(withInput: Boolean, inputBar: @Composable () -> Unit, inputAtBot
      * than centred. Measured off its own screenshot.
      */
     val mark = @Composable {
+        /*
+         * The pane shows MCode's own mark now, not the reference's asterisk.
+         *
+         * 44, measured off the build rather than estimated. The first pass used
+         * 34 - carried over from `SparkMark`'s 39.5 with a guess at the optical
+         * difference - and it drew a mark barely half the width of the name
+         * under it. The mark is wide and short (about 1.18:1), so a square box
+         * spends a third of its height on nothing.
+         */
+        val markSize = 44.dp
         // Claude's phone empty pane is its asterisk over 月光下的对话?; the
         // two-pane pane greets by name. Both are sampled from its own screens.
         if (inputAtBottom) {
@@ -6364,11 +6335,11 @@ fun WelcomePane(withInput: Boolean, inputBar: @Composable () -> Unit, inputAtBot
              * The gap goes to 18: the reference's mark ends at 414.0 and its
              * greeting's ink begins at 432.0.
              */
-            SparkMark(Modifier.size(39.5.dp))
+            MCodeMark(Modifier.size(markSize))
             Spacer(Modifier.height(18.dp))
             Text(greeting(), fontSize = 18.sp, fontWeight = FontWeight.Normal, color = LocalText.current)
         } else {
-            SparkMark(Modifier.size(39.5.dp))
+            MCodeMark(Modifier.size(markSize))
             Spacer(Modifier.height(16.dp))
             // Claude's phrase is 50px of glyph on the pad - 18sp, not the 44
             // this was set to after a first read of its line box (144px, which
