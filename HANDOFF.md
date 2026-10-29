@@ -223,7 +223,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ### 续二十七：编辑重发/重试钉会话、自定义服务商模型钉会话、用量累加空值守卫（2026-10-30）
 
-- PR: （打开后填）
+- PR: https://github.com/WyattCode/MCode/pull/125
 - 桌面 MessageStream：sendEdit / retry 把已捕获的 sessionID 传给 app.send（不再 undefined / 主窗 ternary），避免 truncate 后切会话把问题发到新会话。
 - CustomProviderForm：standalone 保存前捕获 currentID，setModel(model, target)。
 - session store addUsage：`session.usage ?? emptyUsage()`，缺 usage 的旧会话不再把回合打崩。
