@@ -390,8 +390,8 @@ val LocalCardTile = staticCompositionLocalOf { Color(0xFFF5F5F3) }
 fun toolTitleOf(part: JSONObject): String {
     val input = part.optJSONObject("input")
     val named = when (part.optString("name")) {
-        "read", "edit", "write", "apply_patch", "patch" -> input?.optString("path")
-            ?: input?.optString("filePath") ?: input?.optString("file_path")
+        "read", "edit", "write", "apply_patch", "patch", "notebook_edit" -> input?.optString("notebook_path")
+            ?: input?.optString("path") ?: input?.optString("filePath") ?: input?.optString("file_path")
         "bash", "exec_command" -> input?.optString("description") ?: input?.optString("command") ?: input?.optString("cmd")
         // A search pattern often arrives as `**/name`; the glob part says
         // nothing on a phone row, so it is dropped.
@@ -419,7 +419,7 @@ fun toolTitleOf(part: JSONObject): String {
 fun toolVerbOf(name: String, status: String): String {
     val base = when (name) {
         "read" -> "read"
-        "edit", "apply_patch", "patch" -> "edit"
+        "edit", "apply_patch", "patch", "notebook_edit" -> "edit"
         "write" -> "write"
         "bash", "exec_command" -> "bash"
         "execute" -> "execute"
@@ -7439,7 +7439,7 @@ private enum class ToolBucket { Read, Edit, Run, Search, Other }
 
 private fun bucketOf(name: String): ToolBucket = when (name) {
     "read" -> ToolBucket.Read
-    "edit", "write", "apply_patch", "patch" -> ToolBucket.Edit
+    "edit", "write", "apply_patch", "patch", "notebook_edit" -> ToolBucket.Edit
     "bash", "exec_command" -> ToolBucket.Run
     "grep", "glob", "list", "codesearch", "websearch", "webfetch" -> ToolBucket.Search
     else -> ToolBucket.Other
@@ -7457,7 +7457,8 @@ private fun bucketOf(name: String): ToolBucket = when (name) {
 private fun touchedPathOf(tool: Item.Tool): String {
     val input = tool.raw.optJSONObject("input")
     return when (tool.name) {
-        "read", "edit", "write" -> input?.optString("path").orEmpty()
+        "read", "edit", "write", "apply_patch", "patch", "notebook_edit" -> input?.optString("notebook_path").orEmpty()
+            .ifBlank { input?.optString("path").orEmpty() }
             .ifBlank { input?.optString("filePath").orEmpty() }
             .ifBlank { input?.optString("file_path").orEmpty() }
             .ifBlank { tool.raw.optString("title") }
@@ -14581,7 +14582,7 @@ fun ToolRow(
 fun StepMark(name: String, tint: Color, modifier: Modifier = Modifier) {
     val kind = when (name.lowercase()) {
         "read" -> "read"
-        "edit", "apply_patch", "patch" -> "edit"
+        "edit", "apply_patch", "patch", "notebook_edit" -> "edit"
         "write" -> "write"
         "bash", "exec_command", "execute" -> "bash"
         "grep", "glob", "codesearch" -> "search"

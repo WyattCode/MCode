@@ -47,13 +47,14 @@ export const OUTPUT_CAP = 3000
 // memory: named in MiMo's tables; history, cron and automation_update are not, and read through the fallbacks.
 // speak: MCode's own tool for the voice feedback MiMo does in the cloud, so its words are this app's.
 const LABELLED = new Set(["read", "edit", "write", "bash", "grep", "glob", "list", "webfetch", "websearch", "todowrite", "invalid", "actor", "pdf_locate", "present_files", "contacts", "skill", "skill_search", "memory", "speak", "execute", "app"])
-const SPEAKS_AS: Record<string, string> = { apply_patch: "edit", patch: "edit", exec_command: "bash" }
+const SPEAKS_AS: Record<string, string> = { apply_patch: "edit", patch: "edit", notebook_edit: "edit", exec_command: "bash" }
 
 /** The tools this app ships, whose titles are their own rather than their input. */
 const BUILT_IN = new Set([
   "read",
   "edit",
   "write",
+  "notebook_edit",
   "apply_patch",
   "patch",
   "bash",
@@ -144,6 +145,7 @@ const ICONS: Record<string, StepIconName> = {
   edit: "edit",
   apply_patch: "edit",
   patch: "edit",
+  notebook_edit: "edit",
   write: "write",
   bash: "bash",
   exec_command: "bash",
@@ -208,6 +210,8 @@ export function stepTitle(part: ToolPart): string {
     case "edit":
     case "write":
       return part.title || text(input.path) || text(input.filePath) || text(input.file_path)
+    case "notebook_edit":
+      return part.title || text(input.notebook_path) || text(input.path) || text(input.filePath) || text(input.file_path)
     case "bash":
       return text(input.description) || text(input.command) || part.title || ""
     // A command run through `exec_command` is titled by the command alone: it has no description to lead with.
@@ -293,7 +297,7 @@ export function titleIsLossy(title: string, max: number): boolean {
 
 /** A read, edit or write title is a path Ctrl+click can open. */
 export function opensPath(name: string): boolean {
-  return name === "read" || name === "edit" || name === "write"
+  return name === "read" || name === "edit" || name === "write" || name === "notebook_edit"
 }
 
 export type Bucket = "read" | "edit" | "run" | "search" | "other"
@@ -301,7 +305,7 @@ export type Bucket = "read" | "edit" | "run" | "search" | "other"
 /** Which count a step adds to in a group's summary. */
 export function bucketOf(name: string): Bucket {
   if (name === "read") return "read"
-  if (name === "edit" || name === "write" || name === "apply_patch" || name === "patch") return "edit"
+  if (name === "edit" || name === "write" || name === "apply_patch" || name === "patch" || name === "notebook_edit") return "edit"
   if (name === "bash" || name === "exec_command") return "run"
   if (["grep", "glob", "list", "codesearch", "websearch", "webfetch"].includes(name)) return "search"
   return "other"

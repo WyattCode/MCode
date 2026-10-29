@@ -68,7 +68,7 @@ function contains(directory: string | undefined, file: string) {
 export function noteToolWrites(message: Message, directory: string | undefined) {
   if (message.role !== "assistant") return
   for (const part of message.parts) {
-    if (part.type !== "tool" || part.status !== "completed" || !["edit", "write"].includes(part.name)) continue
+    if (part.type !== "tool" || part.status !== "completed" || !["edit", "write", "notebook_edit", "patch"].includes(part.name)) continue
     const key = `${message.id}:${part.id}`
     if (seen.has(key)) continue
     seen.add(key)
@@ -76,6 +76,7 @@ export function noteToolWrites(message: Message, directory: string | undefined) 
     const files = (part.metadata as { files?: unknown } | undefined)?.files
     const paths = [
       ...(typeof input.file_path === "string" ? [input.file_path] : typeof input.path === "string" ? [input.path] : []),
+      ...(typeof input.notebook_path === "string" ? [input.notebook_path] : []),
       ...(Array.isArray(files) ? files.map((entry) => (typeof entry === "string" ? entry : (entry as { path?: string })?.path)).filter((entry): entry is string => typeof entry === "string") : []),
     ]
     const made = part.name === "write" && (part.metadata as { created?: unknown } | undefined)?.created === true
