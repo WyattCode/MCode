@@ -221,6 +221,26 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 第七十八轮（续）：驾驶舱从没画过流式回复（2026-10-29）
+
+上一轮配好模型、连上平板后发现的新问题，与那四条尾巴无关，是**远程驾驶舱的流式渲染从来没生效**。
+
+**症状**：手机浏览器打开驾驶舱，发一条消息，整轮对话期间时间线是空白的，直到 turn 结束才整段出现——读起来像卡死，不像在回答。
+
+**根因**：`cockpit.html` 只监听 `message.part.updated`，而**回复正文走的是 `message.delta`**。`part.updated` 只在 part 创建时发一次（文本为空字符串），结束时再由 `message.updated` 带一次全文；中间所有增量都是 `message.delta`（`runner.ts` 里 `part.text += text` 后立即 publish）。驾驶舱对这个事件**一次都没处理**（`grep -c "message.delta" cockpit.html` 返回 0）。协议里 `message.delta` 定义得好好的（`protocol.ts:2748`，带 `messageID`/`partID`/`text`），网关也照常转发（它是 Bus 的普通订阅者），只是页面不接。
+
+**修法**：加 `appendDelta()`，按 `messageID|partID` **累加**（delta 是分片，覆盖会只剩最后一个字），并让 `upsertMessage` 把先到的分片折进气泡——delta 可能比创建气泡的 `message.updated` 更早到达，写在另一边的第一版会丢掉每条回复的开头。
+
+**顺手发现的第二个问题**：`cockpit-html.ts` 由 `cockpit.html` 生成，但**仓库里没有生成脚本**，改 `.html` 不生效。补了 `scripts/gen-cockpit.mjs`。第一版写错了一次——用 `JSON.stringify(html)` 双层编码，页面拿到的脚本整段是字面量 `\n`，浏览器连解析都失败，驾驶舱彻底打不开。正确写法是**单层** `JSON.stringify(html)`，让模块求值后就是 HTML 字符串本身。生成器现在会回读校验并断言 round-trip。
+
+**验证方式（这次花了很久才找对）**：用 Electron 起真 Chromium 加载页面、填连接框、点发送，然后读 DOM。中间连续误判了四次，原因全部在探针而不在产品：
+- 探针选中了刚创建的**空会话**（新建后 `titles` 又多了 id，`slice(-1)` 拿到的是另一个）；
+- 采样间隔比首字延迟短，第一次读到的还是 0 就提前收工；
+- 用 `executeJavaScript` 返回了对象，Electron 报 "An object could not be cloned"，真正的报错被这个噪音盖住；
+- 一次跑通后才看清：**`message.delta` 收到 36 次、DOM 里助手气泡 109 字符**。
+
+**测试**：7900 passed / 0 failed（与本轮改动前一致，驾驶舱不在 smoke 覆盖范围内）。真实链路验证是上面那次浏览器实测，加上 `gateway-drive.mjs`（WebSocket 直连跑一轮真模型对话，回复落盘可查）。
+
 ### 第七十八轮：清理遗留尾巴 —— 删除误报、跨进程 id、联网搜索开关、Linux 托盘（2026-10-28）
 
 用户指令：「全干。」指上一轮列在「仍未做」和「留着的小尾巴」里的那些。这一轮**先把环境从零重建回来**，再把能确定是 bug 的四条修掉，最后打了一版安装包。

@@ -165,6 +165,20 @@ function handle(f) {
   if (e.type === "session.error") addLine("errline", e.error);
   if (e.type === "message.updated") upsertMessage(e.sessionID, e.message);
   if (e.type === "message.part.updated") upsertPart(e.sessionID, e.messageID, e.part);
+  /*
+   * The text itself arrives as `message.delta`, not in `part.updated`.
+   *
+   * `part.updated` is published once, when the part is created - with an empty
+   * string - and then again at the end from `message.updated`. The deltas in
+   * between are what a reader watches appear. Without this branch the cockpit
+   * showed a blank conversation for the whole turn and then the finished reply
+   * in one jump, which reads as a hang rather than as streaming.
+   *
+   * Each delta is a fragment (`part.text += text` in the runner), so they
+   * accumulate per part rather than overwrite: keeping the last one would show
+   * a single syllable.
+   */
+  if (e.type === "message.delta") appendDelta(e.sessionID, e.messageID, e.partID, e.text);
   if (e.type === "permission.requested") addPermissionCard(e.request);
   if (e.type === "permission.resolved") removePermissionCard(e.requestID);
   if (e.type === "question.asked") addQuestionCard(e.request);
@@ -228,6 +242,8 @@ function addLine(cls, text) { const d = document.createElement("div"); d.classNa
 function scroll() { const t = $("timeline"); t.scrollTop = t.scrollHeight; }
 
 const messages = {};
+// Fragments seen before their message existed, keyed `messageID|partID`.
+const deltas = {};
 function renderText(entry) {
   // All text parts joined the same way upsertMessage laid them out, so a
   // streaming update to one part never erases its siblings.
@@ -254,7 +270,21 @@ function upsertMessage(sessionID, message) {
   // An id-less text part must join `texts` too, or the next renderText rebuild
   // (from texts alone) would erase it.
   if (solo) kept.__solo = solo;
+  /*
+   * Fragments that beat this message onto the wire are folded in here, and win:
+   * `message.updated` carries the text as it stood when the event was made,
+   * while the accumulator has every fragment since. Where they agree the value
+   * is the same; where the message arrived early they are the only text there
+   * is.
+   */
+  for (const [key, text] of Object.entries(deltas)) {
+    const at = key.indexOf("|");
+    if (key.slice(0, at) !== message.id) continue;
+    const partID = key.slice(at + 1);
+    if (text) kept[partID] = text;
+  }
   messages[message.id] = { el, parts: {}, texts: kept };
+  renderText(messages[message.id]);
   for (const part of parts) if (part.type === "tool") addToolRow(part);
 }
 
@@ -268,6 +298,24 @@ function upsertPart(sessionID, messageID, part) {
     renderText(entry);
   }
   if (part.type === "tool") addToolRow(part);
+}
+
+/*
+ * One fragment of a reply, appended to its part.
+ *
+ * The message may not be on screen yet - a delta can beat the `message.updated`
+ * that would have created its bubble - so the accumulator is kept here and
+ * `upsertMessage` folds it in when the bubble arrives. Written the other way
+ * round, the first fragments of every reply were dropped.
+ */
+function appendDelta(sessionID, messageID, partID, text) {
+  if (sessionID !== state.current) return;
+  const key = messageID + "|" + (partID || "__solo");
+  deltas[key] = (deltas[key] || "") + text;
+  const entry = messages[messageID];
+  if (!entry) return;
+  entry.texts[partID || "__solo"] = deltas[key];
+  renderText(entry);
 }
 
 function addToolRow(part) {
