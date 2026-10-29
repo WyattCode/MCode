@@ -9,7 +9,7 @@
 - **这是什么**：在界面和功能上 1:1 复刻小米 MiMo 桌面端的 Electron 应用，MCode 保留自己的名字、图标和字标。技术栈 Electron 41.10.7 + Vue 3 + Pinia + electron-vite，后端是同一进程里的 Node 服务。
 - **对照基准**：界面照 MiMo **26.920**（第十八轮起）。 第四十七轮已只读比较本机 **26.929.292248**；第四十八轮补了确认的五项增量并修复发送目标竞态，但没有重跑新版全部页面，不宣称全量对齐。只读它的行为和尺寸，**不复制**它的代码、文案、图标、插画和品牌。逐项对照清单（含百分比）：https://claude.ai/code/artifact/f149a5d1-857e-4bae-80be-ca03265d9f83
 - **引擎跟随 OpenCode v2**（第三十一轮起，用户 2026-09-27 定的）：内核和 Agent 编程能力照 OpenCode 的 `v2` 分支逐项移植进 MCode 自己的引擎（v2 还没正式发布，所以是搬能力，不是换引擎）；界面和其余部分保留 MCode 自己的设计。只搬比 MCode 现有做法好的，MCode 更强的地方保留（见第三十一轮）。OpenCode 是 MIT 许可，移植的代码在注释里注明出处。
-- **版本**：**0.9.5**（`package.json`）。第七十八轮打了 Windows 安装包 `dist/MCode-0.9.5-x64.exe`（237,289,653 字节），命令行绕开 `package.mjs` 直接调 electron-builder，所以版本号没被抬到 0.9.6。**打包必须带 `--config.electronDist=node_modules/electron/dist`**：这台机器下不动 Electron 二进制，默认流程会 600 秒超时；手动压 zip 进缓存无效（官方 SHA 对不上）。GitHub Releases 最新仍是 v0.7.9（2026-10-18）——0.8.x/0.9.x 都没有发到 Release，**要发版得手动传**。
+- **版本**：**0.9.5**（`package.json`）。第七十八轮打了 Windows 安装包 `dist/MCode-0.9.5-x64.exe`（237,289,653 字节），命令行绕开 `package.mjs` 直接调 electron-builder，所以版本号没被抬到 0.9.6。**打包必须带 `--config.electronDist=node_modules/electron/dist`**：这台机器下不动 Electron 二进制，默认流程会 600 秒超时；手动压 zip 进缓存无效（官方 SHA 对不上）。**GitHub Releases 最新是 v0.9.6（2026-10-29）**——本机没有 `gh`（`binaries/` 被清过），发布走 `.workbuddy/release-api.mjs`：从 git 凭据管理器取 `gho_` OAuth 令牌，直接调 REST API 建 Release 并上传（`whoami`/`release`/`upload` 三个动作）。资产上传后**必须核对**：API 返回的 `digest` 与本地 sha256 一致，且完整下载回来的字节数相同才算发成功（私有仓库未认证访问会返回「Not Found」，那是 404 不是坏包）。
 - **分支**：第五十四轮起 **`v2.0` 退役**。0.7.5 起的工作本就直接从 feature 分支（`fix/...`、`feat/...`）合进 `main`（#22-#27），`origin/v2.0` 停在 0.7.4 的交接提交 `2f9f92f8` 之后无人再推；本地 `v2.0` 已删，远端留着不动。以后一切工作（含交接更新）都从最新 `main` 拉分支、PR 合回 `main`。私有仓库 `WyattCode/MCode`。保留未跟踪的 `.claude/`，不提交本地测试产物。
 - **拉取请求**：#4 到 #20、#22 到 #55 已全部合并（#21 关闭未合并；0.7.5=#22-#25、0.7.6=#26、0.7.7=#27，见第五十四轮；#29=session-check 修复、#30=0.7.8 版本号，见第五十五轮；**MCode Remote**：#32=设计、#33=网关、#34=桌面集成、#35=Web 驾驶舱、#36=历史回放、#37=原生安卓、#38=真机修复，见第五十六轮；#39=交接r56、#40=0.7.9 版本号、#41/#42=UI 重设计×2、#43=默认连接、#44/#45/#46=1:1 对齐与宽屏、#47=保活服务、#48=改名 MCode、#49=edge-to-edge、#50=功能补全、#51=历史三连修、#52=steer 丢弃修复、#53/#54=四态走查、#55=启动诊断，见第五十七轮；#61=IME 遮挡/发送钮/自动滚动三连修，见第五十八轮；#63=模型切换/权限响应/会话操作/停止钮，见第五十九轮；#64=ask 卡+挂起卡片重放，见第六十轮；#66=用量面板，见第六十一轮；#67=Agent/Effort 切换，见第六十二轮；#68=0.8.0 版本号；#70=图片附件，见第六十四轮；#71=浅色调色板真值对齐，见第六十五轮；标题照 #10「MCode 2.0：0.6.4 —— …，第四十到四十一轮」的格式）。#3（`macos-hardening-v2`）已关闭：它声称的 16 条修复逐条对照过当前代码，5 条已被后来的工作修掉（含全部 3 条安全项）、2 条在本平台仍然存在并已修（0.4.6）、7 条只在 macOS 上能观察到，结论写在 #3 的关闭评论里。
 - **发布**：https://github.com/WyattCode/MCode/releases/tag/v0.7.9（2026-10-18，最新稳定版，Windows 安装包 + **首个安卓 APK**，附件 SHA-256 已与本地核对）。前一版 v0.7.8（Windows 安装包回归）。带安装包的最近版本：v0.7.8、v0.7.4、v0.7.3、v0.7.2；v0.7.5-0.7.7 无安装包（Linux 制作）；更早 v0.7.1、v0.7.0、v0.6.9、v0.6.8、v0.6.7、v0.6.6、v0.6.4、v0.6.3、v0.5.3、v0.4.7、v0.4.5、v0.3.8。自动更新地址仍是占位的 `updates.invalid`，所以**发布不会触发任何自动更新**。
@@ -220,6 +220,16 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 更早的下一步建议留作记录，见文末「附录 C」。
 
 ## 逐轮记录（新到旧）
+
+### 发布 0.9.6（2026-10-29）
+
+把这两轮的驾驶舱修复发到 GitHub Release。**本机没有 `gh`**（`binaries/` 第七十八轮初被清空，gh 一起没了），改走 `\.workbuddy/release-api.mjs`——从 git 的 Windows 凭据管理器取出 `gho_` 开头、40 位的 OAuth 令牌（`git credential fill`），直接调 REST API。三个动作：`whoami` 验令牌、`release <tag> <name> <notes>` 建 Release（已存在则跳过）、`upload <tag> <file>` 上传（同名资产先删再传，可重复执行）。
+
+包：`MCode-0.9.6-x64.exe`，237,292,606 字节，sha256 `50eaec79…778b91b`。打包照旧必须带 `--config.electronDist=node_modules/electron/dist`，2m11s 出包。
+
+**验证不只是「上传返回 201」**：GitHub 侧记录的 `digest` 与本地一致，再用认证方式把整个 237MB 下载回来重算 sha256，字节数完全相同。中间踩了一个假警报——未认证 curl 那个下载地址返回「Not Found」，那是私有仓库的 404，不是包坏了；这一步差点让我以为上传失败。另外提前解了 `app.asar` 核对：`requestGapRefill`/`appendDelta`/`partKinds`/`markBusy`/`One socket at a time`/`正在回答` 六处全在包里，确认发的就是修好的那份。
+
+**APK 没跟着发**：`dist/MCode-Remote-0.1.0-debug.apk` 还是 10-21 的，驾驶舱是浏览器那条路径，App 端是另一套 Kotlin 代码，这轮没碰也没验。
 
 ### 第七十八轮（续二）：流式修复第一版自己制造了死循环（2026-10-29）
 
