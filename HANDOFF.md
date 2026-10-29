@@ -223,7 +223,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ### 续二十：队列会话竞态、删除双击、停靠键盘、目标开关提示（2026-10-30）
 
-- PR: （打开后填）
+- PR: https://github.com/WyattCode/MCode/pull/118 （未合并）
 - Android：`select` 同步清 `queuedPrompts`；队列撤回/立即发送闭包捕获 `queueSessionID`；删除/重命名确认先清 target 再 request。
 - 桌面：权限「拒绝并说明」提交钮进 `data-cnav`；QuestionDock 数字键跳过 disabled；Composer `toggleGoalMode` 用按下时的 `next` 提示。
 - 验证：smoke「Review polish r87」；未合并。
