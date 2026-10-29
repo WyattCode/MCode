@@ -221,6 +221,23 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 续十八：粘贴跟草稿、Android 附件跟会话（2026-10-30）
+
+复核主线（避开未合并的 #102–#115）时确认两处：
+
+1. **Composer `onPaste`**：`take()` / `attachPaths()` 在 await 前后用 `draftKey` 护栏，大段粘贴转附件与剪贴板截图路径却没有——切换会话后附件/回落正文会落到另一份草稿。
+2. **Android 附件**：草稿按会话存，`attachments` 却是全局列表，`select` 不换栈——从 A 切到 B 时 A 的文件仍挂在 B 的输入条上，会随 B 的下一发送出。
+
+**修法**（`fix/review-polish-r85`，未合并）：
+
+- onPaste：在 clipboard/image/大段粘贴 await 路径捕获 `originKey`，突变前 `!composerMounted || draftKey !== originKey` 则返回。
+- `attachmentStash`：select 离开时入库、进入时取回；发送与会话消失时 `remove`。
+
+**回归**：smoke「Review polish r85」源码 scrape + mutate-fail（去掉 draft 拒写 / 去掉 select restore）。
+
+未做：#102–#115 路径、ContextRing 过满空环（故意）、permission 键盘陷阱（#113）、新 CSS token、REFERENCE_ENGLISH。
+
+
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
 Pad 9 Pro Max（`M367FC`）接上后，第一次把「平板发指令 → 主机跑模型 → 回复回画到平板」整条链路走通。
