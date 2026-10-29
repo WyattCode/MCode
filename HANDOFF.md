@@ -221,6 +221,12 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 续三十五：设置保存失败提示；会话设置目标开关回滚（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- Android：Settings `onPatch` 用 `rpcOrThrow`，成功才刷新 `appConfig`，失败 Toast；会话设置页「追求目标」失败回滚开关并 Toast（与输入胶囊一致）。
+- 验证：smoke「Review polish r102」；未合并。
+
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
 Pad 9 Pro Max（`M367FC`）接上后，第一次把「平板发指令 → 主机跑模型 → 回复回画到平板」整条链路走通。

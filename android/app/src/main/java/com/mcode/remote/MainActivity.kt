@@ -3157,10 +3157,17 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             servers = pluginServers.toList(),
             onPatch = { patch ->
                 scope.launch {
-                    runCatching { rpc(JSONObject().put("type", "config.set").put("patch", patch)) }
-                    appConfig = runCatching { rpc(JSONObject().put("type", "config.get")) }
-                        .getOrNull()?.optJSONObject("data")?.optJSONObject("config")
-                    refreshCommandsTick++
+                    runCatching {
+                        rpcOrThrow(JSONObject().put("type", "config.set").put("patch", patch))
+                    }.onSuccess {
+                        appConfig = runCatching { rpc(JSONObject().put("type", "config.get")) }
+                            .getOrNull()?.optJSONObject("data")?.optJSONObject("config")
+                        refreshCommandsTick++
+                    }.onFailure {
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(context, "没能保存设置", Toast.LENGTH_SHORT).show()
+                        }
+                    }
                 }
             },
             onReopen = { id ->
@@ -6229,10 +6236,21 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 // ---- 追求目标: the switch, beside the settings it shares a menu with ----
                 Row(
                     Modifier.fillMaxWidth().padding(top = 14.dp).clickable(enabled = currentSession != null) {
+                        val sid = currentSession ?: return@clickable
                         val next = !goalMode
                         goalMode = next
-                        currentSession?.let { sid ->
-                            scope.launch { runCatching { rpc(JSONObject().put("type", "session.goalMode").put("sessionID", sid).put("on", next)) } }
+                        scope.launch {
+                            runCatching {
+                                rpcOrThrow(JSONObject().put("type", "session.goalMode").put("sessionID", sid).put("on", next))
+                            }.onSuccess {
+                                val at = sessions.indexOfFirst { it.id == sid }
+                                if (at >= 0) sessions[at] = sessions[at].copy(goalMode = next)
+                            }.onFailure {
+                                goalMode = !next
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(context, "没能切换目标模式", Toast.LENGTH_SHORT).show()
+                                }
+                            }
                         }
                     },
                     verticalAlignment = Alignment.CenterVertically,

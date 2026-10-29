@@ -2145,6 +2145,27 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r102")
+  {
+    const root = process.cwd()
+    const main = await fs.readFile(
+      path.join(root, "android/app/src/main/java/com/mcode/remote/MainActivity.kt"),
+      "utf8",
+    )
+    const patchAt = main.indexOf("onPatch = {")
+    const patch = patchAt >= 0 ? main.slice(patchAt, patchAt + 900) : ""
+    check("r102: onPatch uses rpcOrThrow", patch.includes("rpcOrThrow") && patch.includes("config.set"))
+    check("r102: onPatch refreshes only onSuccess", /onSuccess/.test(patch) && patch.indexOf("onSuccess") < patch.indexOf("appConfig"))
+    check("r102: onPatch toasts on failure", patch.includes("没能保存设置"))
+    const sheetAt = main.indexOf("会话设置")
+    const sheet = sheetAt >= 0 ? main.slice(sheetAt, sheetAt + 12000) : ""
+    const goalAt = sheet.indexOf('Text("追求目标"')
+    const goal = goalAt >= 0 ? sheet.slice(Math.max(0, goalAt - 1400), goalAt + 200) : ""
+    check("r102: settings goalMode uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}session\.goalMode/.test(goal))
+    check("r102: settings goalMode reverts on failure", /onFailure[\s\S]{0,120}goalMode = !next/.test(goal))
+    check("r102: settings goalMode toasts", goal.includes("没能切换目标模式"))
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }
