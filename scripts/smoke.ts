@@ -2145,6 +2145,24 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r101")
+  {
+    const root = process.cwd()
+    const main = await fs.readFile(
+      path.join(root, "android/app/src/main/java/com/mcode/remote/MainActivity.kt"),
+      "utf8",
+    )
+    check("r101: skill toggle toasts", (main.match(/没能更新技能/g) || []).length >= 2)
+    check("r101: skill toggle aborts without config", /config == null[\s\S]{0,200}没能更新技能/.test(main))
+    check("r101: skill toggle uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,120}disabledSkills/.test(main))
+    check("r101: sheet compact awaits", /session\.compact[\s\S]{0,80}rpcOrThrow|rpcOrThrow\([\s\S]{0,80}session\.compact/.test(main))
+    check("r101: sheet compact toasts", main.includes("没能压缩对话"))
+    check("r101: sheet undo toasts", main.includes("没能撤销"))
+    check("r101: sheet archive toasts", main.includes("没能归档"))
+    const compactWin = (() => { const at = main.indexOf('Text("压缩对话"'); const start = main.lastIndexOf("clickable", at); return start < 0 || at < 0 ? "" : main.slice(start, at) })()
+    check("r101: sheet clears target before rpc", compactWin.includes("sheetTarget = null") && compactWin.indexOf("sheetTarget = null") < compactWin.indexOf("scope.launch"))
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }

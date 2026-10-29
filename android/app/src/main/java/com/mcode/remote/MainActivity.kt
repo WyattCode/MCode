@@ -3355,20 +3355,34 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                      * `disabledSkills` is the field the loader reads, and the
                      * desktop toggles it the same way: read the config, change
                      * the one list, write it back.
+                     *
+                     * config.get must succeed first: an empty fallback would
+                     * wipe every disabled skill on the next write.
                      */
                     val config = runCatching { rpc(JSONObject().put("type", "config.get")) }
                         .getOrNull()?.optJSONObject("data")?.optJSONObject("config")
-                    val off = config?.optJSONArray("disabledSkills")?.let { arr ->
+                    if (config == null) {
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(context, "没能更新技能", Toast.LENGTH_SHORT).show()
+                        }
+                        return@launch
+                    }
+                    val off = config.optJSONArray("disabledSkills")?.let { arr ->
                         (0 until arr.length()).mapNotNull { arr.optString(it).ifBlank { null } }.toMutableList()
                     } ?: mutableListOf()
                     if (enabled) off.remove(name) else if (name !in off) off.add(name)
                     runCatching {
-                        rpc(
+                        rpcOrThrow(
                             JSONObject().put("type", "config.set")
                                 .put("patch", JSONObject().put("disabledSkills", org.json.JSONArray(off))),
                         )
+                    }.onSuccess {
+                        refreshPlugins++
+                    }.onFailure {
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(context, "没能更新技能", Toast.LENGTH_SHORT).show()
+                        }
                     }
-                    refreshPlugins++
                 }
             },
             onClose = { leftMode = LeftMode.Recent },
@@ -4633,14 +4647,25 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                     scope.launch {
                                         val config = runCatching { rpc(JSONObject().put("type", "config.get")) }
                                             .getOrNull()?.optJSONObject("data")?.optJSONObject("config")
-                                        val off = config?.optJSONArray("disabledSkills")?.let { arr ->
+                                        if (config == null) {
+                                            withContext(Dispatchers.Main) {
+                                                Toast.makeText(context, "没能更新技能", Toast.LENGTH_SHORT).show()
+                                            }
+                                            return@launch
+                                        }
+                                        val off = config.optJSONArray("disabledSkills")?.let { arr ->
                                             (0 until arr.length()).mapNotNull { arr.optString(it).ifBlank { null } }.toMutableList()
                                         } ?: mutableListOf()
                                         if (enabled) off.remove(name) else if (name !in off) off.add(name)
                                         runCatching {
-                                            rpc(JSONObject().put("type", "config.set").put("patch", JSONObject().put("disabledSkills", org.json.JSONArray(off))))
+                                            rpcOrThrow(JSONObject().put("type", "config.set").put("patch", JSONObject().put("disabledSkills", org.json.JSONArray(off))))
+                                        }.onSuccess {
+                                            refreshPlugins++
+                                        }.onFailure {
+                                            withContext(Dispatchers.Main) {
+                                                Toast.makeText(context, "没能更新技能", Toast.LENGTH_SHORT).show()
+                                            }
                                         }
-                                        refreshPlugins++
                                     }
                                 },
                                 onClose = { leftMode = LeftMode.Recent },
@@ -5829,21 +5854,48 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     Text("重命名", fontSize = 15.sp, color = LocalText.current)
                 }
                 Row(Modifier.fillMaxWidth().clickable {
-                    request(JSONObject().put("type", "session.compact").put("sessionID", row.id)); sheetTarget = null
+                    val sid = row.id
+                    sheetTarget = null
+                    scope.launch {
+                        runCatching { rpcOrThrow(JSONObject().put("type", "session.compact").put("sessionID", sid)) }
+                            .onFailure {
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(context, "没能压缩对话", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                    }
                 }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Outlined.Checklist, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(14.dp))
                     Text("压缩对话", fontSize = 15.sp, color = LocalText.current)
                 }
                 Row(Modifier.fillMaxWidth().clickable {
-                    request(JSONObject().put("type", "session.undo").put("sessionID", row.id)); sheetTarget = null
+                    val sid = row.id
+                    sheetTarget = null
+                    scope.launch {
+                        runCatching { rpcOrThrow(JSONObject().put("type", "session.undo").put("sessionID", sid)) }
+                            .onFailure {
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(context, "没能撤销", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                    }
                 }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(14.dp))
                     Text("撤销上一步", fontSize = 15.sp, color = LocalText.current)
                 }
                 Row(Modifier.fillMaxWidth().clickable {
-                    request(JSONObject().put("type", "session.archive").put("sessionID", row.id).put("archived", true)); sheetTarget = null
+                    val sid = row.id
+                    sheetTarget = null
+                    scope.launch {
+                        runCatching { rpcOrThrow(JSONObject().put("type", "session.archive").put("sessionID", sid).put("archived", true)) }
+                            .onFailure {
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(context, "没能归档", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                    }
                 }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Outlined.Folder, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(14.dp))

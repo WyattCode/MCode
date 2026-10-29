@@ -221,6 +221,12 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 续三十四：技能开关防清空；长按表压缩/撤销/归档 await+Toast（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- Android：插件页技能开关在 `config.get` 失败时不再写空 `disabledSkills`；`rpcOrThrow` 成功才刷新，失败 Toast。会话长按表压缩/撤销/归档先关 sheet 再 await，失败 Toast。
+- 验证：smoke「Review polish r101」；未合并。
+
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
 Pad 9 Pro Max（`M367FC`）接上后，第一次把「平板发指令 → 主机跑模型 → 回复回画到平板」整条链路走通。
