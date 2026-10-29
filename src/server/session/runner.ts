@@ -3251,6 +3251,7 @@ export class SessionRunner {
            * written into a message the model cannot see, above the summary and
            * the request posted again after it.
            */
+          continuing = undefined
           continue
         }
         throw failure
@@ -3285,6 +3286,17 @@ export class SessionRunner {
           }
         : usage
       await this.store.addUsage(sessionID, usage)
+      /*
+       * Announced now, before the tools run.
+       *
+       * The ring reads the last turn that spent anything, and a mid-turn
+       * overflow compaction leaves the reply before the mark as that turn
+       * until this one is on disk. Saved here, the estimate the compaction
+       * left is replaced by this request's own count as soon as the provider
+       * reports it, rather than when the step's tools have finished - which
+       * on a long command is the rest of the turn.
+       */
+      await this.store.saveMessage(assistant)
       // What this request came to as the provider counted it, beside the estimate it was sized by.
       const promptSize = usage.input + usage.cacheRead + usage.cacheWrite
       if (promptSize > 0) this.promptAnchors.set(sessionID, { model: modelKey, measured: promptSize, estimated })

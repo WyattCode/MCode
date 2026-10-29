@@ -182,4 +182,74 @@ export async function roundTwentyNineChecks(check: Check, section: (name: string
     const diagram = await fs.readFile(path.join(process.cwd(), "src/renderer/src/lib/diagram.ts"), "utf8")
     check("quotes and > are escaped as well as < and &", /\.replace\(\/>\/g, "&gt;"\)\.replace\(\/"\/g, "&quot;"\)\.replace\(\/'\/g, "&#39;"\)/.test(diagram))
   }
+
+  // --------------------------------------------------------------- R29-4
+  section("Round 29 (4): a mid-turn compaction leaves the estimate as soon as the next request reports")
+  {
+    /*
+     * Found in use: a turn that overflowed half way through compacted, and the
+     * ring went on showing ≈estimate for the rest of the turn. The compaction
+     * marks the reply that overflowed, and the step after it is a new reply
+     * whose usage the provider reports at once - but the transcript only heard
+     * about it after the tools, so the last turn that had spent anything was
+     * still the one before the mark. Timestamps cannot separate the two: both
+     * land inside the same second. Transcript order can.
+     */
+    const providers = [{ id: "p", name: "P", models: [{ id: "m", name: "M", contextWindow: 262_144 }] }] as unknown as ProviderStatus[]
+    const turn = (id: string, created: number, completed: number, input: number): AssistantMessage =>
+      ({
+        id,
+        sessionID: "ses",
+        role: "assistant",
+        model: { provider: "p", model: "m" },
+        parts: [],
+        time: { created, completed },
+        usage: { input, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+      }) as unknown as AssistantMessage
+    const pre = turn("msg_pre", 1_000, 2_000, 108_600)
+    const boundary = turn("msg_boundary", 2_500, 2_600, 108_600)
+    const post = turn("msg_post", 2_700, 2_800, 21_400)
+    const mark = { messageID: "msg_boundary", summary: "s", at: 3_000, trigger: "provider-overflow", estimate: 21_362 } as SessionInfo["compacted"]
+
+    const held = readContext([pre, boundary], providers, mark)
+    check("with nothing spent after the boundary the estimate still stands", held?.used === 21_362 && held?.estimated === true, held?.used)
+
+    const cleared = readContext([pre, boundary, post], providers, mark)
+    check(
+      "a turn after the boundary replaces it even when its clock is behind the mark's",
+      cleared?.used === 21_400 && !cleared?.estimated,
+      cleared?.used,
+    )
+
+    const orphan = readContext([pre, post], providers, mark)
+    check("a boundary no longer in the transcript falls back to the clock, as before", orphan?.used === 21_362 && orphan?.estimated === true, orphan?.used)
+
+    /*
+     * The ring can only read what is on disk. The runner used to save the
+     * usage-bearing reply after its tools had run, so the window had nothing
+     * to read until the whole step was over.
+     */
+    const runner = await fs.readFile(path.join(process.cwd(), "src/server/session/runner.ts"), "utf8")
+    const usageAt = runner.indexOf("await this.store.addUsage(sessionID, usage)")
+    const promptAt = runner.indexOf("const promptSize = usage.input + usage.cacheRead + usage.cacheWrite")
+    const savedAt = runner.indexOf("saveMessage(assistant)", usageAt)
+    check(
+      "the reply's usage is saved before the step goes on to its tools",
+      usageAt >= 0 && promptAt > usageAt && savedAt > usageAt && savedAt < promptAt,
+      { usageAt, promptAt, savedAt },
+    )
+    check(
+      "and it is the ordinary save, so the window is told",
+      savedAt >= 0 && /^saveMessage\(assistant\)\s*\n/.test(runner.slice(savedAt, savedAt + 40)),
+      runner.slice(savedAt, savedAt + 40),
+    )
+
+    const rescueAt = runner.indexOf("rescued = step")
+    const rescueContinue = runner.indexOf("continue", rescueAt)
+    check(
+      "the overflow rescue starts a message of its own rather than continuing the cut reply",
+      rescueAt >= 0 && rescueContinue > rescueAt && runner.slice(rescueAt, rescueContinue).includes("continuing = undefined"),
+      { rescueAt, rescueContinue },
+    )
+  }
 }
