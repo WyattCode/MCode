@@ -223,7 +223,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ### 续二十一：语音/目标会话捕获、模型切换目标（2026-10-30）
 
-- PR: （打开后填）
+- PR: https://github.com/WyattCode/MCode/pull/119 （未合并）
 - Android：`finishVoice` 捕获 `forSession`，切走则写入该会话草稿；`goalEdit` 先清再 request 并捕获 sid。
 - 桌面：`chooseModel` / `chooseModelEffort` / `chooseSmart` 一次捕获 `target`。
 - 验证：smoke「Review polish r88」；未合并。
