@@ -2145,6 +2145,42 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r96")
+  {
+    const root = process.cwd()
+    const composer = await fs.readFile(path.join(root, "src/renderer/src/components/Composer.vue"), "utf8")
+    const chooseModelAt = composer.indexOf("async function chooseModel(")
+    const chooseModelBody = chooseModelAt >= 0 ? composer.slice(chooseModelAt, chooseModelAt + 1800) : ""
+    check("r96: chooseModel captures one target", /const target = sessionID\.value/.test(chooseModelBody))
+    check("r96: chooseModel writes model to that target", chooseModelBody.includes("setModel({ provider, model }, target)"))
+    check("r96: chooseModel snaps effort on that target", /setEffort\(effort, target\)/.test(chooseModelBody))
+    check("r96: chooseModel reads effort before await", /const priorEffort = session\.value\?\.effort/.test(chooseModelBody))
+    const chooseSmartAt = composer.indexOf("async function chooseSmart(")
+    const chooseSmartBody = chooseSmartAt >= 0 ? composer.slice(chooseSmartAt, chooseSmartAt + 700) : ""
+    check("r96: chooseSmart captures one target", /const target = sessionID\.value/.test(chooseSmartBody))
+    check("r96: chooseSmart writes to that target", /setSmart\(target\)/.test(chooseSmartBody))
+
+    const main = await fs.readFile(
+      path.join(root, "android/app/src/main/java/com/mcode/remote/MainActivity.kt"),
+      "utf8",
+    )
+    // InputCapsule owns the composer access chip — not the settings sheet.
+    const capsuleAt = main.indexOf("onAccess = { level ->")
+    const capsule = capsuleAt >= 0 ? main.slice(capsuleAt, capsuleAt + 900) : ""
+    check(
+      "r96: capsule access updates only on success",
+      /onSuccess/.test(capsule) && capsule.indexOf("onSuccess") < capsule.indexOf("copy(access"),
+    )
+    check("r96: capsule access toasts on failure", capsule.includes("没能更改权限"))
+    const removeAt = main.indexOf("onGoalRemove = {")
+    const remove = removeAt >= 0 ? main.slice(removeAt, removeAt + 1100) : ""
+    check(
+      "r96: goal remove clears only on success",
+      /onSuccess/.test(remove) && remove.indexOf("onSuccess") < remove.indexOf("goalMode = false"),
+    )
+    check("r96: goal remove toasts on failure", remove.includes("没能清除目标"))
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }

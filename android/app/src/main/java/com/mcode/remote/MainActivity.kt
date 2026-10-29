@@ -3579,9 +3579,16 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             onAccess = { level ->
                 currentSession?.let { sid ->
                     scope.launch {
-                        runCatching { rpc(JSONObject().put("type", "session.access").put("sessionID", sid).put("access", level)) }
-                        val at = sessions.indexOfFirst { it.id == sid }
-                        if (at >= 0) sessions[at] = sessions[at].copy(access = level)
+                        runCatching {
+                            rpc(JSONObject().put("type", "session.access").put("sessionID", sid).put("access", level))
+                        }.onSuccess {
+                            val at = sessions.indexOfFirst { it.id == sid }
+                            if (at >= 0) sessions[at] = sessions[at].copy(access = level)
+                        }.onFailure {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, "没能更改权限", Toast.LENGTH_SHORT).show()
+                            }
+                        }
                     }
                 }
             },
@@ -3618,9 +3625,18 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             onGoalRemove = {
                 currentSession?.let { sid ->
                     scope.launch {
-                        runCatching { rpc(JSONObject().put("type", "session.goal").put("sessionID", sid).put("condition", JSONObject.NULL)) }
-                        runCatching { rpc(JSONObject().put("type", "session.goalMode").put("sessionID", sid).put("on", false)) }
-                        withContext(Dispatchers.Main) { goalMode = false }
+                        runCatching {
+                            rpc(JSONObject().put("type", "session.goal").put("sessionID", sid).put("condition", JSONObject.NULL))
+                            rpc(JSONObject().put("type", "session.goalMode").put("sessionID", sid).put("on", false))
+                        }.onSuccess {
+                            val at = sessions.indexOfFirst { it.id == sid }
+                            if (at >= 0) sessions[at] = sessions[at].copy(goal = null, goalMode = false)
+                            withContext(Dispatchers.Main) { if (currentSession == sid) goalMode = false }
+                        }.onFailure {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, "没能清除目标", Toast.LENGTH_SHORT).show()
+                            }
+                        }
                     }
                 }
             },

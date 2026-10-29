@@ -3042,7 +3042,10 @@ async function chooseAgent(next: (typeof AGENTS)[number]) {
 
 async function chooseModel(provider: string, model: string) {
   menu.value = undefined
-  const before = app.modelPick(sessionID.value)
+  // One conversation for the model write, the effort snap, and the toast — a
+  // switch mid-flight cannot retarget any of them.
+  const target = sessionID.value
+  const before = app.modelPick(target)
   const chosen = findModel(app.providers, { provider, model })
   const variants = props.side ? [] : (chosen?.variants ?? [])
   /*
@@ -3054,13 +3057,14 @@ async function chooseModel(provider: string, model: string) {
    * else its first), so the level is written whenever the one in force is not
    * on offer.
    */
-  if (!sessionID.value) {
+  if (!target) {
     const effort = clampEffort(variants, app.config?.effort, chosen?.defaultEffort)
     await app.patchConfig({ model: { provider, model }, smart: false, ...(effort && effort !== app.config?.effort ? { effort } : {}) })
   } else {
-    await app.setModel({ provider, model }, sessionID.value)
-    const effort = clampEffort(variants, session.value?.effort ?? app.config?.effort, chosen?.defaultEffort)
-    if (effort && effort !== session.value?.effort) await app.setEffort(effort, sessionID.value)
+    const priorEffort = session.value?.effort ?? app.config?.effort
+    await app.setModel({ provider, model }, target)
+    const effort = clampEffort(variants, priorEffort, chosen?.defaultEffort)
+    if (effort && effort !== priorEffort) await app.setEffort(effort, target)
   }
   app.announceModel(before, { provider, model })
 }
@@ -3068,9 +3072,12 @@ async function chooseModel(provider: string, model: string) {
 /* Smart: the model is picked from the conversation's first message. */
 async function chooseSmart() {
   menu.value = undefined
-  const before = app.modelPick(sessionID.value)
-  if (!sessionID.value) await app.patchConfig({ smart: true })
-  else await app.setSmart(sessionID.value)
+  // One target for the write and the toast, so a switch mid-flight cannot
+  // retarget Smart onto a different conversation.
+  const target = sessionID.value
+  const before = app.modelPick(target)
+  if (!target) await app.patchConfig({ smart: true })
+  else await app.setSmart(target)
   app.announceModel(before, "smart")
 }
 
