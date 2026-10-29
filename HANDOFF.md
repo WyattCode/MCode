@@ -241,6 +241,24 @@ Pad 9 Pro Max（`M367FC`）接上后，第一次把「平板发指令 → 主机
 
 **这轮验证的正是前两轮修的东西**：气泡能画出来（`message.updated` 的 sessionID 修复）、文字能流式出现（`message.delta`）、工具行不膨胀。平板侧看到的是最终效果——**一个此前完全不显示回复的界面，现在能正常对话了**。
 
+### 第七十八轮（续四）：驾驶舱折叠显示推理过程（2026-10-29）
+
+**问题**：驾驶舱早就把推理片段挡在回复气泡之外（`appendDelta` 见到 `partKinds[key] === "reasoning"` 直接 `return`），这是对的——模型的思考不该冒充它说过的话。但挡得太干净了：手机上从此没有任何地方能读到思考过程，一轮长任务里屏幕只剩工具行和最后的正文，中间那段「它到底在想什么」完全消失。
+
+**做法**：给 `.msg.assistant` 加一个原生 `<details class="reasonfold">`，`<summary>` 写「思考过程」，默认不带 `open`，也就是折叠状态。用原生 details 而不是自己写 JS 开关，是因为手机上点一下就能展开，不需要页面记住哪些折过。样式上刻意做次要：`var(--muted)`、12px、左边一条 `var(--line)` 竖线，和 `.toolrow` 一个调子，读的时候不会跟正文抢注意力。
+
+**数据**：`entry.texts` 仍然只装 `type === "text"` 的正文，一个字都没多。推理另开 `entry.reasons`，块本身放进 `entry.blocks[partID]`，照常参与 `partOrder` / `placeBlock` / `settleOrder`——所以「思考 → 工具 → 回复」这个顺序在气泡里是排得出来的，不是靠到达先后碰运气。`upsertMessage`、`upsertPart`、`appendDelta` 三条路径都走同一个 `ensureReasonBlock()`：没有就建，有就改 `<pre>` 的 `textContent`。空推理不建块，免得每条消息底下挂一个空盒子。
+
+**回复路径没动**：`appendDelta` 里原来那句裸 `return` 换成了更新折叠块，`entry.texts` / `renderText` 依旧只认正文。所以正文气泡里不会混进「先想一步」。
+
+**markBusy 探针**：`markBusy` 是续二加的（发送后显示「正在回答…」，`session.idle` 收起），一直只有人肉验证。这次在 `scripts/remote-check.ts` 的页内 VM 探针里补了三条：`markBusy(true)` 后 `#busy` 可见且文案是「正在回答…」；`markBusy(false)` 后 `display === "none"`；把 `timeline.innerHTML` 清空再 `markBusy(true)`，提示要能重建出来——`select()` 和补洞重读都会清空时间线，这条才是真正会坏的地方。顺带把替身 DOM 补成能认 `tagName`、`className`、`classList.contains`、`insertBefore`，`getElementById("busy")` 也改成在 timeline 子节点里找，不然探针是自欺欺人。
+
+**推理折叠探针**：同一段探针里喂一条 `parts: [reasoning r1, text t1]` 的助手消息，断言气泡里有 `DETAILS.reasonfold`、`summary` 含「思考过程」、`open` 不是 `true`；正文 `<pre>` 恰好是「正式回答」且不含「先想一步」。再 `appendDelta` 一段推理，折叠块长成「先想一步再想」，正文还是「正式回答」；反过来给正文追加一段，正文变长而折叠块不动。
+
+**提醒**：`src/server/remote/cockpit-html.ts` 是生成出来的，改完 `cockpit.html` 记得跑 `node scripts/gen-cockpit.mjs`，别手改那份 TS。
+
+**范围**：只动 Windows 桌面、Android 远程端和浏览器驾驶舱。macOS / iOS 不涉及。
+
 ### 第七十八轮（续三）：气泡从来没画出来过 —— `message.updated` 没有 sessionID（2026-10-29）
 
 接着修驾驶舱，又挖出一个更早就存在、而且更彻底的 bug。
