@@ -2145,6 +2145,27 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r111")
+  {
+    const { readFileSync } = await import("node:fs")
+    const main = readFileSync(
+      process.cwd() + "/android/app/src/main/java/com/mcode/remote/MainActivity.kt",
+      "utf8",
+    )
+    const forkAt = main.indexOf('JSONObject().put("type", "session.fork")')
+    const fork = forkAt >= 0 ? main.slice(Math.max(0, forkAt - 240), forkAt + 900) : ""
+    check("r111: session.fork uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,160}session\.fork/.test(fork))
+    check("r111: session.fork toasts on failure", fork.includes("没能创建分支"))
+    const revAt = main.indexOf('JSONObject().put("type", "session.revert")')
+    const rev = revAt >= 0 ? main.slice(Math.max(0, revAt - 320), revAt + 500) : ""
+    check("r111: edit session.revert uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,160}session\.revert/.test(rev))
+    check("r111: edit session.revert keeps 没能撤回 toast", rev.includes("没能撤回，请重试"))
+    const redoAt = main.indexOf('MenuRow(label = "重做撤销"')
+    const redo = redoAt >= 0 ? main.slice(redoAt, redoAt + 1100) : ""
+    check("r111: header session.redo uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,120}session\.redo/.test(redo))
+    check("r111: header session.redo toasts on failure", redo.includes("没能重做"))
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }

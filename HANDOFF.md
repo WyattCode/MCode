@@ -221,6 +221,12 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 续四十四：从此处分支 / 编辑撤回 fail-closed；顶栏重做失败提示（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- Android：长按「从此处分支」`session.fork` 改 `rpcOrThrow`，ok:false/缺 id Toast「没能创建分支」；「编辑并重发」的 `session.revert` 改 `rpcOrThrow`，拒绝撤回不再继续 select/重发；顶栏「重做撤销」改 `rpcOrThrow`，失败 Toast「没能重做」。
+- 验证：smoke「Review polish r111」；未合并。
+
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
 Pad 9 Pro Max（`M367FC`）接上后，第一次把「平板发指令 → 主机跑模型 → 回复回画到平板」整条链路走通。
