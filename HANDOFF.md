@@ -223,7 +223,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ### 续五十：平板项目页走真实 RPC；手机重命名/移除失败可见；桌面新建项目空结果提示（2026-10-30）
 
-- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- PR: https://github.com/WyattCode/MCode/pull/148 （未合并）
 - Android 宽屏嵌入 `ProjectsScreen`：createBlank/add/rename/remove 从本地假状态改为 `rpcOrThrow` + Toast；`project.add` 键改为 `directory`。
 - Android 窄屏：`onRename`/`onRemove` 失败不再静默/假成功。
 - Windows：`createNamedProject` 在 client 空回复时 `notifyFailure(menu.createFailed)`。
