@@ -6091,8 +6091,13 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             {
                                 commitBusy = true
                                 scope.launch {
+                                    /*
+                                     * Plain rpc treated ok:false as a blank message and
+                                     * only said 「没能生成提交说明」. rpcOrThrow keeps
+                                     * that toast via catch -> blank written.
+                                     */
                                     val written = runCatching {
-                                        rpc(
+                                        rpcOrThrow(
                                             JSONObject().put("type", "git.commitMessage").put("directory", root)
                                                 .put("paths", org.json.JSONArray(changedFiles.toList())),
                                             60_000,
@@ -6116,8 +6121,13 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             modifier = Modifier.clickable(enabled = !commitBusy && commitMessage.isNotBlank() && changedFiles.isNotEmpty()) {
                                 commitBusy = true
                                 scope.launch {
+                                    /*
+                                     * Plain rpc treated a top-level ok:false as a soft
+                                     * 「提交失败」with no server text. rpcOrThrow fails
+                                     * closed; data.ok still decides commit success.
+                                     */
                                     val res = runCatching {
-                                        rpc(
+                                        rpcOrThrow(
                                             JSONObject().put("type", "git.commit").put("directory", root)
                                                 .put("message", commitMessage.trim())
                                                 .put("includeUnstaged", true),
@@ -6281,20 +6291,36 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                             val key = keyDraft.trim()
                                             busyKey = true
                                             scope.launch {
-                                                val reply = runCatching {
-                                                    rpc(JSONObject().put("type", "provider.auth").put("provider", id).put("apiKey", key))
-                                                }.getOrNull()
-                                                busyKey = false
-                                                val fresh = reply?.optJSONObject("data")?.optJSONArray("providers")?.let { arr ->
-                                                    (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
-                                                }
-                                                if (fresh != null) {
-                                                    providers = fresh
-                                                    keyFor = ""
-                                                    keyDraft = ""
-                                                    Toast.makeText(context, "$name 的密钥已保存", Toast.LENGTH_SHORT).show()
-                                                } else {
-                                                    Toast.makeText(context, "密钥没有保存成功", Toast.LENGTH_LONG).show()
+                                                /*
+                                                 * Plain rpc treated ok:false as a missing
+                                                 * providers list and only said 「密钥没有
+                                                 * 保存成功」— drop the error text the
+                                                 * server already sent. rpcOrThrow surfaces
+                                                 * it; refresh providers only onSuccess.
+                                                 */
+                                                runCatching {
+                                                    rpcOrThrow(JSONObject().put("type", "provider.auth").put("provider", id).put("apiKey", key))
+                                                }.onSuccess { reply ->
+                                                    val fresh = reply.optJSONObject("data")?.optJSONArray("providers")?.let { arr ->
+                                                        (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
+                                                    }
+                                                    withContext(Dispatchers.Main) {
+                                                        busyKey = false
+                                                        if (fresh != null) {
+                                                            providers = fresh
+                                                            keyFor = ""
+                                                            keyDraft = ""
+                                                            Toast.makeText(context, "$name 的密钥已保存", Toast.LENGTH_SHORT).show()
+                                                        } else {
+                                                            Toast.makeText(context, "密钥没有保存成功", Toast.LENGTH_LONG).show()
+                                                        }
+                                                    }
+                                                }.onFailure { e ->
+                                                    if (e is kotlinx.coroutines.CancellationException) throw e
+                                                    withContext(Dispatchers.Main) {
+                                                        busyKey = false
+                                                        Toast.makeText(context, "密钥没有保存成功", Toast.LENGTH_LONG).show()
+                                                    }
                                                 }
                                             }
                                         },

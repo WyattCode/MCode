@@ -2910,6 +2910,7 @@ async function main() {
     check("r110: session.get toasts on failure", get.includes("没能打开对话"))
   section("Review polish r111")
   section("Review polish r112")
+  section("Review polish r113")
   {
     const { readFileSync } = await import("node:fs")
     const main = readFileSync(
@@ -2946,6 +2947,20 @@ async function main() {
     const createAt = main.indexOf('JSONObject().put("type", "session.create")')
     const create = createAt >= 0 ? main.slice(createAt, createAt + 500) : ""
     check("r112: session.create uses rpcOrThrow", create.includes("rpcOrThrow(ask)"))
+    const authAt = main.indexOf('JSONObject().put("type", "provider.auth")')
+    const auth = authAt >= 0 ? main.slice(Math.max(0, authAt - 500), authAt + 1600) : ""
+    check("r113: provider.auth uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,160}provider\.auth/.test(auth))
+    check("r113: provider.auth refreshes onSuccess", auth.includes("onSuccess") && auth.includes("providers = fresh"))
+    check("r113: provider.auth toasts on failure", auth.includes("密钥没有保存成功"))
+    check("r113: provider.auth no plain rpc(", !/\brpc\(JSONObject\(\)\.put\("type", "provider\.auth"\)/.test(auth))
+    const msgAt = main.indexOf('JSONObject().put("type", "git.commitMessage")')
+    const msg = msgAt >= 0 ? main.slice(Math.max(0, msgAt - 200), msgAt + 500) : ""
+    check("r113: git.commitMessage uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,120}git\.commitMessage/.test(msg))
+    check("r113: git.commitMessage toasts blank", msg.includes("没能生成提交说明") || main.includes("没能生成提交说明"))
+    const commitAt = main.indexOf('JSONObject().put("type", "git.commit")')
+    const commit = commitAt >= 0 ? main.slice(Math.max(0, commitAt - 200), commitAt + 700) : ""
+    check("r113: git.commit uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,160}git\.commit"/.test(commit))
+    check("r113: git.commit keeps data.ok gate", commit.includes('optBoolean("ok")'))
   }
 
   section("Permission guide")
