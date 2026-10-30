@@ -380,8 +380,13 @@ export const useApp = defineStore("app", () => {
     const was = next.has(sessionID)
     if (was) next.delete(sessionID)
     else next.add(sessionID)
-    await patchConfig({ pinnedTabs: [...next] })
-    notify(t(was ? "side.unpinnedToast" : "side.pinnedToast"))
+    try {
+      await patchConfig({ pinnedTabs: [...next] })
+      notify(t(was ? "side.unpinnedToast" : "side.pinnedToast"))
+    } catch {
+      // patchConfig already toasts prefSaveFailed; leave pin state for retry.
+      return
+    }
   }
 
   /*
@@ -1452,8 +1457,13 @@ export const useApp = defineStore("app", () => {
     const { session } = result
     // Same guard as create(): the session.updated event usually lands first.
     if (!sessions.value.some((entry) => entry.id === session.id)) sessions.value.unshift(session)
-    await open(session.id)
-    notify(how.here ? t("stream.forkedFromHere") : t("stream.forkedFromCurrent"))
+    try {
+      await open(session.id)
+      notify(how.here ? t("stream.forkedFromHere") : t("stream.forkedFromCurrent"))
+    } catch (err) {
+      // Fork landed; opening it failed — keep the session in the list, say so.
+      notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    }
     return session
   }
 
