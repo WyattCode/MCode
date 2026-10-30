@@ -1197,6 +1197,12 @@ async function toggleGoalMode() {
   const target = sessionID.value
   const next = !goalMode.value
   await app.setGoalMode(next, target)
+  try {
+    await app.setGoalMode(next, sessionID.value)
+  } catch (err) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    return
+  }
   notify(t(next ? "toast.goalOn" : "toast.goalOff"))
 }
 

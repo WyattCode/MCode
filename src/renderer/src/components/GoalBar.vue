@@ -22,6 +22,7 @@ import type { SessionInfo } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { composing } from "../lib/keys"
 import { t } from "../lib/i18n"
+import { notifyFailure } from "../lib/toast"
 
 const props = defineProps<{ sessionID: string }>()
 const app = useApp()
@@ -122,7 +123,11 @@ async function commitEdit() {
   editing.value = false
   const next = draft.value.trim()
   if (!next || next === goal.value?.condition) return
-  await app.setGoal(props.sessionID, next)
+  try {
+    await app.setGoal(props.sessionID, next)
+  } catch (err) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+  }
 }
 
 const rerunning = ref(false)
@@ -137,6 +142,28 @@ async function rerun() {
     await app.send(condition, [], props.sessionID)
   } finally {
     rerunning.value = false
+  if (!condition || restricted.value) return
+  try {
+    await app.setGoal(props.sessionID, condition)
+    await app.send(condition, [], props.sessionID)
+  } catch (err) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+  }
+}
+
+async function dismiss() {
+  try {
+    await app.setGoal(props.sessionID, null)
+  } catch (err) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+  }
+}
+
+async function leave() {
+  try {
+    await app.leaveGoal(props.sessionID)
+  } catch (err) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
   }
 }
 </script>
@@ -186,12 +213,12 @@ async function rerun() {
           >
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 1 2.3 5.6M4 12V7M4 12h5" /></svg>
           </button>
-          <button class="goal-act" type="button" data-goal-dismiss v-tip="{ label: t('composer.goalBar.dismiss'), placement: 'top' }" @click="app.setGoal(props.sessionID, null)">
+          <button class="goal-act" type="button" data-goal-dismiss v-tip="{ label: t('composer.goalBar.dismiss'), placement: 'top' }" @click="dismiss">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
           </button>
         </template>
         <template v-else>
-          <button class="goal-act" type="button" data-goal-remove v-tip="{ label: t('composer.goalBar.remove'), placement: 'top' }" @click="app.leaveGoal(props.sessionID)">
+          <button class="goal-act" type="button" data-goal-remove v-tip="{ label: t('composer.goalBar.remove'), placement: 'top' }" @click="leave">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.2h16M9 3h6M6.5 6.2 7 18.9a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l.5-12.7" /></svg>
           </button>
           <button v-if="running" class="goal-act" type="button" data-goal-stop v-tip="{ label: t('composer.goalBar.stop'), placement: 'top' }" @click="app.abort(props.sessionID)">

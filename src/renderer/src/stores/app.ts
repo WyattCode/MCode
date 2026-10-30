@@ -1951,7 +1951,12 @@ export const useApp = defineStore("app", () => {
     const target = home ? undefined : currentID.value
     const session = target ? sessions.value.find((entry) => entry.id === target) : undefined
     const next = !(session ? (session.goalMode ?? false) : (config.value?.goalMode ?? false))
-    await setGoalMode(next, target)
+    try {
+      await setGoalMode(next, target)
+    } catch (err) {
+      notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+      return
+    }
     notify(t(next ? "toast.goalOn" : "toast.goalOff"))
   }
 
