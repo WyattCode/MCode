@@ -4017,8 +4017,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 goalResending.set(false)
                     scope.launch {
                         runCatching {
-                            rpc(JSONObject().put("type", "session.goal").put("sessionID", sessionID).put("condition", condition))
-                            rpc(JSONObject().put("type", "session.prompt").put("sessionID", sessionID).put("text", condition))
+                            rpcOrThrow(JSONObject().put("type", "session.goal").put("sessionID", sessionID).put("condition", condition))
+                            rpcOrThrow(JSONObject().put("type", "session.prompt").put("sessionID", sessionID).put("text", condition))
                             // The reader may have left this conversation while the
                             // two round trips were out; the row it names is still
                             // the one that started running, so the id is taken
@@ -4027,6 +4027,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         }.onFailure {
                             withContext(Dispatchers.Main) {
                                 Toast.makeText(context, "没能重新执行目标", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "无法重新发送目标", Toast.LENGTH_SHORT).show()
                             }
                         }
                     }
@@ -5813,10 +5814,17 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         withContext(Dispatchers.Main) {
                             Toast.makeText(context, "没能打开终端", Toast.LENGTH_SHORT).show()
                     val opened = runCatching {
-                        rpc(JSONObject().put("type", "shell.open").put("directory", root).put("cols", 100).put("rows", 40))
-                    }.getOrNull() ?: return@LaunchedEffect
+                        rpcOrThrow(JSONObject().put("type", "shell.open").put("directory", root).put("cols", 100).put("rows", 40))
+                    }.getOrNull()
+                    if (opened == null) {
+                        Toast.makeText(context, "无法打开终端", Toast.LENGTH_SHORT).show()
+                        return@LaunchedEffect
+                    }
                     val id = opened.optJSONObject("data")?.optString("shellID").orEmpty()
-                    if (id.isBlank()) return@LaunchedEffect
+                    if (id.isBlank()) {
+                        Toast.makeText(context, "无法打开终端", Toast.LENGTH_SHORT).show()
+                        return@LaunchedEffect
+                    }
                     terminalId = id
                     runCatching {
                         val attached = rpcOrThrow(JSONObject().put("type", "shell.attach").put("shellID", id))
@@ -5827,6 +5835,15 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             Toast.makeText(context, "没能连接终端", Toast.LENGTH_SHORT).show()
                         }
                     }
+                    val attached = runCatching {
+                        rpcOrThrow(JSONObject().put("type", "shell.attach").put("shellID", id))
+                    }.getOrNull()
+                    if (attached == null) {
+                        Toast.makeText(context, "无法读取终端内容", Toast.LENGTH_SHORT).show()
+                        return@LaunchedEffect
+                    }
+                    val seen = attached.optJSONObject("data")?.optString("data").orEmpty()
+                    if (seen.isNotBlank()) terminalText = seen.takeLast(8000)
                 }
                 Box(
                     Modifier

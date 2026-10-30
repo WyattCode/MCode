@@ -600,6 +600,12 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - PR: https://github.com/WyattCode/MCode/pull/152 （未合并）
 - 桌面：Composer 拖入 `directoriesOf` IPC 失败不再把文件夹误标成文件 @mention，改为 `common.requestFailed`；侧栏拖项目同样 toast 且不 emit 空列表；会话标题就地重命名与对话框重命名失败 toast，就地失败恢复旧标题。
 - 验证：smoke「Review polish r121」；未合并。
+### 续五十五：终端列表失败提示 / 目标重发失败提示 / 安卓终端打开失败提示（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- 桌面：TerminalDrawer `shell.list` IPC 失败不再静默当首次打开；toast `common.requestFailed` 并仍开一个可用标签。
+- 安卓：目标重发走 `rpcOrThrow`，失败 Toast「无法重新发送目标」；终端 sheet `shell.open`/`shell.attach` 失败 Toast，open 失败保留 `terminalId` 为空以便重试。
+- 验证：smoke「Review polish r122」；未合并。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 

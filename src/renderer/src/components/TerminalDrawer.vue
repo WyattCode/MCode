@@ -4,6 +4,7 @@ import TerminalPane from "./TerminalPane.vue"
 import ConfirmDialog from "./ConfirmDialog.vue"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
+import { notifyFailure } from "../lib/toast"
 import { clampPanelHeight, nextTerminalNumber, shouldRespawn, showMismatch, storedPanelHeight, terminalLabel } from "../lib/terminal"
 
 const emit = defineEmits<{ close: []; height: [px: number] }>()
@@ -188,9 +189,15 @@ onMounted(async () => {
     return
   }
   // The drawer's own shells only: the right panel's terminal is not a tab here (N11-9).
-  const found = await client.request({ type: "shell.list", ...where, surface: "drawer" }).catch(() => undefined)
-  if (found?.shells.length) for (const shell of found.shells) add(shell.shellID, shell.cwd, shell.used)
-  else add()
+  try {
+    const found = await client.request({ type: "shell.list", ...where, surface: "drawer" })
+    if (found?.shells.length) for (const shell of found.shells) add(shell.shellID, shell.cwd, shell.used)
+    else add()
+  } catch (err) {
+    // Keep one usable tab; do not orphan running shells without a word.
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    add()
+  }
 })
 
 /* A terminal someone typed into is held for MiMo's question; the rest close at once. */
