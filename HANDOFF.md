@@ -741,6 +741,11 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - Windows：`composer-input.json` 读失败设 blocked 拒 save/flush；渲染层 loadFailed 后一律不写（不再仅空草稿）。
 - Windows：`login-item.json` unreadable 拒写（开发构建）。
 - 验证：slice smoke「Review polish r147」；未合并。
+### 续八十一：Android 打开产物失败 Toast；update-transaction 拒覆写 + install begin fail-closed（2026-10-30）
+- PR: https://github.com/WyattCode/MCode/pull/179 （未合并）
+- Android：`openArtifact` 在 `file.read` 无内容时 Toast「打不开这个文件」。
+- Windows：`update-transaction.json` 不可读时 blocked/quarantine；`install-update` 在 `begin()` 失败时 `{ok:false}`，不退出安装。
+- 验证：slice smoke「Review polish r148」；未合并。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 

@@ -3100,6 +3100,7 @@ async function main() {
   section("Review polish r143")
   section("Review polish r144")
   section("Review polish r147")
+  section("Review polish r148")
   {
     const { readFileSync } = await import("node:fs")
     const { join } = await import("node:path")
@@ -3950,6 +3951,24 @@ async function main() {
     check("drafts never write after a failed load", drafts.includes("return loadFailed ? undefined : file"))
     const main = readFileSync(join(root, "src/main/index.ts"), "utf8")
     check("login-item blocks writes after a failed read", main.includes("loginItemBlocked"))
+    const android = readFileSync(join(root, "android/app/src/main/java/com/mcode/remote/MainActivity.kt"), "utf8")
+    const openAt = android.indexOf("fun openArtifact(")
+    const open = openAt >= 0 ? android.slice(openAt, openAt + 7000) : ""
+    check("r148: openArtifact toasts blank/failed read", open.includes("打不开这个文件"))
+    check(
+      "r148: openArtifact blank branch uses error fallback",
+      open.includes('payload?.optString("error")') && open.includes("打不开这个文件"),
+    )
+    const tx = readFileSync(join(root, "src/main/update-transaction.ts"), "utf8")
+    check("r148: updateTransactionBlocked field", tx.includes("let updateTransactionBlocked"))
+    check("r148: update-tx write refuses blocked", tx.includes("if (updateTransactionBlocked)"))
+    check('r148: update-tx read distinguishes ENOENT', tx.includes('code === "ENOENT"'))
+    const main = readFileSync(join(root, "src/main/index.ts"), "utf8")
+    check(
+      "r148: install-update begin fail-closed",
+      main.includes("if (!updateTransactions.begin(") &&
+        main.includes("update-transaction.json could not be written"),
+    )
   }
 
   section("Permission guide")

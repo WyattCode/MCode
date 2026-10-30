@@ -36,16 +36,53 @@ export interface TransactionStore {
  * longer parses is read at the next launch as "invalid" - an interruption
  * reported for an update that may well have finished.
  */
+/** Set when update-transaction.json could not be read; nothing may be written over it. */
+let updateTransactionBlocked: string | undefined
+
+/** Moves an unreadable transaction file aside; undefined if that fails. */
+function quarantineSync(target: string): string | undefined {
+  const iso = new Date().toISOString().replace(/[:.]/g, "-")
+  for (let i = 0; i < 4; i++) {
+    const aside = i === 0 ? `${target}.corrupt-${iso}` : `${target}.corrupt-${iso}-${i}`
+    try {
+      fs.renameSync(target, aside)
+      return aside
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") continue
+      return undefined
+    }
+  }
+  return undefined
+}
+
 export function fileTransactionStore(file: string): TransactionStore {
   return {
     read: () => {
+      let text: string
       try {
-        return fs.readFileSync(file, "utf8")
-      } catch {
+        text = fs.readFileSync(file, "utf8")
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined
+        const aside = quarantineSync(file)
+        if (aside) {
+          console.warn("[update-tx] update-transaction.json could not be read; kept as", aside)
+          updateTransactionBlocked = undefined
+          return undefined
+        }
+        updateTransactionBlocked =
+          "update-transaction.json could not be read, so nothing is saved over it until it is fixed or removed."
+        console.warn("[update-tx] update-transaction.json could not be read:", err instanceof Error ? err.message : err)
         return undefined
       }
+      updateTransactionBlocked = undefined
+      return text
     },
-    write: (text) => writeAtomicSync(file, `${text}\n`, 0o600),
+    write: (text) => {
+      if (updateTransactionBlocked) {
+        throw new Error(updateTransactionBlocked)
+      }
+      writeAtomicSync(file, `${text}\n`, 0o600)
+    },
     remove: () => {
       try {
         fs.unlinkSync(file)
