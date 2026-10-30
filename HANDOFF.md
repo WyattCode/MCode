@@ -689,6 +689,11 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - PR: https://github.com/WyattCode/MCode/pull/168 （未合并）
 - Windows：`App.createNamedProject` 在 `project.createBlank` 无应答时 Toast「创建失败」（对齐 #146 HomeHero，本切片补 Projects「+」路径）；`applyMcpNow` 空结果除 inline 状态外补 `notifyFailure(set.mcp.applyFailed)`；`chooseAppIcon` 的 `patchConfig` 用 `quiet` 后统一 `set.appIconApplyFail`（避免通用 prefSaveFailed 与图标文案叠两层）。
 - 验证：slice smoke「Review polish r137」；未合并。
+### 续七十一：提交说明生成失败拒默写 update、端点/系统说明保存失败不假成功（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/169 （未合并）
+- Windows：`InfoCommitCard.commit` 在 `git.commitMessage` 空/失败时设 `error` 并返回，不再默写 `"update"` 提交；`ModelsPage.saveEndpoint` / `SettingsDialog.saveInstructions` 对 `patchConfig` 加 try/catch，仅成功后清草稿并 toast「已保存」。
+- 验证：slice smoke「Review polish r138」；未合并。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 

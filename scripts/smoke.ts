@@ -3092,6 +3092,7 @@ async function main() {
   section("Review polish r120")
   section("Review polish r123")
   section("Review polish r137")
+  section("Review polish r138")
   {
     const { readFileSync } = await import("node:fs")
     const { join } = await import("node:path")
@@ -3680,6 +3681,39 @@ async function main() {
       icon.includes("quiet: true") &&
         icon.includes('notifyFailure(t("set.appIconApplyFail"))') &&
         icon.includes("window.mcode.appIcon(appIcon.value)"),
+    const commitCard = readFileSync(join(root, "src/renderer/src/components/InfoCommitCard.vue"), "utf8")
+    const commitAt = commitCard.indexOf("async function commit(andPush: boolean)")
+    const commitEnd = commitCard.indexOf("async function push()", commitAt)
+    const commitFn = (commitAt >= 0 && commitEnd > commitAt ? commitCard.slice(commitAt, commitEnd) : "").replace(/\r\n/g, "\n")
+    check(
+      "r138: commit-gen refuses silent update",
+      commitFn.includes('error.value = t("common.requestFailed")') &&
+        !commitFn.includes('text = "update"') &&
+        commitFn.includes("git.commitMessage"),
+    )
+
+    const modelsPage = readFileSync(join(root, "src/renderer/src/components/ModelsPage.vue"), "utf8")
+    const epAt = modelsPage.indexOf("async function saveEndpoint")
+    const epEnd = modelsPage.indexOf("function localFailure", epAt)
+    const ep = (epAt >= 0 && epEnd > epAt ? modelsPage.slice(epAt, epEnd) : "").replace(/\r\n/g, "\n")
+    check(
+      "r138: saveEndpoint success-only clear/toast",
+      ep.includes("try {") &&
+        ep.includes("catch {") &&
+        ep.indexOf("await app.patchConfig") < ep.indexOf("delete endpoints.value") &&
+        ep.indexOf("delete endpoints.value") < ep.indexOf('notify(t("set.saved"))'),
+    )
+
+    const settings = readFileSync(join(root, "src/renderer/src/components/SettingsDialog.vue"), "utf8")
+    const siAt = settings.indexOf("async function saveInstructions")
+    const siEnd = settings.indexOf("const paths = ref", siAt)
+    const si = (siAt >= 0 && siEnd > siAt ? settings.slice(siAt, siEnd) : "").replace(/\r\n/g, "\n")
+    check(
+      "r138: saveInstructions success-only draft/toast",
+      si.includes("try {") &&
+        si.includes("catch {") &&
+        si.indexOf("await app.patchConfig") < si.indexOf("draft.value = text") &&
+        si.indexOf("draft.value = text") < si.indexOf('notify(t("set.instructionsSaved"))'),
     )
   }
 

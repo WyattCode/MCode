@@ -107,9 +107,14 @@ function endpointChanged(provider: ProviderStatus): boolean {
 async function saveEndpoint(provider: ProviderStatus) {
   const value = endpoints.value[provider.id]?.trim()
   if (!value) return
-  await app.patchConfig({ providerEndpoints: { ...(app.config?.providerEndpoints ?? {}), [provider.id]: value } })
-  delete endpoints.value[provider.id]
-  notify(t("set.saved"))
+  try {
+    await app.patchConfig({ providerEndpoints: { ...(app.config?.providerEndpoints ?? {}), [provider.id]: value } })
+    delete endpoints.value[provider.id]
+    notify(t("set.saved"))
+  } catch {
+    // patchConfig already toasts prefSaveFailed; keep the draft for retry.
+    return
+  }
 }
 
 /** A better answer than the network's own for a runtime on this machine that is not running its server. */

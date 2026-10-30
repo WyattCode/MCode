@@ -172,8 +172,11 @@ async function commit(andPush: boolean) {
       } catch {
         text = ""
       }
-      // The server already falls back to MiMo's wording; this covers a request that never arrived.
-      if (!text) text = "update"
+      // Gen failed or never arrived: refuse a silent "update" commit; surface the miss.
+      if (!text) {
+        error.value = t("common.requestFailed")
+        return
+      }
     }
     phase.value = "commit"
     let result: CommitResult | undefined
