@@ -6491,6 +6491,16 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                     Toast.makeText(context, "没能压缩对话", Toast.LENGTH_SHORT).show()
                                 }
                             }
+                    scope.launch {
+                        runCatching {
+                            rpcOrThrow(JSONObject().put("type", "session.compact").put("sessionID", row.id))
+                        }.onSuccess {
+                            sheetTarget = null
+                        }.onFailure {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, "没能压缩对话", Toast.LENGTH_SHORT).show()
+                            }
+                        }
                     }
                 }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Outlined.Checklist, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(20.dp))
@@ -6508,6 +6518,16 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                     Toast.makeText(context, "没能撤销", Toast.LENGTH_SHORT).show()
                                 }
                             }
+                    scope.launch {
+                        runCatching {
+                            rpcOrThrow(JSONObject().put("type", "session.undo").put("sessionID", row.id))
+                        }.onSuccess {
+                            sheetTarget = null
+                        }.onFailure {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, "没能撤销", Toast.LENGTH_SHORT).show()
+                            }
+                        }
                     }
                 }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(20.dp))
@@ -6525,6 +6545,16 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                     Toast.makeText(context, "没能归档", Toast.LENGTH_SHORT).show()
                                 }
                             }
+                    scope.launch {
+                        runCatching {
+                            rpcOrThrow(JSONObject().put("type", "session.archive").put("sessionID", row.id).put("archived", true))
+                        }.onSuccess {
+                            sheetTarget = null
+                        }.onFailure {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, "没能归档", Toast.LENGTH_SHORT).show()
+                            }
+                        }
                     }
                 }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Outlined.Folder, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(20.dp))

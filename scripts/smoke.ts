@@ -3089,6 +3089,46 @@ async function main() {
     const scanAt = settings.indexOf("async function startMcpImport")
     const scan = scanAt >= 0 ? settings.slice(scanAt, scanAt + 900) : ""
     check("r119: mcp.importScan fail-closed", scan.includes("if (!result)") && scan.includes("set.mcp.importFailed") && scan.includes("mcpView.value = \"import\""))
+  section("Review polish r120")
+  {
+    const { readFileSync } = await import("node:fs")
+    const { join } = await import("node:path")
+    const root = process.cwd()
+    const main = readFileSync(join(root, "android/app/src/main/java/com/mcode/remote/MainActivity.kt"), "utf8")
+    // Find the sheet row: the needle whose surrounding window also carries the row label.
+    const near = (needle: string, label: string): string => {
+      let from = 0
+      let at = main.indexOf(needle, from)
+      while (at >= 0) {
+        const window = main.slice(Math.max(0, at - 200), at + 1200)
+        if (window.includes(label)) return window
+        from = at + 1
+        at = main.indexOf(needle, from)
+      }
+      const first = main.indexOf(needle)
+      return first >= 0 ? main.slice(Math.max(0, first - 200), first + 1200) : ""
+    }
+    const compact = near('put("type", "session.compact")', 'Text("压缩对话"')
+    check("r120: sheet compact uses rpcOrThrow", /rpcOrThrow[\s\S]{0,80}session\.compact/.test(compact))
+    check("r120: sheet compact toasts", compact.includes("没能压缩对话"))
+    const undo = near('put("type", "session.undo")', 'Text("撤销上一步"')
+    check("r120: sheet undo uses rpcOrThrow", /rpcOrThrow[\s\S]{0,80}session\.undo/.test(undo))
+    check("r120: sheet undo toasts", undo.includes("没能撤销"))
+    const archive = near('put("type", "session.archive")', 'Text("归档"')
+    check("r120: sheet archive uses rpcOrThrow", /rpcOrThrow[\s\S]{0,120}session\.archive/.test(archive))
+    check("r120: sheet archive toasts", archive.includes("没能归档"))
+
+    const appVue = readFileSync(join(root, "src/renderer/src/App.vue"), "utf8")
+    const relAt = appVue.indexOf("relocate: async (directory)")
+    const rel = relAt >= 0 ? appVue.slice(relAt, relAt + 2200) : ""
+    check("r120: relocate checks config before move", /const config = app\.config[\s\S]{0,200}notifyFailure[\s\S]{0,200}app\.move/.test(rel))
+    check("r120: relocate patchConfig try/catch", rel.includes("catch (err)") && rel.includes("common.requestFailed"))
+
+    const files = readFileSync(join(root, "src/renderer/src/components/right/RpFiles.vue"), "utf8")
+    const listAt = files.indexOf("async function listDir")
+    const list = listAt >= 0 ? files.slice(listAt, listAt + 900) : ""
+    check("r120: listDir notifyFailure", list.includes("notifyFailure") && list.includes("common.requestFailed"))
+    check("r120: listDir no empty catch", !list.includes(".catch(() => [] as DirEntry[])"))
   }
 
   section("Permission guide")

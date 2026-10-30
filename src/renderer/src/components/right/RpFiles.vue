@@ -80,10 +80,16 @@ const treeOpen = ref(true)
 async function listDir(sub: string) {
   const directory = root.value
   if (!directory || !app.client) return
-  const entries = await app.client
-    .request({ type: "file.listDir", directory, sub, all: true })
-    .then((result) => result.entries)
-    .catch(() => [] as DirEntry[])
+  let entries: DirEntry[]
+  try {
+    entries = (await app.client.request({ type: "file.listDir", directory, sub, all: true })).entries
+  } catch (err) {
+    // Keep the previous listing: an empty catch used to look like an empty folder.
+    if (root.value === directory) {
+      notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    }
+    return
+  }
   if (root.value !== directory) return
   listing.value = { ...listing.value, [sub]: entries }
   if (!sub) rootListed.value = true
