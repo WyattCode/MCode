@@ -227,10 +227,12 @@ async function copyImage() {
   else notice.danger(t("imagePreview.copyFailed"))
 }
 
-/* MiMo shows the file in its folder without a notice. */
-function reveal() {
+/* MiMo shows the file in its folder without a notice on success; say why on failure. */
+async function reveal() {
   const file = imagePreview.value?.path
-  if (file) void window.mcode.revealNativePath(file).catch(() => undefined)
+  if (!file) return
+  const result = await window.mcode.revealNativePath(file).catch((error: unknown) => ({ ok: false as const, error: String(error) }))
+  if (!result.ok) notice.danger(t("officeCard.revealFailed", { error: result.error }))
 }
 
 /* The thumbnail a neighbour is shown by, when it is on screen, so the picture zooms out of that one. */

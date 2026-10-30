@@ -581,7 +581,12 @@ async function startMcpImport() {
   mcpScanning.value = true
   try {
     const result = await app.client?.request({ type: "mcp.importScan" }).catch(() => undefined)
-    mcpImports.value = result?.items ?? []
+    // Null client / rejected scan used to open an empty import view as if nothing was found.
+    if (!result) {
+      notifyFailure(t("set.mcp.importFailed") + t("common.requestFailed"))
+      return
+    }
+    mcpImports.value = result.items ?? []
     mcpImportPicked.value = new Set(mcpImports.value.filter((item) => !item.exists).map(importKey))
     mcpView.value = "import"
   } finally {
