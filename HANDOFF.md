@@ -223,7 +223,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ### 续六十二：MCP 导入/授权空 client fail-closed；硬件加速失败回滚（2026-10-30）
 
-- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- PR: https://github.com/WyattCode/MCode/pull/160 （未合并）
 - Windows Settings：`finishMcpImport` / `authorizeMcp` 在 `client` 为空时不再假成功 toast；`toggleHardwareAcceleration` 失败回滚开关并 `notifyFailure`。
 - 验证：smoke「Review polish r129」；未合并。
 
