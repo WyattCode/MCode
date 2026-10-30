@@ -36,7 +36,9 @@
     "promptcheck": "esbuild scripts/prompt-check.ts --bundle --platform=node --format=esm --target=node22 --alias:@shared=./src/shared --outfile=out/prompt-check.mjs --packages=external && node out/prompt-check.mjs",
     "shellcheck": "esbuild scripts/shell-check.ts --bundle --platform=node --format=esm --target=node22 --alias:@shared=./src/shared --outfile=out/shell-check.mjs --packages=external && node out/shell-check.mjs",
     "providercheck": "esbuild scripts/provider-check.ts --bundle --platform=node --format=esm --target=node22 --alias:@shared=./src/shared --outfile=out/provider-check.mjs --packages=external && node out/provider-check.mjs",
-    "pathscheck": "esbuild scripts/paths-check.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/paths-check.mjs --packages=external && node out/paths-check.mjs"
+    "pathscheck": "esbuild scripts/paths-check.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/paths-check.mjs --packages=external && node out/paths-check.mjs",
+    "gencheck": "node scripts/gen-cockpit.mjs --check",
+    "prebuild": "npm run gencheck"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.117.1",

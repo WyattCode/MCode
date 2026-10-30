@@ -13,10 +13,32 @@ import fs from "node:fs"
 const source = "src/server/remote/cockpit.html"
 const target = "src/server/remote/cockpit-html.ts"
 
+/*
+ * `--check` answers "is the generated file current?" without writing.
+ *
+ * This step is manual, and nothing failed when it was skipped: the gateway kept
+ * serving an older page, every check that reads the source kept passing, and the
+ * only symptom was a phone offering a button it should not have. A check mode
+ * lets the build fail on a stale file instead.
+ */
+const checkOnly = process.argv.includes("--check")
+
 const html = fs.readFileSync(source, "utf8")
 const header = "// Generated from cockpit.html - edit that file and re-run the generator.\n"
-// One encode, not two: the module evaluates to the HTML string the server sends.
-fs.writeFileSync(target, `${header}export const cockpitHtml =\n  ${JSON.stringify(html)}\n`)
+const expected = `${header}export const cockpitHtml =\n  ${JSON.stringify(html)}\n`
+
+if (checkOnly) {
+  const current = fs.existsSync(target) ? fs.readFileSync(target, "utf8") : ""
+  if (current === expected) {
+    console.log(`${target} is current (${html.length} chars)`)
+    process.exit(0)
+  }
+  console.log(`${target} is STALE - run: node scripts/gen-cockpit.mjs`)
+  console.log(`  source ${html.length} chars, generated ${current.length} chars`)
+  process.exit(1)
+}
+
+fs.writeFileSync(target, expected)
 
 // Read it back the way the bundle will, and prove it is the file it came from.
 const written = fs.readFileSync(target, "utf8").slice(header.length)
