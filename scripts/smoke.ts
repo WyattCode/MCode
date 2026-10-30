@@ -2436,6 +2436,20 @@ async function main() {
     const chooseSmartBody = chooseSmartAt >= 0 ? composer.slice(chooseSmartAt, chooseSmartAt + 700) : ""
     check("r96: chooseSmart captures one target", /const target = sessionID\.value/.test(chooseSmartBody))
     check("r96: chooseSmart writes to that target", /setSmart\(target\)/.test(chooseSmartBody))
+  section("Review polish r97")
+  {
+    const root = process.cwd()
+    const composer = await fs.readFile(path.join(root, "src/renderer/src/components/Composer.vue"), "utf8")
+    const effortAt = composer.indexOf("async function chooseModelEffort(")
+    const effortBody = effortAt >= 0 ? composer.slice(effortAt, effortAt + 900) : ""
+    check("r97: chooseModelEffort captures one target", /const target = sessionID\.value/.test(effortBody))
+    check("r97: chooseModelEffort writes model to that target", effortBody.includes("setModel({ provider, model }, target)"))
+    check("r97: chooseModelEffort writes effort to that target", /setEffort\(level, target\)/.test(effortBody))
+    const toggleAt = composer.indexOf("async function toggleGoalMode(")
+    const toggleBody = toggleAt >= 0 ? composer.slice(toggleAt, toggleAt + 600) : ""
+    check("r97: toggleGoalMode captures target", /const target = sessionID\.value/.test(toggleBody))
+    check("r97: toggleGoalMode captures next before await", /const next = !goalMode\.value/.test(toggleBody))
+    check("r97: toggleGoalMode toasts the captured next", /notify\(t\(next \? "toast\.goalOn"/.test(toggleBody))
 
     const main = await fs.readFile(
       path.join(root, "android/app/src/main/java/com/mcode/remote/MainActivity.kt"),
@@ -2699,6 +2713,13 @@ async function main() {
       /onSuccess/.test(remove) && remove.indexOf("onSuccess") < remove.indexOf("goalMode = false"),
     )
     check("r96: goal remove toasts on failure", remove.includes("没能清除目标"))
+    const reopenAt = main.indexOf("onReopen = {")
+    const reopen = reopenAt >= 0 ? main.slice(reopenAt, reopenAt + 700) : ""
+    check(
+      "r97: archive reopen navigates only on success",
+      /onSuccess/.test(reopen) && reopen.indexOf("onSuccess") < reopen.indexOf("select(id)"),
+    )
+    check("r97: archive reopen toasts on failure", reopen.includes("没能恢复会话"))
   }
 
   section("Permission guide")

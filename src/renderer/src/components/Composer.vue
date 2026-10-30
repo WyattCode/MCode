@@ -1171,6 +1171,12 @@ const goalMode = computed(() => (sessionID.value ? (session.value?.goalMode ?? f
 async function toggleGoalMode() {
   const next = !goalMode.value
   await app.setGoalMode(next, sessionID.value)
+  // Capture both before the await: a switch mid-flight must not retarget
+  // the write, and the toast must name the value that was asked for — not
+  // whatever the newly opened conversation happens to show.
+  const target = sessionID.value
+  const next = !goalMode.value
+  await app.setGoalMode(next, target)
   notify(t(next ? "toast.goalOn" : "toast.goalOff"))
 }
 
@@ -2747,6 +2753,9 @@ const effortLabel = computed(() => {
  */
 async function chooseModelEffort(provider: string, model: string, level: Effort) {
   menu.value = undefined
+
+  // One conversation for both writes and the toast — a switch mid-flight
+  // cannot retarget the model or the effort onto a different session.
   const target = sessionID.value
   const before = app.modelPick(target)
   if (!target) {
