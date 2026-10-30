@@ -3352,6 +3352,39 @@ async function main() {
         save.includes('emit("close")') &&
         save.indexOf("await app.patchConfig") < save.indexOf('emit("close")') &&
         save.indexOf("try {") < save.indexOf("await app.patchConfig"),
+  section("Review polish r129")
+  {
+    const settings = read("src/renderer/src/components/SettingsDialog.vue")
+    const finAt = settings.indexOf("async function finishMcpImport")
+    const fin = finAt >= 0 ? settings.slice(finAt, finAt + 900) : ""
+    check(
+      "r129: finishMcpImport null fail-closed",
+      fin.includes('if (!result)') &&
+        fin.includes('set.mcp.importFailed') &&
+        fin.includes("common.requestFailed") &&
+        fin.includes('mcpView.value = "list"') &&
+        !fin.includes('result?.imported') &&
+        fin.indexOf('if (!result)') < fin.indexOf('mcpView.value = "list"'),
+    )
+    const authAt = settings.indexOf("async function authorizeMcp")
+    const auth = authAt >= 0 ? settings.slice(authAt, authAt + 900) : ""
+    check(
+      "r129: authorizeMcp null fail-closed",
+      auth.includes("const result = await app.client?.request") &&
+        auth.includes('if (!result)') &&
+        auth.includes("set.mcp.authorizeFailed") &&
+        auth.includes("common.requestFailed") &&
+        auth.indexOf('if (!result)') < auth.indexOf('set.mcp.authorized'),
+    )
+    const hwAt = settings.indexOf("async function toggleHardwareAcceleration")
+    const hw = hwAt >= 0 ? settings.slice(hwAt, hwAt + 600) : ""
+    check(
+      "r129: hwAccel revert on failure",
+      hw.includes("hardwareAcceleration.value = !enabled") &&
+        hw.includes("notifyFailure") &&
+        hw.includes("common.requestFailed") &&
+        hw.indexOf("notifyFailure") < hw.indexOf('set.displayServerSaved') &&
+        !hw.includes("MiMo says it either way"),
     )
   }
 

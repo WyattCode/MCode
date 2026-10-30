@@ -640,6 +640,11 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - Windows Settings：`enableVoiceSend` 对齐 `setWatermarkRemoval`，成功才关确认框；`removeAgents` 成功才清 `confirmingAgentsDelete`。
 - Windows ProjectDialog：`save` 的 `patchConfig` 失败保留对话框（try/catch，已有失败 toast）。
 - 验证：smoke「Review polish r128」；未合并。
+### 续六十二：MCP 导入/授权空 client fail-closed；硬件加速失败回滚（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/160 （未合并）
+- Windows Settings：`finishMcpImport` / `authorizeMcp` 在 `client` 为空时不再假成功 toast；`toggleHardwareAcceleration` 失败回滚开关并 `notifyFailure`。
+- 验证：smoke「Review polish r129」；未合并。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
