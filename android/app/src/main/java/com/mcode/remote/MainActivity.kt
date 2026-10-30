@@ -5613,9 +5613,18 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     TextButton(
                         {
                             val id = terminalId ?: return@TextButton
-                            val line = terminalInput + "\r"
-                            request(JSONObject().put("type", "shell.input").put("shellID", id).put("data", line))
-                            terminalInput = ""
+                            val line = terminalInput
+                            scope.launch {
+                                runCatching {
+                                    rpcOrThrow(JSONObject().put("type", "shell.input").put("shellID", id).put("data", line + "\r"))
+                                }.onSuccess {
+                                    withContext(Dispatchers.Main) { terminalInput = "" }
+                                }.onFailure {
+                                    withContext(Dispatchers.Main) {
+                                        Toast.makeText(context, "没能发送到终端", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            }
                         },
                     ) { Text("运行") }
                 }
@@ -5635,21 +5644,22 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         LaunchedEffect(root, sub) {
             fileEntries.clear()
             filePreview = null
-            val ticket = "fs${System.nanoTime()}"
-            val deferred = client.awaitResponse(ticket)
-            request(JSONObject().put("type", "file.listDir").put("directory", root).put("sub", sub), ticket)
-            val res = try {
-                runCatching { deferred.await() }.getOrNull()
-            } finally {
-                client.forgetResponse(ticket)
-            } ?: return@LaunchedEffect
-            val arr = res.optJSONObject("data")?.optJSONArray("entries") ?: return@LaunchedEffect
-            val list = mutableListOf<Pair<String, Boolean>>()
-            for (i in 0 until arr.length()) {
-                val e = arr.optJSONObject(i) ?: continue
-                list.add(e.optString("name") to (e.optString("type") == "dir"))
+            if (root.isBlank()) return@LaunchedEffect
+            runCatching {
+                val res = rpcOrThrow(JSONObject().put("type", "file.listDir").put("directory", root).put("sub", sub))
+                val arr = res.optJSONObject("data")?.optJSONArray("entries")
+                    ?: error("no entries")
+                val list = mutableListOf<Pair<String, Boolean>>()
+                for (i in 0 until arr.length()) {
+                    val e = arr.optJSONObject(i) ?: continue
+                    list.add(e.optString("name") to (e.optString("type") == "dir"))
+                }
+                fileEntries.addAll(list.sortedWith(compareByDescending<Pair<String, Boolean>> { it.second }.thenBy { it.first }))
+            }.onFailure {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "没能打开文件夹", Toast.LENGTH_SHORT).show()
+                }
             }
-            fileEntries.addAll(list.sortedWith(compareByDescending<Pair<String, Boolean>> { it.second }.thenBy { it.first }))
         }
         ModalBottomSheet(onDismissRequest = { showFiles = false }, containerColor = if (LocalBg.current == DarkBg) RemoteChrome.c(RemoteChrome.SheetDark) else MaterialTheme.colorScheme.background) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp)) {
@@ -5844,10 +5854,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                     .fillMaxWidth()
                                     .clickable {
                                         scope.launch {
-                                            val r = runCatching {
-                                                rpc(JSONObject().put("type", "git.diff").put("directory", root).put("file", file))
-                                            }.getOrNull() ?: return@launch
-                                            changePatch = file to (r.optJSONObject("data")?.optString("patch").orEmpty())
+                                            runCatching {
+                                                val r = rpcOrThrow(JSONObject().put("type", "git.diff").put("directory", root).put("file", file))
+                                                changePatch = file to (r.optJSONObject("data")?.optString("patch").orEmpty())
+                                            }.onFailure {
+                                                withContext(Dispatchers.Main) {
+                                                    Toast.makeText(context, "没能加载差异", Toast.LENGTH_SHORT).show()
+                                                }
+                                            }
                                         }
                                     }
                                     .padding(vertical = 9.dp),

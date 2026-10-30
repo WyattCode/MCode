@@ -2456,6 +2456,7 @@ async function main() {
   section("Review polish r101")
   section("Review polish r102")
   section("Review polish r103")
+  section("Review polish r104")
   {
     const root = process.cwd()
     const main = await fs.readFile(
@@ -2811,6 +2812,20 @@ async function main() {
     const stopAt = main.indexOf("onStop = {")
     const stop = stopAt >= 0 ? main.slice(stopAt, stopAt + 280) : ""
     check("r103: onStop pins sid", /val sid = currentSession/.test(stop) && stop.includes("session.abort"))
+    const filesAt = main.indexOf("LaunchedEffect(root, sub)")
+    const files = filesAt >= 0 ? main.slice(filesAt, filesAt + 1400) : ""
+    check("r104: files listDir uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}file\.listDir/.test(files))
+    check("r104: files listDir toasts on failure", files.includes("没能打开文件夹"))
+    check("r104: files listDir skips blank root", files.includes("root.isBlank()"))
+    const diffAt = main.indexOf('put("type", "git.diff")')
+    const diff = diffAt >= 0 ? main.slice(Math.max(0, diffAt - 200), diffAt + 700) : ""
+    check("r104: git.diff uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}git\.diff/.test(diff))
+    check("r104: git.diff toasts on failure", diff.includes("没能加载差异"))
+    const inputAt = main.indexOf('put("type", "shell.input")')
+    const input = inputAt >= 0 ? main.slice(Math.max(0, inputAt - 350), inputAt + 500) : ""
+    check("r104: shell.input uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}shell\.input/.test(input))
+    check("r104: shell.input toasts on failure", input.includes("没能发送到终端"))
+    check("r104: shell.input clears only on success", /onSuccess[\s\S]{0,80}terminalInput = ""/.test(input))
   }
 
   section("Permission guide")
