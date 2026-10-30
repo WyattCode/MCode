@@ -223,7 +223,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ### 续五十四：拖入路径分类 / 侧栏项目拖入 / 会话重命名失败提示（2026-10-30）
 
-- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- PR: https://github.com/WyattCode/MCode/pull/152 （未合并）
 - 桌面：Composer 拖入 `directoriesOf` IPC 失败不再把文件夹误标成文件 @mention，改为 `common.requestFailed`；侧栏拖项目同样 toast 且不 emit 空列表；会话标题就地重命名与对话框重命名失败 toast，就地失败恢复旧标题。
 - 验证：smoke「Review polish r121」；未合并。
 
