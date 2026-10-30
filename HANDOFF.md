@@ -223,7 +223,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ### 续六十三：清除浏览数据确认 fail-closed；插件开关空 client toast；完全访问确认失败保留对话框（2026-10-30）
 
-- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- PR: https://github.com/WyattCode/MCode/pull/161 （未合并）
 - Windows：`clearBrowsing` 成功后才关确认框；`PluginsView.toggle` 空 client / 空结果 `notifyFailure`；`confirmFull` 仅在 `applyAccess` 成功后关闭。
 - 验证：smoke「Review polish r130」；未合并。
 
