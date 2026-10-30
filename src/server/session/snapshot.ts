@@ -1430,7 +1430,13 @@ export class Snapshots {
         try {
           writers = JSON.parse(raw) as Record<string, Writer>
         } catch {
-          // A ledger that will not parse names nobody; it is derived, and the store may go.
+          /*
+           * A ledger that will not parse says nothing about who owns the store,
+           * the same as one that cannot be read (R25-A6). Keeping it costs disk;
+           * deleting it costs the conversation's undo bodies for good.
+           */
+          spokenFor.add(digest)
+          continue
         }
         if (Object.values(writers ?? {}).some((writer) => owners.has(writer?.session))) spokenFor.add(digest)
       }
