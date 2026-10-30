@@ -74,14 +74,17 @@ watch(reasoning, (open) => {
 const questions = useQuestions()
 
 function answer(response: PermissionResponse) {
-  // Approvals pressed here are what MiMo counts before offering to ask less.
-  if (response !== "reject") questions.noteAllowed(props.request.sessionID)
-  void app.respond(response)
+  // A second press while the first is in flight would count the approval twice.
+  if (busy.value) return
+  // Approvals pressed here are what MiMo counts before offering to ask less; a subagent's card counts for the conversation it works for.
+  if (response !== "reject") questions.noteAllowed(app.rootOf(props.request.sessionID))
+  void app.respond(response, undefined, props.request.id)
 }
 
 function rejectWithReason() {
-  if (reason.value.trim()) void app.respond("reject", reason.value)
-  else void app.respond("reject")
+  if (busy.value) return
+  if (reason.value.trim()) void app.respond("reject", reason.value, props.request.id)
+  else void app.respond("reject", undefined, props.request.id)
 }
 
 function onReasonKey(event: KeyboardEvent) {
@@ -191,6 +194,7 @@ function onReasonKey(event: KeyboardEvent) {
         type="text"
         class="reason-input"
         :placeholder="t('perm.reasonPlaceholder')"
+        :disabled="busy"
         @keydown="onReasonKey"
       />
       <button type="button" class="perm-btn" data-perm-reason-submit :disabled="busy" @click="rejectWithReason">

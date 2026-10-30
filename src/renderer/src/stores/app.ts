@@ -30,6 +30,7 @@ import type { GroupContext } from "@shared/session-group"
 import { availableModels, fallbackModel, modelAvailable } from "@shared/model-fallback"
 import type { AutomationTask, ChatLink, CustomProvider } from "@shared/protocol"
 import { notice, notify, notifyFailure } from "../lib/toast"
+import { permissionTarget } from "../lib/confirm-queue"
 import { findModel } from "../lib/model"
 import { forgetRunEnded, noteRunEnded, noteToolWrites } from "../lib/ai-touch"
 import { endOfficeWatches, watchAnnotatedSend } from "../lib/annotation-fx"
@@ -1856,8 +1857,9 @@ export const useApp = defineStore("app", () => {
     return api().request({ type: "session.revertTurn", sessionID, messageIDs })
   }
 
-  async function respond(response: PermissionResponse, reason?: string) {
-    const request = permission.value
+  async function respond(response: PermissionResponse, reason?: string, requestID?: string) {
+    const flat = [...pendingPermissions.value.values()].flat()
+    const request = permissionTarget(requestID, flat, permission.value)
     if (!request || responding.value === request.id) return
     responding.value = request.id
     try {
