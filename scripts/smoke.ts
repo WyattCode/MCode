@@ -2145,6 +2145,33 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r112")
+  {
+    const { readFileSync } = await import("node:fs")
+    const main = readFileSync(
+      process.cwd() + "/android/app/src/main/java/com/mcode/remote/MainActivity.kt",
+      "utf8",
+    )
+    const qAt = main.indexOf('JSONObject().put("type", "session.queue.remove")')
+    const q = qAt >= 0 ? main.slice(Math.max(0, qAt - 400), qAt + 900) : ""
+    check("r112: queue.remove uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,160}session\.queue\.remove/.test(q))
+    check("r112: queue.remove only drops chip onSuccess", q.includes("onSuccess") && q.includes("queuedPrompts.removeAll"))
+    check("r112: queue.remove toasts on failure", q.includes("没能撤回排队"))
+    check("r112: queue.remove no fire-and-forget request()", !/request\(JSONObject\(\)\.put\("type", "session\.queue\.remove"\)/.test(q))
+    const qsAt = main.indexOf('JSONObject().put("type", "session.queue.send")')
+    const qs = qsAt >= 0 ? main.slice(Math.max(0, qsAt - 200), qsAt + 700) : ""
+    check("r112: queue.send uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,160}session\.queue\.send/.test(qs))
+    check("r112: queue.send toasts on failure", qs.includes("没能发送排队"))
+    const stopAt = main.indexOf("val stopHere: (String) -> Unit")
+    const stop = stopAt >= 0 ? main.slice(stopAt, stopAt + 1100) : ""
+    check("r112: header stopHere uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,120}session\.abort/.test(stop))
+    check("r112: header stopHere toasts on failure", stop.includes("没能停止"))
+    check("r112: header stopHere no fire-and-forget request()", !/request\(JSONObject\(\)\.put\("type", "session\.abort"\)/.test(stop))
+    const createAt = main.indexOf('JSONObject().put("type", "session.create")')
+    const create = createAt >= 0 ? main.slice(createAt, createAt + 500) : ""
+    check("r112: session.create uses rpcOrThrow", create.includes("rpcOrThrow(ask)"))
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }

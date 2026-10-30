@@ -2560,7 +2560,12 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                  */
                 val ask = JSONObject().put("type", "session.create")
                 if (folder.isNotBlank()) ask.put("directory", folder)
-                val reply = rpc(ask)
+                /*
+                 * Plain rpc treated ok:false as a blank session and only
+                 * said 「新建会话失败」— drop the error text the server
+                 * already sent. rpcOrThrow surfaces it in the catch.
+                 */
+                val reply = rpcOrThrow(ask)
                 val created = reply.optJSONObject("data")?.optJSONObject("session")
                 val sid = created?.optString("id").orEmpty()
                 if (sid.isNotBlank() && created != null) {
@@ -3662,14 +3667,48 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
              * one may no longer be the open one.
              */
             onQueueRemove = { id ->
-                queuedPrompts.removeAll { it.first == id }
+                /*
+                 * Fail-closed: plain request() dropped the chip before the
+                 * server agreed, so a refused remove looked like success
+                 * while the message stayed queued. Drop only after ok.
+                 */
                 currentSession?.let { sid ->
-                    request(JSONObject().put("type", "session.queue.remove").put("sessionID", sid).put("id", id))
+                    scope.launch {
+                        runCatching {
+                            rpcOrThrow(
+                                JSONObject().put("type", "session.queue.remove")
+                                    .put("sessionID", sid)
+                                    .put("id", id),
+                            )
+                        }.onSuccess {
+                            withContext(Dispatchers.Main) {
+                                queuedPrompts.removeAll { it.first == id }
+                            }
+                        }.onFailure { e ->
+                            if (e is kotlinx.coroutines.CancellationException) throw e
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, "没能撤回排队", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
                 }
             },
             onQueueSend = { id ->
                 currentSession?.let { sid ->
-                    request(JSONObject().put("type", "session.queue.send").put("sessionID", sid).put("id", id))
+                    scope.launch {
+                        runCatching {
+                            rpcOrThrow(
+                                JSONObject().put("type", "session.queue.send")
+                                    .put("sessionID", sid)
+                                    .put("id", id),
+                            )
+                        }.onFailure { e ->
+                            if (e is kotlinx.coroutines.CancellationException) throw e
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, "没能发送排队", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
                 }
             },
             onSend = { text, atts ->
@@ -4751,7 +4790,19 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                              */
                             val runningNow = sessions.find { it.id == currentSession }?.running == true
                             val stopHere: (String) -> Unit = { sid ->
-                                request(JSONObject().put("type", "session.abort").put("sessionID", sid))
+                                /* Fire-and-forget abort hid a refused stop. */
+                                scope.launch {
+                                    runCatching {
+                                        rpcOrThrow(
+                                            JSONObject().put("type", "session.abort").put("sessionID", sid),
+                                        )
+                                    }.onFailure { e ->
+                                        if (e is kotlinx.coroutines.CancellationException) throw e
+                                        withContext(Dispatchers.Main) {
+                                            Toast.makeText(context, "没能停止", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                }
                             }
                             /*
                              * The back arrow starts 40.8 in, not 19.6.
