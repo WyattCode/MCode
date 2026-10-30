@@ -2452,6 +2452,7 @@ async function main() {
     check("r97: toggleGoalMode toasts the captured next", /notify\(t\(next \? "toast\.goalOn"/.test(toggleBody))
 
   section("Review polish r99")
+  section("Review polish r100")
   {
     const root = process.cwd()
     const main = await fs.readFile(
@@ -2762,6 +2763,13 @@ async function main() {
     check("r99: goal edit captures session id", /val sid = currentSession/.test(goal))
     check("r99: goal edit closes only on success", /onSuccess/.test(goal) && goal.indexOf("onSuccess") < goal.indexOf("goalEdit = null"))
     check("r99: goal edit keeps dialog open on blank", /return@TextButton/.test(goal))
+    check("r100: remove failure toast", main.includes("没能移除项目"))
+    check("r100: remove uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}project\.remove/.test(main))
+    check("r100: remove success only onSuccess", /project\.remove[\s\S]{0,400}onSuccess[\s\S]{0,300}已移除项目/.test(main))
+    check("r100: rename failure toast", main.includes("没能重命名项目"))
+    check("r100: createBlank add failure toast", main.includes("没能加入项目列表"))
+    check("r100: no wide project.add path stub", !main.includes('put("type", "project.add").put("path"'))
+    check("r100: project.remove rpcOrThrow count", (main.match(/rpcOrThrow\([\s\S]{0,80}project\.remove/g) || []).length >= 2)
   }
 
   section("Permission guide")

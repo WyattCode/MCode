@@ -485,6 +485,11 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - PR: https://github.com/WyattCode/MCode/pull/130 （未合并）
 - Android：删除会话、重命名、编辑目标改为 await `rpc`；成功才关对话框并更新本地行；失败 Toast。
 - 验证：smoke「Review polish r99」；未合并。
+### 续三十三：项目页移除/重命名/新建成功才提示；宽屏走服务端（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/131 （未合并）
+- Android：ProjectsScreen 移除/重命名/`createBlank`+`project.add` 改为 `rpcOrThrow`，成功才刷新/Toast；失败 Toast。宽屏侧栏不再本地假改列表（原先 `project.add` 误用 `path`）。
+- 验证：smoke「Review polish r100」；未合并。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
