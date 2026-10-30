@@ -987,11 +987,14 @@ const displayServerSub = computed(() =>
 async function chooseDisplayServer(value: string) {
   const pref = value === "wayland" || value === "x11" ? value : "auto"
   if (pref === displayServer.value.pref) return
+  const previous = displayServer.value.pref
   displayServer.value = { ...displayServer.value, pref }
   try {
     await window.mcode.setDisplayServer(pref)
-  } catch {
-    // MiMo says it either way; the next launch reads whatever was written.
+  } catch (err) {
+    displayServer.value = { ...displayServer.value, pref: previous }
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    return
   }
   notify(t("set.displayServerSaved"))
 }

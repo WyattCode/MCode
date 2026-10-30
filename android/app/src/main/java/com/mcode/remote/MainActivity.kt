@@ -7170,21 +7170,24 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                             // The picker closes on the press, so without this the
                                             // pill keeps the old name until some other event
                                             // happens to refresh the row.
+                                            rpc(JSONObject().put("type", "session.model").put("sessionID", sid).put("model", JSONObject().put("provider", providerId).put("model", modelId)))
+                                            // Pill updates here so the row name matches the
+                                            // model just chosen, before the sheet closes.
                                             val at = sessions.indexOfFirst { it.id == sid }
                                             if (at >= 0) sessions[at] = sessions[at].copy(model = modelId)
+                                            // Close only after the server took the switch;
+                                            // a refusal keeps the picker open so the reader can retry.
+                                            modelPicker = false
                                         } catch (e: Exception) {
                                             /*
-                                             * The picker closes on the press, so a
-                                             * refused switch left the pill showing
-                                             * the model the reader thought they had
-                                             * chosen - and the next turn went to the
-                                             * old one with no word about it.
+                                             * A refused switch leaves the pill on the old
+                                             * model and the picker open - toast so the
+                                             * reader knows the tap did not land.
                                              */
                                             Toast.makeText(context, "切换模型失败：${e.message?.take(60) ?: "未知错误"}", Toast.LENGTH_LONG).show()
                                         }
                                     }
                                 }
-                                modelPicker = false
                             }.padding(vertical = 11.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {

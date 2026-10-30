@@ -41,6 +41,8 @@ async function loadState() {
   stateLoading.value = true
   try {
     const next = await app.client?.request({ type: "git.commitState", directory })
+    // A null client answers undefined; keep what was shown rather than blank the card.
+    if (!next) return
     if (props.directory === directory) state.value = next
   } catch (err) {
     if (props.directory === directory) state.value = { ...(state.value ?? blankState()), ok: false, error: String(err) }
