@@ -622,6 +622,12 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - PR: https://github.com/WyattCode/MCode/pull/156 （未合并）
 - 桌面：会话删除（单条/批量/设置页归档删除）、归档与撤销归档、项目批量归档、设置页恢复、移出项目：RPC 失败补 `common.requestFailed`（撤销归档用 `toast.archiveUndoFailed`）；成功 toast 只在实际成功后发出，批量按成功条数计数。
 - 验证：smoke「Review polish r125」；未合并。
+### 续五十九：添加项目失败可见；编辑重发 prompt Toast（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/157 （未合并）
+- Windows：`HomeHero.existing` / `createBlank(source)`、`SettingsDialog.addProject`、`App.addAndBrowse` / `newSessionIn` 在 `addProject` 失败时 `notifyFailure`，成功才 take/startIn。
+- Android：编辑重发在 revert 成功后的 `session.prompt` 改 `rpcOrThrow`，失败 Toast「发送失败」。
+- 验证：smoke「Review polish r126」；未合并。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
