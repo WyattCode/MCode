@@ -982,7 +982,12 @@ async function hearSegment(recording: Recording, run: number) {
     })
     // Cancelled while it was being written down.
     if (run !== voiceRun.value) return
-    if (!result) return
+    if (!result) {
+      reportVoiceStatus("failed")
+      showVoiceFailure({ key: "voice.failed" })
+      stopVoice(run)
+      return
+    }
     /*
      * 智能编辑 that did not happen. The words still land - dictation is better
      * than nothing - but the mode quietly becoming 快速输入 is what used to hide

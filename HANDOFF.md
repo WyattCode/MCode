@@ -221,6 +221,12 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 续四十九：语音转写空回复、打开 AGENTS、开机自启失败提示（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- 桌面：`voice.transcribe` 空回复 → `reportVoiceStatus`/`showVoiceFailure`/`stopVoice`；`agents.ensure` 空回复 → `notifyFailure`；开机自启 `!ok` → `notifyFailure`。
+- 验证：smoke「Review polish r116」；未合并。
+
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
 Pad 9 Pro Max（`M367FC`）接上后，第一次把「平板发指令 → 主机跑模型 → 回复回画到平板」整条链路走通。
