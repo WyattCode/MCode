@@ -3579,9 +3579,15 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             onAccess = { level ->
                 currentSession?.let { sid ->
                     scope.launch {
-                        runCatching { rpc(JSONObject().put("type", "session.access").put("sessionID", sid).put("access", level)) }
-                        val at = sessions.indexOfFirst { it.id == sid }
-                        if (at >= 0) sessions[at] = sessions[at].copy(access = level)
+                        try {
+                            rpcOrThrow(JSONObject().put("type", "session.access").put("sessionID", sid).put("access", level))
+                            val at = sessions.indexOfFirst { it.id == sid }
+                            if (at >= 0) sessions[at] = sessions[at].copy(access = level)
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, "切换权限失败：${e.message?.take(60) ?: "未知错误"}", Toast.LENGTH_LONG).show()
+                            }
+                        }
                     }
                 }
             },
@@ -3618,9 +3624,15 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             onGoalRemove = {
                 currentSession?.let { sid ->
                     scope.launch {
-                        runCatching { rpc(JSONObject().put("type", "session.goal").put("sessionID", sid).put("condition", JSONObject.NULL)) }
-                        runCatching { rpc(JSONObject().put("type", "session.goalMode").put("sessionID", sid).put("on", false)) }
-                        withContext(Dispatchers.Main) { goalMode = false }
+                        try {
+                            rpcOrThrow(JSONObject().put("type", "session.goal").put("sessionID", sid).put("condition", JSONObject.NULL))
+                            rpcOrThrow(JSONObject().put("type", "session.goalMode").put("sessionID", sid).put("on", false))
+                            withContext(Dispatchers.Main) { goalMode = false }
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, "无法清除目标", Toast.LENGTH_SHORT).show()
+                            }
+                        }
                     }
                 }
             },
@@ -6164,7 +6176,17 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             color = if (active) MaterialTheme.colorScheme.primary else LocalPill.current,
                             modifier = Modifier.clickable(enabled = currentSession != null) {
                                 currentSession?.let { sid ->
-                                    scope.launch { runCatching { rpc(JSONObject().put("type", "session.agent").put("sessionID", sid).put("agent", agent)) } }
+                                    scope.launch {
+                                        try {
+                                            rpcOrThrow(JSONObject().put("type", "session.agent").put("sessionID", sid).put("agent", agent))
+                                            val at = sessions.indexOfFirst { it.id == sid }
+                                            if (at >= 0) sessions[at] = sessions[at].copy(agent = agent)
+                                        } catch (e: Exception) {
+                                            withContext(Dispatchers.Main) {
+                                                Toast.makeText(context, "切换 Agent 失败：${e.message?.take(60) ?: "未知错误"}", Toast.LENGTH_LONG).show()
+                                            }
+                                        }
+                                    }
                                 }
                             },
                         ) {
@@ -6197,9 +6219,15 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             modifier = Modifier.clickable(enabled = currentSession != null) {
                                 currentSession?.let { sid ->
                                     scope.launch {
-                                        runCatching { rpc(JSONObject().put("type", "session.access").put("sessionID", sid).put("access", level)) }
-                                        val at2 = sessions.indexOfFirst { it.id == sid }
-                                    if (at2 >= 0) sessions[at2] = sessions[at2].copy(access = level, goalMode = sessions[at2].goalMode)
+                                        try {
+                                            rpcOrThrow(JSONObject().put("type", "session.access").put("sessionID", sid).put("access", level))
+                                            val at2 = sessions.indexOfFirst { it.id == sid }
+                                            if (at2 >= 0) sessions[at2] = sessions[at2].copy(access = level, goalMode = sessions[at2].goalMode)
+                                        } catch (e: Exception) {
+                                            withContext(Dispatchers.Main) {
+                                                Toast.makeText(context, "切换权限失败：${e.message?.take(60) ?: "未知错误"}", Toast.LENGTH_LONG).show()
+                                            }
+                                        }
                                     }
                                 }
                             },
@@ -6218,7 +6246,17 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             color = if (active) MaterialTheme.colorScheme.primary else LocalPill.current,
                             modifier = Modifier.clickable(enabled = currentSession != null) {
                                 currentSession?.let { sid ->
-                                    scope.launch { runCatching { rpc(JSONObject().put("type", "session.effort").put("sessionID", sid).put("effort", effort)) } }
+                                    scope.launch {
+                                        try {
+                                            rpcOrThrow(JSONObject().put("type", "session.effort").put("sessionID", sid).put("effort", effort))
+                                            val at = sessions.indexOfFirst { it.id == sid }
+                                            if (at >= 0) sessions[at] = sessions[at].copy(effort = effort)
+                                        } catch (e: Exception) {
+                                            withContext(Dispatchers.Main) {
+                                                Toast.makeText(context, "切换 Effort 失败：${e.message?.take(60) ?: "未知错误"}", Toast.LENGTH_LONG).show()
+                                            }
+                                        }
+                                    }
                                 }
                             },
                         ) {

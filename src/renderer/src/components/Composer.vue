@@ -1078,10 +1078,11 @@ async function toggleVoice() {
      */
     const ready = await app.client?.request({ type: "voice.precheck", mode, sessionID: sessionID.value })
     if (run !== voiceRun.value) return
-    if (ready && !ready.ok) {
+    // Null client / empty reply used to fall through and open the mic.
+    if (!ready || !ready.ok) {
       voiceState.value = "idle"
       voiceOwner.value = undefined
-      showVoiceFailure(precheckFailure(ready.reason))
+      showVoiceFailure(ready ? precheckFailure(ready.reason) : { key: "voice.startFailed" })
       return
     }
     // MiMo's micAccess before capture: a refusal from the OS is a denial like getUserMedia's.
