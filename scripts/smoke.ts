@@ -2451,6 +2451,9 @@ async function main() {
     check("r97: toggleGoalMode captures next before await", /const next = !goalMode\.value/.test(toggleBody))
     check("r97: toggleGoalMode toasts the captured next", /notify\(t\(next \? "toast\.goalOn"/.test(toggleBody))
 
+  section("Review polish r99")
+  {
+    const root = process.cwd()
     const main = await fs.readFile(
       path.join(root, "android/app/src/main/java/com/mcode/remote/MainActivity.kt"),
       "utf8",
@@ -2744,6 +2747,21 @@ async function main() {
     const edit = editAt >= 0 ? main.slice(editAt, editAt + 1200) : ""
     check("r98: edit resend toasts on prompt failure", edit.includes("没能发送，请重试"))
     check("r98: edit resend prompt handles failure", /onFailure/.test(edit) && edit.indexOf("session.prompt") < edit.indexOf("没能发送，请重试"))
+    const delAt = main.indexOf('Text("删除会话？")')
+    const del = delAt >= 0 ? main.slice(delAt, delAt + 1000) : ""
+    check("r99: delete awaits session.delete", del.includes('"session.delete"') && /rpc\(/.test(del))
+    check("r99: delete closes only on success", /onSuccess/.test(del) && del.indexOf("onSuccess") < del.indexOf("deleteTarget = null"))
+    check("r99: delete toasts on failure", del.includes("没能删除会话"))
+    const renAt = main.indexOf('Text("重命名会话")')
+    const ren = renAt >= 0 ? main.slice(renAt, renAt + 1400) : ""
+    check("r99: rename awaits session.rename", ren.includes('"session.rename"') && /rpc\(/.test(ren))
+    check("r99: rename updates title on success", /copy\(title/.test(ren))
+    check("r99: rename toasts on failure", ren.includes("没能重命名"))
+    const goalAt = main.indexOf('Text("编辑目标"')
+    const goal = goalAt >= 0 ? main.slice(goalAt, goalAt + 2500) : ""
+    check("r99: goal edit captures session id", /val sid = currentSession/.test(goal))
+    check("r99: goal edit closes only on success", /onSuccess/.test(goal) && goal.indexOf("onSuccess") < goal.indexOf("goalEdit = null"))
+    check("r99: goal edit keeps dialog open on blank", /return@TextButton/.test(goal))
   }
 
   section("Permission guide")

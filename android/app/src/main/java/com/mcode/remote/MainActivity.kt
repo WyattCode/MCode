@@ -6283,6 +6283,18 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     val doomed = row.id
                     deleteTarget = null
                     request(JSONObject().put("type", "session.delete").put("sessionID", doomed))
+                    val sid = row.id
+                    scope.launch {
+                        runCatching {
+                            rpc(JSONObject().put("type", "session.delete").put("sessionID", sid))
+                        }.onSuccess {
+                            withContext(Dispatchers.Main) { deleteTarget = null }
+                        }.onFailure {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, "没能删除会话", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
                 }) { Text("删除", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = { TextButton({ deleteTarget = null }) { Text("取消") } },
@@ -6303,6 +6315,23 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     val sid = row.id
                     renameTarget = null
                     if (title.isNotBlank()) request(JSONObject().put("type", "session.rename").put("sessionID", sid).put("title", title))
+                    if (title.isBlank()) return@TextButton
+                    val sid = row.id
+                    scope.launch {
+                        runCatching {
+                            rpc(JSONObject().put("type", "session.rename").put("sessionID", sid).put("title", title))
+                        }.onSuccess {
+                            withContext(Dispatchers.Main) {
+                                val at = sessions.indexOfFirst { it.id == sid }
+                                if (at >= 0) sessions[at] = sessions[at].copy(title = title)
+                                renameTarget = null
+                            }
+                        }.onFailure {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, "没能重命名", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
                 }) { Text("保存") }
             },
             dismissButton = { TextButton({ renameTarget = null }) { Text("取消") } },
@@ -6344,7 +6373,31 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             }.onFailure {
                                 withContext(Dispatchers.Main) {
                                     Toast.makeText(context, "没能保存目标", Toast.LENGTH_SHORT).show()
+                    if (next.isBlank() || sid == null) return@TextButton
+                    scope.launch {
+                        runCatching {
+                            rpc(JSONObject().put("type", "session.goal").put("sessionID", sid).put("condition", next))
+                        }.onSuccess {
+                            withContext(Dispatchers.Main) {
+                                val at = sessions.indexOfFirst { it.id == sid }
+                                if (at >= 0) {
+                                    val prev = sessions[at].goal
+                                    sessions[at] = sessions[at].copy(
+                                        goal = GoalInfo(
+                                            condition = next,
+                                            startedAt = prev?.startedAt ?: System.currentTimeMillis(),
+                                            attempts = prev?.attempts ?: 1,
+                                            doneStatus = prev?.doneStatus,
+                                            doneReason = prev?.doneReason ?: "",
+                                            doneAt = prev?.doneAt ?: 0L,
+                                        ),
+                                    )
                                 }
+                                goalEdit = null
+                            }
+                        }.onFailure {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, "没能保存目标", Toast.LENGTH_SHORT).show()
                             }
                         }
                     }
