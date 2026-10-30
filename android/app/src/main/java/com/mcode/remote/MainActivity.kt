@@ -5544,6 +5544,17 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                             scope.launch {
                                                 runCatching { rpcOrThrow(JSONObject().put("type", "session.undo").put("sessionID", sid)) }
                                                     .onFailure { Toast.makeText(context, "撤销失败：${it.message?.take(40) ?: ""}", Toast.LENGTH_LONG).show() }
+                                            currentSession?.let { sid ->
+                                                scope.launch {
+                                                    try {
+                                                        rpcOrThrow(JSONObject().put("type", "session.undo").put("sessionID", sid))
+                                                    } catch (e: Exception) {
+                                                        if (e is kotlinx.coroutines.CancellationException) throw e
+                                                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                                            Toast.makeText(context, "没能撤销", Toast.LENGTH_SHORT).show()
+                                                        }
+                                                    }
+                                                }
                                             }
                                         })
                                     MenuRow(label = "重做撤销", onClick = {

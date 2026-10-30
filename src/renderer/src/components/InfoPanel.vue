@@ -81,7 +81,7 @@ async function loadSummary() {
   const seq = ++fetchSeq
   try {
     const next = await app.client?.request({ type: "git.summary", directory: root })
-    if (seq === fetchSeq) summary.value = next
+    if (seq === fetchSeq && next) summary.value = next
   } catch {
     if (seq === fetchSeq) {
       summary.value = { repo: true, ok: false, detached: false, fileCount: 0, additions: 0, deletions: 0, files: [] }

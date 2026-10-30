@@ -3622,6 +3622,36 @@ async function main() {
       "r135: Android modelPicker not closed outside launch",
       !/\}\s*\}\s*modelPicker = false/.test(mp.replace(/\r\n/g, "\n")),
     )
+  section("Review polish r136")
+  {
+    const root = process.cwd()
+    const { readFile } = await import("node:fs/promises")
+    const models = await readFile(`${root}/src/renderer/src/components/ModelsPage.vue`, "utf8")
+    const ccAt = models.indexOf("async function confirmClone")
+    const ccEnd = models.indexOf("</script>", ccAt)
+    const cc = (ccAt >= 0 && ccEnd > ccAt ? models.slice(ccAt, ccEnd) : "").replace(/\r\n/g, "\n")
+    check("r136: confirmClone no clear before try", !/cloning\.value = undefined\n  if \(!source\)/.test(cc))
+    check(
+      "r136: confirmClone clears after copied toast",
+      cc.includes("cloning.value = undefined") &&
+        cc.lastIndexOf("cloning.value = undefined") > cc.indexOf('notify(t("set.models.copied")'),
+    )
+    check("r136: confirmClone still toasts copyFailed", cc.includes('notifyFailure(t("set.models.copyFailed"))'))
+
+    const panel = await readFile(`${root}/src/renderer/src/components/InfoPanel.vue`, "utf8")
+    const lsAt = panel.indexOf("async function loadSummary")
+    const lsEnd = panel.indexOf("watch(directory", lsAt)
+    const ls = (lsAt >= 0 && lsEnd > lsAt ? panel.slice(lsAt, lsEnd) : "").replace(/\r\n/g, "\n")
+    check("r136: loadSummary keeps prior when next missing", ls.includes("if (seq === fetchSeq && next) summary.value = next"))
+    check("r136: loadSummary catch still sets error shape", ls.includes("ok: false") && ls.includes("fileCount: 0"))
+
+    const android = await readFile(`${root}/android/app/src/main/java/com/mcode/remote/MainActivity.kt`, "utf8")
+    const undoAt = android.indexOf('MenuRow(label = "撤销上一回合的改动"')
+    const undoEnd = android.indexOf('MenuRow(label = "重做撤销"', undoAt)
+    const undo = undoAt >= 0 && undoEnd > undoAt ? android.slice(undoAt, undoEnd) : ""
+    check("r136: header undo uses rpcOrThrow", undo.includes("rpcOrThrow") && undo.includes('"session.undo"'))
+    check("r136: header undo toasts 没能撤销", undo.includes("没能撤销"))
+    check("r136: header undo no bare request(", !/request\(JSONObject\(\)\.put\("type", "session\.undo"/.test(undo))
   }
 
   section("Permission guide")

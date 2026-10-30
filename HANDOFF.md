@@ -678,6 +678,12 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - `InfoCommitCard.loadState`：`git.commitState` 在空 client 返回 undefined 时不再 `state.value = next` 抹掉已有提交/推送 UI；保留原状态，`finally` 仍清 loading（#146 只修了 push/commit null，未触及 loadState）。
 - Android 模型选择器：`modelPicker = false` 挪进 `try`、pill 更新之后；RPC 失败保留选择器并 toast，避免「关了却没切成」。
 - 验证：slice smoke「Review polish r135」+ mutate；typecheck 按既有路径。
+### 续六十九：克隆供应商失败保留对话框、git 摘要空 client 不抹、Android 顶栏撤销失败 Toast（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/167 （未合并）
+- Windows：`ModelsPage.confirmClone` 仅成功后关克隆对话框；`InfoPanel.loadSummary` 在 `next` 缺失时保留先前 git 摘要。
+- Android：顶栏「撤销上一回合的改动」改为 `rpcOrThrow`，失败 Toast「没能撤销」（#142 只修了重做）。
+- 验证：smoke「Review polish r136」；未合并。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
