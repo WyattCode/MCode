@@ -2091,7 +2091,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         }
     }
 
-    fun loadProviders() {
+    fun loadProviders(userInitiated: Boolean = false) {
         scope.launch {
             try {
                 val reply = rpcOrThrow(JSONObject().put("type", "provider.list"))
@@ -2101,6 +2101,11 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             } catch (e: Exception) {
                 println("[remote] provider.list failed: $e")
                 Toast.makeText(context, "没能加载模型", Toast.LENGTH_SHORT).show()
+                if (userInitiated) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, "没能读取模型列表", Toast.LENGTH_LONG).show()
+                    }
+                }
             }
         }
     }
@@ -3879,7 +3884,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             transcribing = voiceBusy,
             inject = voiceText,
             onInjected = { voiceText = null },
-            onModel = { loadProviders(); modelPicker = true },
+            onModel = { loadProviders(true); modelPicker = true },
             directory = sessions.find { it.id == currentSession }?.directory.orEmpty(),
             atListDir = { dir ->
                 try {
@@ -5614,7 +5619,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                             onAnswer = ::answerQuestion,
                                             onMessage = { messageTarget = it },
                                             toTop = toTopTicks,
-                                            onFixKey = { loadProviders(); showProviders = true },
+                                            onFixKey = { loadProviders(true); showProviders = true },
                                             find = if (findOpen) findQuery else "",
                                             findStep = findStep,
                                             onOpenFile = { dir, rel -> openArtifact(dir, rel) },
@@ -5725,7 +5730,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             onAnswer = ::answerQuestion,
                             onMessage = { messageTarget = it },
                             toTop = toTopTicks,
-                            onFixKey = { loadProviders(); showProviders = true },
+                            onFixKey = { loadProviders(true); showProviders = true },
                             find = if (findOpen) findQuery else "",
                             findStep = findStep,
                             onOpenFile = { dir, rel -> openArtifact(dir, rel) },
