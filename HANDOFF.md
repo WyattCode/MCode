@@ -223,7 +223,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ### 续四十五：排队撤回/发送 fail-closed；顶栏停止与新建会话 rpcOrThrow（2026-10-30）
 
-- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- PR: https://github.com/WyattCode/MCode/pull/143 （未合并）
 - Android：排队「撤回」/「立即发送」改 `rpcOrThrow`，撤回仅在 onSuccess 掉芯片，失败 Toast「没能撤回排队」/「没能发送排队」；对话顶栏停止改 `rpcOrThrow`，失败 Toast「没能停止」；`session.create` 改 `rpcOrThrow` 以带上服务器错误原文。
 - 验证：smoke「Review polish r112」；未合并。
 
