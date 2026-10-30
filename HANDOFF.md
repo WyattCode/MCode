@@ -223,7 +223,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ### 续四十六：密钥保存与 git 提交说明/提交 rpcOrThrow（2026-10-30）
 
-- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- PR: https://github.com/WyattCode/MCode/pull/144 （未合并）
 - Android：`provider.auth` 改 `rpcOrThrow`，仅 onSuccess 刷新 providers，失败 Toast「密钥没有保存成功」；变更轨 `git.commitMessage` / `git.commit` 改 `rpcOrThrow`，保留「没能生成提交说明」/「提交失败」与 data.ok 门闩。
 - 验证：smoke「Review polish r113」；未合并。
 
