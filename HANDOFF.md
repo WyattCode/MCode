@@ -223,7 +223,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ### 续四十八：提交卡空结果与主页 worktree/空白项目失败可见（2026-10-30）
 
-- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- PR: https://github.com/WyattCode/MCode/pull/146 （未合并）
 - Windows：`InfoCommitCard` 在 `git.push` / `git.commit` 无应答时写入 error，不再静默 return；`HomeHero.useWorktree` 加入项目失败 Toast 且不 choose；`createBlank` 无应答 Toast「创建失败」。
 - 验证：smoke「Review polish r115」；未合并。
 
