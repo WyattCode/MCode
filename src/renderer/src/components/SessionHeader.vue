@@ -5,6 +5,7 @@ import { useRightPanel } from "../stores/right-panel"
 import ContextMenu from "./ContextMenu.vue"
 import { useOpenWith } from "../lib/open-with"
 import { sessionTitle, t } from "../lib/i18n"
+import { notifyFailure } from "../lib/toast"
 import { convoCard } from "../lib/convo-card"
 
 /**
@@ -72,16 +73,24 @@ function beginEdit() {
   })
 }
 
-function finishEdit() {
+async function finishEdit() {
   const el = titleEl.value
   if (!el || !editing.value) return
   el.contentEditable = "false"
   editing.value = false
+  const previous = title.value
   const next = clampTitle(el.textContent?.trim() || t("session.untitled"))
   el.textContent = next
   el.scrollLeft = 0
   const session = app.current
-  if (session && next !== title.value) void app.rename(session.id, next)
+  if (!session || next === previous) return
+  try {
+    await app.rename(session.id, next)
+  } catch (err) {
+    el.textContent = previous
+    el.scrollLeft = 0
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+  }
 }
 
 function cancelEdit() {
