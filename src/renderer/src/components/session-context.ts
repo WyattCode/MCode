@@ -88,9 +88,22 @@ export function readContext(
    * went on showing the size of what had just been thrown away until the
    * reader said something more. The compaction left its estimate of the next
    * request, and that stands until a turn reports a real one.
+   *
+   * Which turn that is, is decided by where it sits in the transcript rather
+   * than by the clock. A turn after the compaction's boundary is a request
+   * made against the compacted conversation, so its count is the truth even
+   * when its timestamps are equal to or behind the mark's: a turn that
+   * overflowed half way through is compacted and asked again inside the same
+   * second, and the two replies cannot be told apart by time at all. Only
+   * when the boundary message is no longer in the transcript - an edited or
+   * deleted conversation - does the timestamp decide, as it always did.
    */
   const reported = message.time.completed ?? message.time.created
-  const estimated = compacted?.estimate !== undefined && reported <= compacted.at ? compacted.estimate : undefined
+  const boundary = compacted?.messageID
+  const boundaryAt = boundary === undefined ? -1 : messages.findIndex((entry) => entry.id === boundary)
+  const afterBoundary = boundaryAt >= 0 && messages.indexOf(message) > boundaryAt
+  const estimated =
+    compacted?.estimate !== undefined && !afterBoundary && (boundaryAt >= 0 || reported <= compacted.at) ? compacted.estimate : undefined
 
   /*
    * The window belongs to the model that ran that turn, which is not

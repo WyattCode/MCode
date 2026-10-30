@@ -201,6 +201,8 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
    - 一轮对话**中途**因溢出而压缩时，圆环会一直显示估算值到这一轮结束（没有逐步的时间戳能分辨；估算值很接近）。
    - ~~联网搜索在确认卡片里选了「关闭网络搜索」之后，只能把 `config.json` 的 `websearch` 改回 `"auto"`~~：第七十八轮已在设置页「浏览器」分组加开关（18 语言表补齐）。~~**平板端没有**这个开关~~：第七十八轮（续六）已在平板 `SettingsScreen` 常规 › 浏览器补上（关=`false`，开=`auto`）。
    - ~~联网搜索在确认卡片里选了「关闭网络搜索」之后，只能把 `config.json` 的 `websearch` 改回 `"auto"`~~：第七十八轮已在设置页「浏览器」分组加开关（18 语言表补齐）。~~**平板端没有**这个开关~~：第七十八轮（续六）已在平板设置补上。
+   - ~~一轮对话**中途**因溢出而压缩时，圆环会一直显示估算值到这一轮结束（没有逐步的时间戳能分辨；估算值很接近）~~：第七十八轮（续十一）已修（压缩后那一步的用量一保存就换成真实值，不等工具跑完；`readContext` 按 `compacted.messageID` 的先后判断）。
+   - ~~联网搜索在确认卡片里选了「关闭网络搜索」之后，只能把 `config.json` 的 `websearch` 改回 `"auto"`~~：第七十八轮已在设置页「浏览器」分组加开关（18 语言表补齐）。**平板端没有**这个开关。
    - 全新配置第一次运行时，第一条 bash 命令要 16 秒左右，之后正常（第三十五轮探针看到的，原因未查；只影响新装后的第一条命令）。
    - ~~联网搜索在确认卡片里选了「关闭网络搜索」之后，只能把 `config.json` 的 `websearch` 改回 `"auto"`~~：第七十八轮已在设置页「浏览器」分组加开关（18 语言表补齐）。**平板端没有**这个开关。
    - ~~全新配置第一次运行时，第一条 bash 命令要 16 秒左右，之后正常~~：第七十八轮（续九）已查清——Windows 上首次拉起 PowerShell/.NET（外加 AMSI/Defender 首扫）的冷启动约 10–20 秒，同配置重启仍快是因为系统缓存还热；bash 工具用的是 `spawn` 不是 ConPTY。后端监听后 `prewarmBashShell` 在空闲时付这笔账，若仍冷则卡片先显示「正在启动 shell…」。Linux 上首条约数毫秒，本轮未重测 Windows 墙钟（机器离线）。
@@ -280,6 +282,17 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 **验证**：`smoke-user-verify` 60 过；typecheck / i18ncheck（18 表补 `set.userVerify*`）绿。PR 未合并（`feat/windows-hello-lock`）。
 
+### 第七十八轮（续十一）：中途压缩后圆环不再停在估算值（2026-10-30）
+
+上一轮列在「留着的小尾巴」里：一轮对话**中途**因溢出而压缩时，圆环会一直显示 ≈估算值到这一轮结束。
+
+**根因**：压缩把标记打在溢出那条回复上，压缩后重发的请求会新建一条 assistant，用量在服务商一回报时就赋给了它——但 `saveMessage` 要等工具跑完才发 `message.updated`，所以窗口里「最后一次花过 token 的回合」仍是压缩前那条，`readContext` 一直判成「压缩后还没有请求」。时间戳也分不开：两条可能落在同一秒里。
+
+**修法**（两处）：
+- `runner.ts`：`assistant.usage = …` 与 `addUsage` 之后立刻 `saveMessage(assistant)`（普通保存，`message.updated` 照发），不等工具；流式溢出救援分支在 `continue` 前清掉 `continuing`，重试必须自成一条消息。
+- `session-context.ts`：`readContext` 先看顺序——最后一次花过 token 的回合在 `compacted.messageID` **之后**就用真实用量（哪怕时间戳相同或更早）；在它之前（或就是它）才保留估算。边界消息已不在转录里时仍按原来的时间戳判断。
+
+**验证**：`scripts/smoke-round29.ts` 第 4 节——顺序清估算（`post.time.created <= compacted.at` 也清）、边界之前仍估算、边界缺失回落到时间戳；再读 `runner.ts` 源码，断言 `addUsage` 之后、`promptSize` 之前有 `saveMessage(assistant)`，以及溢出救援的 `continue` 前有 `continuing = undefined`。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
