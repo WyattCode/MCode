@@ -3198,6 +3198,39 @@ async function main() {
     const cAt = composer.indexOf("async function toggleGoalMode()")
     const c = cAt >= 0 ? composer.slice(cAt, cAt + 450) : ""
     check("r123: Composer.toggleGoalMode captures next + try/catch", c.includes("const next = !goalMode.value") && c.includes("try {") && c.includes("notifyFailure") && c.includes('notify(t(next ? "toast.goalOn"'))
+  section("Review polish r124")
+  {
+    const root = process.cwd()
+    const composer = await fs.readFile(path.join(root, "src/renderer/src/components/Composer.vue"), "utf8")
+    const agentAt = composer.indexOf("async function chooseAgent")
+    const agent = agentAt >= 0 ? composer.slice(agentAt, agentAt + 700) : ""
+    check("r124: chooseAgent try/catch", agent.includes("try {") && agent.includes("notifyFailure") && agent.includes("quiet: true") && agent.includes("announceMode"))
+    const modelAt = composer.indexOf("async function chooseModel(provider")
+    const model = modelAt >= 0 ? composer.slice(modelAt, modelAt + 2500) : ""
+    check("r124: chooseModel try/catch", model.includes("try {") && model.includes("notifyFailure") && model.includes("{ quiet: true }") && model.includes("announceModel"))
+    const smartAt = composer.indexOf("async function chooseSmart")
+    const smart = smartAt >= 0 ? composer.slice(smartAt, smartAt + 500) : ""
+    check("r124: chooseSmart try/catch", smart.includes("try {") && smart.includes("notifyFailure") && smart.includes("quiet: true"))
+    const effortAt = composer.indexOf("async function chooseModelEffort")
+    const effort = effortAt >= 0 ? composer.slice(effortAt, effortAt + 700) : ""
+    check("r124: chooseModelEffort try/catch", effort.includes("try {") && effort.includes("notifyFailure") && effort.includes("quiet: true"))
+
+    const appVue = await fs.readFile(path.join(root, "src/renderer/src/App.vue"), "utf8")
+    const cycAt = appVue.indexOf("async function cycleAgent")
+    const cyc = cycAt >= 0 ? appVue.slice(cycAt, cycAt + 700) : ""
+    check("r124: cycleAgent try/catch", cyc.includes("try {") && cyc.includes("notifyFailure") && cyc.includes("announceMode"))
+    const ceAt = appVue.indexOf("async function cycleEffort")
+    const ce = ceAt >= 0 ? appVue.slice(ceAt, ceAt + 900) : ""
+    check("r124: cycleEffort try/catch", ce.includes("try {") && ce.includes("notifyFailure") && ce.includes("if (!next) return"))
+    const seAt = appVue.indexOf("async function stepEffort")
+    const se = seAt >= 0 ? appVue.slice(seAt, seAt + 700) : ""
+    check("r124: stepEffort try/catch", se.includes("try {") && se.includes("notifyFailure"))
+    const moveAt = appVue.indexOf('if (key.startsWith("move:"))')
+    const move = moveAt >= 0 ? appVue.slice(moveAt, moveAt + 500) : ""
+    check("r124: session move try/catch", move.includes("await app.move") && move.includes("try {") && move.includes("notifyFailure"))
+    const creAt = appVue.indexOf("async function createNamedProject")
+    const cre = creAt >= 0 ? appVue.slice(creAt, creAt + 2500) : ""
+    check("r124: createNamedProject move try/catch", cre.includes("await app.move(moving, directory)") && cre.includes("notifyFailure") && /if \(moving\) \{[\s\S]*?try \{/.test(cre))
   }
 
   section("Permission guide")
