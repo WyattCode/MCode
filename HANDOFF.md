@@ -223,7 +223,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ### 续七十一：提交说明生成失败拒默写 update、端点/系统说明保存失败不假成功（2026-10-30）
 
-- PR: （打开后填入；未合并）
+- PR: https://github.com/WyattCode/MCode/pull/169 （未合并）
 - Windows：`InfoCommitCard.commit` 在 `git.commitMessage` 空/失败时设 `error` 并返回，不再默写 `"update"` 提交；`ModelsPage.saveEndpoint` / `SettingsDialog.saveInstructions` 对 `patchConfig` 加 try/catch，仅成功后清草稿并 toast「已保存」。
 - 验证：slice smoke「Review polish r138」；未合并。
 
