@@ -221,6 +221,12 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 续七十：新建项目空结果提示、MCP 立即生效失败 toast、应用图标落盘失败专用提示（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/168 （未合并）
+- Windows：`App.createNamedProject` 在 `project.createBlank` 无应答时 Toast「创建失败」（对齐 #146 HomeHero，本切片补 Projects「+」路径）；`applyMcpNow` 空结果除 inline 状态外补 `notifyFailure(set.mcp.applyFailed)`；`chooseAppIcon` 的 `patchConfig` 用 `quiet` 后统一 `set.appIconApplyFail`（避免通用 prefSaveFailed 与图标文案叠两层）。
+- 验证：slice smoke「Review polish r137」；未合并。
+
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
 Pad 9 Pro Max（`M367FC`）接上后，第一次把「平板发指令 → 主机跑模型 → 回复回画到平板」整条链路走通。

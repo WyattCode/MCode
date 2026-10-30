@@ -2145,6 +2145,41 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r137")
+  {
+    const { readFileSync } = await import("node:fs")
+    const { join } = await import("node:path")
+    const root = process.cwd()
+    const appVue = readFileSync(join(root, "src/renderer/src/App.vue"), "utf8")
+    const cnAt = appVue.indexOf("async function createNamedProject")
+    const cnEnd = appVue.indexOf("\n/**\n * The conversation on show", cnAt)
+    const cn = (cnAt >= 0 && cnEnd > cnAt ? appVue.slice(cnAt, cnEnd) : "").replace(/\r\n/g, "\n")
+    check(
+      "r137: createNamedProject null toasts createFailed",
+      cn.includes('notifyFailure(t("menu.createFailed"') &&
+        cn.includes('t("common.requestFailed")') &&
+        !/if \(!directory\) return\n  if \(source/.test(cn),
+    )
+
+    const settings = readFileSync(join(root, "src/renderer/src/components/SettingsDialog.vue"), "utf8")
+    const mcpAt = settings.indexOf("async function applyMcpNow")
+    const mcpEnd = settings.indexOf("async function refreshMcp", mcpAt)
+    const mcp = mcpAt >= 0 && mcpEnd > mcpAt ? settings.slice(mcpAt, mcpEnd) : ""
+    check(
+      "r137: applyMcpNow toasts applyFailed on null",
+      mcp.includes('notifyFailure(t("set.mcp.applyFailed"))') && mcp.includes('mcpApply.value = "failed"'),
+    )
+    const iconAt = settings.indexOf("async function chooseAppIcon")
+    const iconEnd = settings.indexOf("const displayServer", iconAt)
+    const icon = (iconAt >= 0 && iconEnd > iconAt ? settings.slice(iconAt, iconEnd) : "").replace(/\r\n/g, "\n")
+    check(
+      "r137: chooseAppIcon patchConfig quiet + appIconApplyFail",
+      icon.includes("quiet: true") &&
+        icon.includes('notifyFailure(t("set.appIconApplyFail"))') &&
+        icon.includes("window.mcode.appIcon(appIcon.value)"),
+    )
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }
