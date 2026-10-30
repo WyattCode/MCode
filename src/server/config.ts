@@ -811,6 +811,9 @@ export class Config {
   /** An unreadable credential file that could not be moved aside: nothing may write over it. */
   private credentialsBlocked = false
 
+  /** An unreadable models.json that could not be moved aside: nothing may write over it. */
+  private modelsBlocked = false
+
   /** Whether credentials.json on disk is plain text rather than sealed. */
   private credentialsInPlainText = false
 
@@ -843,10 +846,16 @@ export class Config {
   private async readDiscovered(): Promise<Record<string, ModelEntry[]>> {
     const read = await this.storage.readOrCorrupt<unknown>("models")
     const value = read.value
+    if (read.unreadable) {
+      this.modelsBlocked = true
+      console.warn(`[config] models.json could not be read (${read.unreadable}); left in place, writes are refused, starting without discovered models`)
+      return {}
+    }
     if (!read.corrupt && (value === undefined || (value && typeof value === "object" && !Array.isArray(value)))) {
       return (value as Record<string, ModelEntry[]> | undefined) ?? {}
     }
     const aside = await this.storage.quarantine("models")
+    if (aside === undefined) this.modelsBlocked = true
     console.warn(`[config] models.json could not be read (${read.corrupt ?? "not an object"}); ${aside ? `kept as ${path.basename(aside)}` : "left in place"}, starting without discovered models`)
     return {}
   }
@@ -1354,14 +1363,17 @@ export class Config {
        * of providers with a curated list.
        */
       if (!this.environmentKey(provider)) {
-        delete this.discovered[provider]
-        await this.storage.write("models", this.discovered)
+        if (!this.modelsBlocked) {
+          delete this.discovered[provider]
+          await this.storage.write("models", this.discovered)
+        }
       }
     }
     await this.persistCredentials()
   }
 
   async setDiscovered(provider: string, models: ModelEntry[]): Promise<void> {
+    if (this.modelsBlocked) return
     this.discovered[provider] = models
     await this.storage.write("models", this.discovered)
   }

@@ -221,6 +221,11 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 续七十五：models/usage 损坏拒覆写；Plugins MCP toggle 空结果 Toast（2026-10-30）
+- PR: https://github.com/WyattCode/MCode/pull/173 （未合并）
+- Windows：`config.readDiscovered` 对 unreadable/quarantine-fail 设 `modelsBlocked`，`setDiscovered`/`setApiKey` 不再覆写；`UsageDays` 同样 blocked 拒写；`PluginsView.toggle` 空结果 `notifyFailure`。
+- 验证：slice smoke「Review polish r142」；未合并。
+
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
 Pad 9 Pro Max（`M367FC`）接上后，第一次把「平板发指令 → 主机跑模型 → 回复回画到平板」整条链路走通。
