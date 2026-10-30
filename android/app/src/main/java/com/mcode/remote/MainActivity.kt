@@ -1880,7 +1880,13 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         kotlinx.coroutines.delay(180)
         if (search.trim() != needle) return@LaunchedEffect
         val reply = runCatching {
-            rpc(JSONObject().put("type", "search.messages").put("query", needle).put("limit", 30))
+            rpcOrThrow(JSONObject().put("type", "search.messages").put("query", needle).put("limit", 30))
+        }.onFailure {
+            if (search.trim() == needle) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "没能搜索对话", Toast.LENGTH_SHORT).show()
+                }
+            }
         }.getOrNull()
         if (search.trim() != needle) return@LaunchedEffect
         foundHits = reply?.optJSONObject("data")?.optJSONArray("hits")?.let { arr ->
@@ -3324,9 +3330,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     var usageSummary by remember { mutableStateOf<JSONObject?>(null) }
     LaunchedEffect(leftMode) {
         if (leftMode != LeftMode.Settings || usageSummary != null) return@LaunchedEffect
-        usageSummary = runCatching {
-            rpc(JSONObject().put("type", "usage.summary").put("days", 30), 30_000)
-        }.getOrNull()?.optJSONObject("data")
+        runCatching {
+            usageSummary = rpcOrThrow(JSONObject().put("type", "usage.summary").put("days", 30), 30_000)
+                .optJSONObject("data")
+        }.onFailure {
+            withContext(Dispatchers.Main) {
+                Toast.makeText(context, "没能加载用量", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
     if (leftMode == LeftMode.Settings) {
         SettingsScreen(
@@ -5763,8 +5774,15 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         val root = sessions.find { it.id == currentSession }?.directory.orEmpty()
         LaunchedEffect(root) {
             changedFiles.clear()
-            val r = runCatching { rpc(JSONObject().put("type", "git.status").put("directory", root)) }.getOrNull()
-            val data = r?.optJSONObject("data") ?: return@LaunchedEffect
+            if (root.isBlank()) return@LaunchedEffect
+            val r = runCatching {
+                rpcOrThrow(JSONObject().put("type", "git.status").put("directory", root))
+            }.onFailure {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "没能加载变更", Toast.LENGTH_SHORT).show()
+                }
+            }.getOrNull() ?: return@LaunchedEffect
+            val data = r.optJSONObject("data") ?: return@LaunchedEffect
             changeBranch = data.optString("branch")
             /*
              * A folder that is not a repository has no changes, and saying only

@@ -2457,6 +2457,7 @@ async function main() {
   section("Review polish r102")
   section("Review polish r103")
   section("Review polish r104")
+  section("Review polish r105")
   {
     const root = process.cwd()
     const main = await fs.readFile(
@@ -2826,6 +2827,19 @@ async function main() {
     check("r104: shell.input uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}shell\.input/.test(input))
     check("r104: shell.input toasts on failure", input.includes("没能发送到终端"))
     check("r104: shell.input clears only on success", /onSuccess[\s\S]{0,80}terminalInput = ""/.test(input))
+    const gitAt = main.indexOf('put("type", "git.status").put("directory", root)')
+    const git = gitAt >= 0 ? main.slice(Math.max(0, gitAt - 280), gitAt + 500) : ""
+    check("r105: git.status uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}git\.status/.test(git))
+    check("r105: git.status toasts on failure", git.includes("没能加载变更"))
+    check("r105: git.status skips blank root", git.includes("root.isBlank()"))
+    const searchAt = main.indexOf('put("type", "search.messages")')
+    const search = searchAt >= 0 ? main.slice(Math.max(0, searchAt - 200), searchAt + 700) : ""
+    check("r105: search.messages uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}search\.messages/.test(search))
+    check("r105: search.messages toasts on failure", search.includes("没能搜索对话"))
+    const usageAt = main.indexOf('put("type", "usage.summary")')
+    const usage = usageAt >= 0 ? main.slice(Math.max(0, usageAt - 200), usageAt + 500) : ""
+    check("r105: usage.summary uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}usage\.summary/.test(usage))
+    check("r105: usage.summary toasts on failure", usage.includes("没能加载用量"))
   }
 
   section("Permission guide")

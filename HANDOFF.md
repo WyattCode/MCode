@@ -510,6 +510,11 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - PR: https://github.com/WyattCode/MCode/pull/135 （未合并）
 - Android：文件浏览器 `file.listDir` 改 `rpcOrThrow`（ok:false 不再假装空目录）+ Toast「没能打开文件夹」；`git.diff` 失败 Toast「没能加载差异」；终端 `shell.input` await 成功才清空输入 + Toast「没能发送到终端」。
 - 验证：smoke「Review polish r104」；未合并。
+### 续三十八：变更列表/对话搜索/用量失败提示（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/136 （未合并）
+- Android：变更轨 `git.status` 改 `rpcOrThrow`（失败不再假装干净树）+ Toast「没能加载变更」；会话列表 `search.messages` 失败 Toast「没能搜索对话」；设置 `usage.summary` 失败 Toast「没能加载用量」。
+- 验证：smoke「Review polish r105」；未合并。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
