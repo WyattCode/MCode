@@ -3049,6 +3049,28 @@ async function main() {
     const nullBlock = nullAt >= 0 ? create.slice(nullAt, nullAt + 260) : ""
     check("r117: createNamedProject null toasts", nullBlock.includes("notifyFailure") && nullBlock.includes("menu.createFailed"))
     check("r117: createNamedProject opens block", nullBlock.includes("if (!directory) {"))
+  section("Review polish r118")
+  {
+    const root = process.cwd()
+    const composer = await fs.readFile(path.join(root, "src/renderer/src/components/Composer.vue"), "utf8")
+    const preAt = composer.indexOf('type: "voice.precheck"')
+    const pre = preAt >= 0 ? composer.slice(preAt, preAt + 700) : ""
+    check("r118: voice.precheck fails closed on null", pre.includes("if (!ready || !ready.ok)") && pre.includes('key: "voice.startFailed"'))
+    check("r118: voice.precheck no fall-through ready&&", !pre.includes("if (ready && !ready.ok)"))
+
+    const main = await fs.readFile(path.join(root, "android/app/src/main/java/com/mcode/remote/MainActivity.kt"), "utf8")
+    const sheetAt = main.indexOf('for (agent in listOf("build", "plan"))')
+    const sheet = sheetAt >= 0 ? main.slice(sheetAt, sheetAt + 8000) : ""
+    check("r118: sheet agent rpcOrThrow", sheet.includes('rpcOrThrow(JSONObject().put("type", "session.agent")'))
+    check("r118: sheet access rpcOrThrow", sheet.includes('rpcOrThrow(JSONObject().put("type", "session.access")'))
+    check("r118: sheet effort rpcOrThrow", sheet.includes('rpcOrThrow(JSONObject().put("type", "session.effort")'))
+    check("r118: sheet access toast", sheet.includes("切换权限失败"))
+    const capAt = main.indexOf("onAccess = { level ->")
+    const cap = capAt >= 0 ? main.slice(capAt, capAt + 900) : ""
+    check("r118: capsule access rpcOrThrow", cap.includes("rpcOrThrow") && cap.includes("切换权限失败"))
+    const remAt = main.indexOf("onGoalRemove = {")
+    const rem = remAt >= 0 ? main.slice(remAt, remAt + 900) : ""
+    check("r118: goalRemove fail-closed", rem.includes("无法清除目标") && rem.includes("rpcOrThrow"))
   }
 
   section("Permission guide")

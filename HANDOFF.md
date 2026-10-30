@@ -578,6 +578,12 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - Android 窄屏：`onRename`/`onRemove` 失败不再静默/假成功。
 - Windows：`createNamedProject` 在 client 空回复时 `notifyFailure(menu.createFailed)`。
 - 验证：smoke「Review polish r117」；未合并。
+### 续五十一：语音预检空回复、会话 Agent/权限/Effort、清除目标失败提示（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- 桌面：`voice.precheck` 空回复/无 client → 不再开麦，`showVoiceFailure(voice.startFailed)`。
+- Android：会话设置 sheet 的 agent/access/effort → `rpcOrThrow` + Toast，本地行仅成功时更新；胶囊 `onAccess` 同；`onGoalRemove` 双 RPC 成功才关目标模式，否则「无法清除目标」。
+- 验证：smoke「Review polish r118」；未合并。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 

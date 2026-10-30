@@ -3928,6 +3928,13 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         }.onFailure {
                             withContext(Dispatchers.Main) {
                                 Toast.makeText(context, "没能更改权限", Toast.LENGTH_SHORT).show()
+                        try {
+                            rpcOrThrow(JSONObject().put("type", "session.access").put("sessionID", sid).put("access", level))
+                            val at = sessions.indexOfFirst { it.id == sid }
+                            if (at >= 0) sessions[at] = sessions[at].copy(access = level)
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, "切换权限失败：${e.message?.take(60) ?: "未知错误"}", Toast.LENGTH_LONG).show()
                             }
                         }
                     }
@@ -3976,6 +3983,13 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         }.onFailure {
                             withContext(Dispatchers.Main) {
                                 Toast.makeText(context, "没能清除目标", Toast.LENGTH_SHORT).show()
+                        try {
+                            rpcOrThrow(JSONObject().put("type", "session.goal").put("sessionID", sid).put("condition", JSONObject.NULL))
+                            rpcOrThrow(JSONObject().put("type", "session.goalMode").put("sessionID", sid).put("on", false))
+                            withContext(Dispatchers.Main) { goalMode = false }
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, "无法清除目标", Toast.LENGTH_SHORT).show()
                             }
                         }
                     }
@@ -6916,6 +6930,13 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                         }.onFailure {
                                             withContext(Dispatchers.Main) {
                                                 Toast.makeText(context, "没能切换 Agent", Toast.LENGTH_SHORT).show()
+                                        try {
+                                            rpcOrThrow(JSONObject().put("type", "session.agent").put("sessionID", sid).put("agent", agent))
+                                            val at = sessions.indexOfFirst { it.id == sid }
+                                            if (at >= 0) sessions[at] = sessions[at].copy(agent = agent)
+                                        } catch (e: Exception) {
+                                            withContext(Dispatchers.Main) {
+                                                Toast.makeText(context, "切换 Agent 失败：${e.message?.take(60) ?: "未知错误"}", Toast.LENGTH_LONG).show()
                                             }
                                         }
                                     }
@@ -6959,6 +6980,13 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                         }.onFailure {
                                             withContext(Dispatchers.Main) {
                                                 Toast.makeText(context, "没能更改权限", Toast.LENGTH_SHORT).show()
+                                        try {
+                                            rpcOrThrow(JSONObject().put("type", "session.access").put("sessionID", sid).put("access", level))
+                                            val at2 = sessions.indexOfFirst { it.id == sid }
+                                            if (at2 >= 0) sessions[at2] = sessions[at2].copy(access = level, goalMode = sessions[at2].goalMode)
+                                        } catch (e: Exception) {
+                                            withContext(Dispatchers.Main) {
+                                                Toast.makeText(context, "切换权限失败：${e.message?.take(60) ?: "未知错误"}", Toast.LENGTH_LONG).show()
                                             }
                                         }
                                     }
@@ -6988,6 +7016,13 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                         }.onFailure {
                                             withContext(Dispatchers.Main) {
                                                 Toast.makeText(context, "没能切换 Effort", Toast.LENGTH_SHORT).show()
+                                        try {
+                                            rpcOrThrow(JSONObject().put("type", "session.effort").put("sessionID", sid).put("effort", effort))
+                                            val at = sessions.indexOfFirst { it.id == sid }
+                                            if (at >= 0) sessions[at] = sessions[at].copy(effort = effort)
+                                        } catch (e: Exception) {
+                                            withContext(Dispatchers.Main) {
+                                                Toast.makeText(context, "切换 Effort 失败：${e.message?.take(60) ?: "未知错误"}", Toast.LENGTH_LONG).show()
                                             }
                                         }
                                     }
