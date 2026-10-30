@@ -510,7 +510,11 @@ async function authorizeMcp(name: string) {
   mcpAuthorizing.value = name
   notify(t("set.mcp.authorizing"))
   try {
-    await app.client?.request({ type: "mcp.authenticate", name })
+    const result = await app.client?.request({ type: "mcp.authenticate", name })
+    if (!result) {
+      notifyFailure(t("set.mcp.authorizeFailed") + t("common.requestFailed"))
+      return
+    }
     notify(t("set.mcp.authorized"), { level: "success" })
   } catch (err) {
     notifyFailure(t("set.mcp.authorizeFailed") + (err instanceof Error ? err.message : String(err)))
@@ -602,7 +606,11 @@ async function finishMcpImport() {
   try {
     const items = mcpImportChosen.value.map(({ source, name }) => ({ source, name }))
     const result = await app.client?.request({ type: "mcp.importApply", items })
-    notify(t("set.mcp.importDone", { n: String(result?.imported.length ?? 0) }), { level: "success" })
+    if (!result) {
+      notifyFailure(t("set.mcp.importFailed") + t("common.requestFailed"))
+      return
+    }
+    notify(t("set.mcp.importDone", { n: String(result.imported.length) }), { level: "success" })
     mcpView.value = "list"
     void refreshMcp()
   } catch (err) {
@@ -935,8 +943,10 @@ async function toggleHardwareAcceleration() {
   hardwareAcceleration.value = enabled
   try {
     await window.mcode.setHardwareAcceleration(enabled)
-  } catch {
-    // MiMo says it either way; the next launch reads whatever was written.
+  } catch (err) {
+    hardwareAcceleration.value = !enabled
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    return
   }
   notify(t("set.displayServerSaved"))
 }
