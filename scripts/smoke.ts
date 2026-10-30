@@ -2253,6 +2253,7 @@ async function main() {
   section("Review polish r88")
   section("Review polish r92")
   section("Review polish r93")
+    section("Review polish r95")
   {
     let root = process.cwd()
     for (let i = 0; i < 6; i++) {
@@ -2260,6 +2261,7 @@ async function main() {
         await fs.access(path.join(root, "src/renderer/src/components/Composer.vue"))
         await fs.access(path.join(root, "src/renderer/src/lib/files-tab.ts"))
         await fs.access(path.join(root, "src/renderer/src/lib/tool-meta.ts"))
+        await fs.access(path.join(root, "src/renderer/src/components/GoalBar.vue"))
         break
       } catch {
         root = path.dirname(root)
@@ -2646,6 +2648,28 @@ async function main() {
     const addUsageAt = store.indexOf("async addUsage(")
     const guardAt = addUsageAt < 0 ? -1 : store.indexOf("session.usage ?? emptyUsage()", addUsageAt)
     check("r94: addUsage guards missing usage", addUsageAt >= 0 && guardAt > addUsageAt)
+    const goalBar = await fs.readFile(path.join(root, "src/renderer/src/components/GoalBar.vue"), "utf8")
+    const questions = await fs.readFile(path.join(root, "src/renderer/src/stores/questions.ts"), "utf8")
+    const activity = await fs.readFile(path.join(root, "android/app/src/main/java/com/mcode/remote/MainActivity.kt"), "utf8")
+
+    const rerunAt = goalBar.indexOf("async function rerun")
+    const rerun = rerunAt < 0 ? "" : goalBar.slice(rerunAt, rerunAt + 700)
+    check("goal rerun refuses a second tap while the first is out", rerun.includes("rerunning") && /rerunning\.value/.test(rerun) && rerun.includes("finally"))
+    check("goal rerun button disables while busy", /data-goal-rerun[\s\S]{0,200}:disabled="[^"]*rerunning[^"]*"/.test(goalBar) || /:disabled="[^"]*rerunning[^"]*"[\s\S]{0,200}data-goal-rerun/.test(goalBar))
+
+    const acceptAt = questions.indexOf("async function acceptEdits")
+    const accept = acceptAt < 0 ? "" : questions.slice(acceptAt, acceptAt + 350)
+    check("acceptEdits captures currentID before setAccess", /const target = app\.currentID/.test(accept) && /setAccess\(target,/.test(accept))
+
+    const verbAt = activity.indexOf("fun toolVerbOf")
+    const verb = verbAt < 0 ? "" : activity.slice(verbAt, verbAt + 1200)
+    check("Android toolVerbOf names speak", /"speak"\s*->\s*"speak"/.test(verb))
+    check("Android toolVerbOf names memory", /"memory"\s*->\s*"memory"/.test(verb))
+    check("Android toolVerbOf names contacts", /"contacts"\s*->\s*"contacts"/.test(verb))
+    check("Android toolVerbOf names actor", /"actor"\s*->\s*"actor"/.test(verb))
+    check("Android toolVerbOf names invalid", /"invalid"\s*->\s*"invalid"/.test(verb))
+    check("Android TOOL_LABELS has done.speak", activity.includes('"done.speak" to "已朗读"'))
+    check("Android StepMark maps speak", /"speak"\s*->\s*"speaker"/.test(activity))
   }
 
   section("Permission guide")
