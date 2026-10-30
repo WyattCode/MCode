@@ -2145,6 +2145,41 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r149")
+  {
+    const { readFileSync } = await import("node:fs")
+    const { join } = await import("node:path")
+    const root = process.cwd()
+    const snap = readFileSync(join(root, "src/server/session/snapshot.ts"), "utf8")
+    const sweepAt = snap.indexOf("async sweep(live:")
+    const sweep = sweepAt >= 0 ? snap.slice(sweepAt, sweepAt + 3500) : ""
+    check(
+      "r149: writers corrupt keeps store",
+      sweep.includes("spokenFor.add(digest)") &&
+        sweep.includes("A ledger that will not parse") &&
+        !sweep.includes("the store may go"),
+    )
+    const office = readFileSync(join(root, "src/main/office.ts"), "utf8")
+    check("r149: office quarantineSync", office.includes("function quarantineSync(target: string)"))
+    check("r149: office VersionStore blocked map", office.includes("private readonly blocked = new Map"))
+    check(
+      "r149: office write refuses blocked",
+      office.includes("const blocked = this.blocked.get(dir)") && office.includes("if (blocked) throw new Error(blocked)"),
+    )
+    check(
+      "r149: office read distinguishes ENOENT",
+      office.includes('code === "ENOENT"') && office.includes("manifest.json could not be read"),
+    )
+    const settings = readFileSync(join(root, "src/renderer/src/components/SettingsDialog.vue"), "utf8")
+    const loadAt = settings.indexOf("async function loadAgents()")
+    const load = loadAt >= 0 ? settings.slice(loadAt, loadAt + 600) : ""
+    check(
+      "r149: loadAgents fail-closed toast",
+      load.includes('notifyFailure(t("set.agents.openFailed")') &&
+        !load.includes(".catch(() => undefined)"),
+    )
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }

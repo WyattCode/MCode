@@ -221,6 +221,13 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 续八十二：writers 损坏保留 undo；Office 版本清单拒覆写；loadAgents 失败 toast（2026-10-30）
+- PR: （开 PR 后填）
+- Session：`SnapshotStore.sweep` 对损坏的 `*.writers.json` 与不可读一样 `spokenFor.add`，不再删 undo。
+- Windows Office：`VersionStore` 区分 ENOENT / 不可读 / 损坏；损坏 quarantine；blocked 时拒绝覆写 manifest。
+- Settings：`loadAgents`（agents.state）失败 toast，不再显示成「未配置」。
+- 验证：slice smoke「Review polish r149」；未合并。
+
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
 Pad 9 Pro Max（`M367FC`）接上后，第一次把「平板发指令 → 主机跑模型 → 回复回画到平板」整条链路走通。

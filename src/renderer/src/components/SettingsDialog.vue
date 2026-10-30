@@ -217,7 +217,21 @@ async function switchLaunchAtLogin() {
 }
 
 async function loadAgents() {
-  agents.value = await app.client?.request({ type: "agents.state" }).catch(() => undefined)
+  try {
+    const client = app.client
+    if (!client) {
+      notifyFailure(t("set.agents.openFailed") + t("common.requestFailed"))
+      return
+    }
+    const result = await client.request({ type: "agents.state" })
+    if (!result) {
+      notifyFailure(t("set.agents.openFailed") + t("common.requestFailed"))
+      return
+    }
+    agents.value = result
+  } catch (err) {
+    notifyFailure(t("set.agents.openFailed") + reasonText(err))
+  }
 }
 
 async function openAgents() {

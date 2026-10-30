@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto"
 import { execFile } from "node:child_process"
-import { existsSync, watch, type FSWatcher } from "node:fs"
+import { existsSync, renameSync, watch, type FSWatcher } from "node:fs"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
@@ -53,11 +53,29 @@ function publicState(manifest: Manifest): VersionState {
 
 /* ------------------------------------------------------------ versions */
 
+/** Moves a damaged office manifest aside; undefined if that fails. */
+function quarantineSync(target: string): string | undefined {
+  const iso = new Date().toISOString().replace(/[:.]/g, "-")
+  for (let i = 0; i < 4; i++) {
+    const aside = i === 0 ? `${target}.corrupt-${iso}` : `${target}.corrupt-${iso}-${i}`
+    try {
+      renameSync(target, aside)
+      return aside
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") continue
+      return undefined
+    }
+  }
+  return undefined
+}
+
 class VersionStore {
   constructor(private readonly root: string) {}
 
   /* One chain per history folder: every read-then-write of a manifest waits for the one before, so concurrent records keep every version. */
   private readonly locks = new Map<string, Promise<void>>()
+  /** Set when a file's manifest.json could not be read; nothing may be written over it. */
+  private readonly blocked = new Map<string, string>()
 
   private exclusive<T>(file: string, work: () => Promise<T>): Promise<T> {
     const key = this.dirOf(file)
@@ -79,17 +97,45 @@ class VersionStore {
   }
 
   private async read(file: string): Promise<Manifest> {
+    const dir = this.dirOf(file)
+    const target = path.join(dir, "manifest.json")
+    let raw: string
     try {
-      const parsed = JSON.parse(await fs.readFile(path.join(this.dirOf(file), "manifest.json"), "utf8")) as Manifest
-      if (Array.isArray(parsed.versions) && typeof parsed.cursor === "number") return parsed
-    } catch {
-      // No history yet, or a broken one: start again.
+      raw = await fs.readFile(target, "utf8")
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        this.blocked.delete(dir)
+        return { versions: [], cursor: -1 }
+      }
+      const why = err instanceof Error ? err.message : String(err)
+      this.blocked.set(dir, `manifest.json could not be read (${why}), so nothing is saved over it`)
+      console.warn("[office-versions] manifest.json could not be read:", why)
+      return { versions: [], cursor: -1 }
     }
+    try {
+      const parsed = JSON.parse(raw) as Manifest
+      if (Array.isArray(parsed.versions) && typeof parsed.cursor === "number") {
+        this.blocked.delete(dir)
+        return parsed
+      }
+    } catch {
+      // Fall through to quarantine.
+    }
+    const aside = quarantineSync(target)
+    if (!aside) {
+      this.blocked.set(dir, "manifest.json is unreadable and could not be moved aside, so nothing is saved over it")
+      console.warn("[office-versions] manifest.json is unreadable and could not be moved aside")
+      return { versions: [], cursor: -1 }
+    }
+    console.warn("[office-versions] manifest.json was unreadable; kept as", aside)
+    this.blocked.delete(dir)
     return { versions: [], cursor: -1 }
   }
 
   private async write(file: string, manifest: Manifest) {
     const dir = this.dirOf(file)
+    const blocked = this.blocked.get(dir)
+    if (blocked) throw new Error(blocked)
     await fs.mkdir(dir, { recursive: true })
     const target = path.join(dir, "manifest.json")
     // A name of its own per write, so two writers never rename each other's half-written file.
