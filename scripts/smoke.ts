@@ -2454,6 +2454,7 @@ async function main() {
   section("Review polish r99")
   section("Review polish r100")
   section("Review polish r101")
+  section("Review polish r102")
   {
     const root = process.cwd()
     const main = await fs.readFile(
@@ -2780,6 +2781,18 @@ async function main() {
     check("r101: sheet archive toasts", main.includes("没能归档"))
     const compactWin = (() => { const at = main.indexOf('Text("压缩对话"'); const start = main.lastIndexOf("clickable", at); return start < 0 || at < 0 ? "" : main.slice(start, at) })()
     check("r101: sheet clears target before rpc", compactWin.includes("sheetTarget = null") && compactWin.indexOf("sheetTarget = null") < compactWin.indexOf("scope.launch"))
+    const patchAt = main.indexOf("onPatch = {")
+    const patch = patchAt >= 0 ? main.slice(patchAt, patchAt + 900) : ""
+    check("r102: onPatch uses rpcOrThrow", patch.includes("rpcOrThrow") && patch.includes("config.set"))
+    check("r102: onPatch refreshes only onSuccess", /onSuccess/.test(patch) && patch.indexOf("onSuccess") < patch.indexOf("appConfig"))
+    check("r102: onPatch toasts on failure", patch.includes("没能保存设置"))
+    const sheetAt = main.indexOf("会话设置")
+    const sheet = sheetAt >= 0 ? main.slice(sheetAt, sheetAt + 12000) : ""
+    const goalAt = sheet.indexOf('Text("追求目标"')
+    const goal = goalAt >= 0 ? sheet.slice(Math.max(0, goalAt - 1400), goalAt + 200) : ""
+    check("r102: settings goalMode uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}session\.goalMode/.test(goal))
+    check("r102: settings goalMode reverts on failure", /onFailure[\s\S]{0,120}goalMode = !next/.test(goal))
+    check("r102: settings goalMode toasts", goal.includes("没能切换目标模式"))
   }
 
   section("Permission guide")
