@@ -30,8 +30,6 @@ import { isSummary, touchedFiles } from "../src/server/session/summary"
 import { claudeCallID, forWire, mistralCallID } from "../src/server/provider/wire-ids"
 import { AnthropicAdapter, toProviderMessages } from "../src/server/provider/anthropic"
 import { systemPrompt } from "../src/server/session/prompt"
-// plan: the plan file's name, as the runner builds it.
-import { planFile, slugOf } from "../src/server/session/plan"
 import { createServer, type IncomingHttpHeaders, type ServerResponse } from "node:http"
 import fs from "node:fs/promises"
 import os from "node:os"
@@ -305,8 +303,6 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       // Writing is allowed outright, so what refuses a write here is the plan rule and nothing else.
       await e.config.set({ permissions: { ...e.config.get().permissions, edit: "allow" } })
       const session = await e.store.create({ directory: e.project, model: e.model, agent: "plan" })
-      const plan = planFile({ directory: e.project, dataRoot: path.join(e.dir, "data", "storage"), repo: false }, { created: session.created, slug: slugOf(session) })
-      const planName = path.basename(plan)
 
       /*
        * Read off the newest user message's notes rather than the whole wire:
@@ -324,13 +320,28 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       await e.runner.prompt({ sessionID: session.id, text: "plan the work" })
       await e.idle(session.id)
       const firstTurn = await told()
+
+      /*
+       * The plan's path is read back from the note the runner attached, not
+       * recomputed here. The runner decides `repo` with a real gitStatus() of
+       * the session's directory, which walks up and can disagree with a
+       * guessed `repo: false`; when it did, six checks hung on a path the
+       * product never used and all went red without saying why (HANDOFF, 续八).
+       */
+      const display =
+        /Write your plan to (.+?) with the write tool\./.exec(firstTurn)?.[1] ??
+        /A plan is already written at (.+?)\./.exec(firstTurn)?.[1]
+      check("plan path was read back from the product note, not recomputed", typeof display === "string" && display.length > 0, firstTurn.slice(0, 300))
+      const plan = display === undefined ? "" : path.isAbsolute(display) ? display : path.join(e.project, display.split("/").join(path.sep))
+      const planName = path.basename(plan)
+
       check(
         "a conversation's first planning turn is told the rules and where its plan goes",
-        firstTurn.includes("[Plan mode]") && firstTurn.includes("There is no plan file yet") && firstTurn.includes(planName),
+        firstTurn.includes("[Plan mode]") && firstTurn.includes("There is no plan file yet") && display !== undefined && firstTurn.includes(display),
         firstTurn.slice(0, 300),
       )
       check("and the note reaches the model with the message", wireText(e.bodies.at(-1)).includes("The user has switched on plan mode"))
-      check("and its folder is made, so the first write lands", await fs.stat(path.dirname(plan)).then(() => true, () => false))
+      check("and its folder is made, so the first write lands", display !== undefined && (await fs.stat(path.dirname(plan)).then(() => true, () => false)))
 
       // A write anywhere else is refused before anyone is asked, and nothing appears on disk.
       e.replies.push(calls([{ name: "write", input: { file_path: "src/app.ts", content: "export const x = 1\n" } }]))
@@ -344,7 +355,7 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
         refusal,
       )
       check("and the file is not there", await fs.stat(path.join(e.project, "src", "app.ts")).then(() => false, () => true))
-      check("the model is told where it may write instead", refusal?.type === "tool" && String(refusal.error).includes(planName), refusal?.type === "tool" ? refusal.error : undefined)
+      check("the model is told where it may write instead", planName !== "" && refusal?.type === "tool" && String(refusal.error).includes(planName), refusal?.type === "tool" ? refusal.error : undefined)
 
       // The plan file itself goes through.
       e.replies.push(calls([{ name: "write", input: { file_path: plan, content: "# the plan\n\n1. do it\n" } }]))
@@ -362,7 +373,7 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       void e.runner.prompt({ sessionID: session.id, text: "is it ready" })
       check("plan_exit raises a question", await e.until(() => asked().length > before))
       const first = asked().at(-1)!
-      check("the card is tagged with the plan file, so the window can name it and open it", first.questions[0]?.plan === path.relative(e.project, plan).split(path.sep).join("/") || first.questions[0]?.plan === plan, first.questions[0])
+      check("the card is tagged with the plan file, so the window can name it and open it", display !== undefined && (first.questions[0]?.plan === display || first.questions[0]?.plan === plan), first.questions[0])
       check("with a Yes and a No, and nothing to fill in", first.questions[0]?.options.map((option) => option.label).join() === "Yes,No", first.questions[0]?.options)
       e.runner.questions.reply(first.id, [["No"]])
       await e.idle(session.id)
@@ -409,7 +420,7 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       const approval = (await e.store.messages(session.id)).filter((message) => message.role === "user").at(-1)
       check(
         "the approval is the word that build mode is on and which plan to carry out, marked as the app's rather than the user's",
-        approval?.role === "user" && approval.synthetic === true && approval.text.includes("approved") && approval.text.includes("build mode") && approval.text.includes(planName),
+        approval?.role === "user" && approval.synthetic === true && approval.text.includes("approved") && approval.text.includes("build mode") && planName !== "" && approval.text.includes(planName),
         approval,
       )
 

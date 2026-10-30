@@ -83,7 +83,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
   - 打开弹窗后第一次 `capturePage` 可能是旧画面，等约 2 秒并 `invalidate()` 再截。
   - ContextMenu 当前选中项是 `.item.ticked`；侧栏底部「设置」行现在先打开菜单，再点菜单里的「设置」。
 - 开发版重启：先停旧的 `npm run dev` 任务，再结束残留 electron 进程，否则两个开发实例抢同一份配置（会报缓存无法创建）。第十三轮起未打包运行默认用独立数据目录 `%APPDATA%\MCode-dev`（I13-1），不再和安装版共用 `%APPDATA%\MCode`；探针用 `app.setPath("userData")` 或 `--user-data-dir` 仍然优先。
-- 已知不稳定检查：第五轮计划模式一节（`smoke-round5.ts`「plan mode writes one file…」）偶发 6 条一起失败，2026-09-20 四次全量里出现一次；疑似后台请求（标题生成）插进来，使 `e.bodies.at(-1)` 不是本轮请求。重跑即过，未修。第十四轮 P 路还见过一次第七轮「provider receives the long bash description」两条失败（那次请求里没有工具列表），重跑即过，疑同类。
+- 已知不稳定检查：第五轮计划模式一节（`smoke-round5.ts`「plan mode writes one file…」）偶发 6 条一起失败，2026-09-20 四次全量里出现一次；当时疑为后台请求（标题生成）插进来，使 `e.bodies.at(-1)` 不是本轮请求——**这个诊断不对**。真因是六条检查都挂在一个**重算**出来的计划文件路径上，而产品用一次真实的 `gitStatus()` 决定放哪，两边不一致时六条一起红。第七十八轮（续八）已改为从首轮计划笔记回读路径再断言。第十四轮 P 路还见过一次第七轮「provider receives the long bash description」两条失败（那次请求里没有工具列表），重跑即过，疑同类。
 - 版本号只在打包时递增，不要手改。WSL 永久不在范围内。
 - 本机 TCP 动态端口从 **1024** 起（`netsh int ipv4 show dynamicport tcp`），向系统要端口 0 可能拿到浏览器 / fetch 拒绝的端口（5060、6000、6666 等）。应用里后端自己监听并重试（`server/index.ts` 的 `listenForWindow`，上限 20 次），预览服务在 `bind()` 里换掉这类端口（上限 8 次），列表在 `shared/blocked-ports.ts`；检查脚本的服务器由 `scripts/safe-listen.ts` 挪开（`smoke.ts`、`session-check.ts` 第一个 import，`smoke-blocked-ports.ts` 验证）。新写的检查脚本入口也要先 import 它。
 - 合并多路时：各路都删同一批代码（如导入弹窗、对话文件），冲突两侧都要丢掉，不能 keep-both；合并后还要 grep 检查脚本里对已删符号的引用（第十九轮 E1/E11、`openText` 就是这样漏的）。
@@ -200,6 +200,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
    - ~~消息 id 的「单调递增」只在一个进程里成立~~：第七十八轮已修（`adopt()`，读取时把磁盘 id 作为下限）。
    - 一轮对话**中途**因溢出而压缩时，圆环会一直显示估算值到这一轮结束（没有逐步的时间戳能分辨；估算值很接近）。
    - ~~联网搜索在确认卡片里选了「关闭网络搜索」之后，只能把 `config.json` 的 `websearch` 改回 `"auto"`~~：第七十八轮已在设置页「浏览器」分组加开关（18 语言表补齐）。~~**平板端没有**这个开关~~：第七十八轮（续六）已在平板 `SettingsScreen` 常规 › 浏览器补上（关=`false`，开=`auto`）。
+   - ~~联网搜索在确认卡片里选了「关闭网络搜索」之后，只能把 `config.json` 的 `websearch` 改回 `"auto"`~~：第七十八轮已在设置页「浏览器」分组加开关（18 语言表补齐）。~~**平板端没有**这个开关~~：第七十八轮（续六）已在平板设置补上。
    - 全新配置第一次运行时，第一条 bash 命令要 16 秒左右，之后正常（第三十五轮探针看到的，原因未查；只影响新装后的第一条命令）。
    - ~~Linux 托盘图标仍是把 512 的配色图缩成一张 16 交给托盘~~：第七十八轮已修（每配色 7 个尺寸 PNG + `addRepresentation`，注意必须走 `dataURL` 不能走 `buffer`）。
    - ~~`command -v rm` 这种只查命令位置的写法也被当成删除来问~~：第七十八轮已修（`-v`/`-V` 不派生程序）。
@@ -208,7 +209,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
    - 设置页「开源引擎」那一行还缺一个公开仓库地址。
    - `--shadow-xs` 在深色下没有对应值，但 MiMo 可能也是这样，第二十三轮标为存疑、没动。
    - docx 修订颜色仍写死（除非允许新增 token 名）；`.csv` 的 Excel 标记没定。
-   - 偶发不稳定的检查：第七轮那条**已修**（第二十五轮找到根因：它读 `bodies.at(-1)`，跟本轮请求没有绑定）。第五轮计划模式一节仍未修——六条检查都挂在一个**重算**出来的计划文件路径上，而产品用一次真实的 `gitStatus()` 决定放哪，两边不一致时六条一起红且不说明原因；正确做法是从产品回读那个路径再断言。
+   - 偶发不稳定的检查：第七轮那条**已修**（第二十五轮找到根因：它读 `bodies.at(-1)`，跟本轮请求没有绑定）。第五轮计划模式一节**已修**（第七十八轮·续八）——六条检查原先都挂在一个**重算**出来的计划文件路径上，而产品用一次真实的 `gitStatus()` 决定放哪，两边不一致时六条一起红且不说明原因；现在 smoke 从首轮计划笔记回读那个路径再断言，不再用猜的 `repo: false` 重算。
 
 7. **编码能力计划**（第三十五轮，用户定「能力第一」）：
    1. ~~跑基线~~：2026-09-28 已跑（见第三十五轮）；「只查不改」提醒已加，12 次实测中没有触发过，效果待遇到打转时再看。
@@ -248,6 +249,12 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 **补丁（同轮）**：模型第一遍漏了 `PreviewSheet` / `changesSheet` / `DiffSheet` 抓手与文件行底，以及终端、文件树、模型服务、设置、会话菜单、PDF/Office 等其余 `ModalBottomSheet`——凡深色下仍等于 `MaterialTheme.colorScheme.background`（= 页面 `#151515`）的，一律改为 `RemoteChrome.SheetDark` `#20201F`。`DiffSheet` 标题墨色与抓手走 `RemoteChrome`；文件行底 `#262625`（比 sheet 板子亮一级）。
 
 **验证**：Fold / 模拟器上 `adb shell cmd uimode night yes`，依次打开一个代码块（含展开对话框）、摘要 sheet、差异 sheet、`本次改动` / `changePatch`、终端、文件树、设置，确认 sheet 与页面有边界、代码块三块板子层次正确、改动行墨色不再发亮、工具行前的图标看得见。盒子上无 Android SDK，以 `RemoteChromeTest`（纯 JVM）+ 源码常量断言代替编译。**PR 未合并**。
+### 第七十八轮（续八）：第五轮计划模式 smoke 从产品回读路径（2026-10-30）
+
+- **问题**：`scripts/smoke-round5.ts` 的「Round 5: plan mode writes one file and leaves through a question (E5)」一节，开头就用 `planFile(..., { repo: false }, ...)` 把计划文件路径**重算**了一遍，六条检查（首轮笔记、目录已建、越界写被拒、计划写入、`plan_exit` 卡片、批准文本）全挂在这个路径和它的 basename 上。产品（`SessionRunner.planFor`）是用一次真实的 `gitStatus(session.directory)` 决定 `repo` 的——它会向上找仓库根，可能和硬编码的 `repo: false` 不一致；一旦不一致，六条一起红，而且看不出原因。
+- **修法**：不再猜 `repo`。第一轮计划请求结束后，从产品自己贴的那条笔记里把路径读回来：先匹配 `Write your plan to (.+?) with the write tool.`，否则匹配 `A plan is already written at (.+?)\.`；两条都不中就单独一条检查失败并带上笔记开头。读到的 `display` 若是绝对路径就直接用，否则按 `/` 拆开用 `path.join(e.project, ...)` 拼回绝对路径，`planName` 取它的 basename。之后所有路径相关的检查都用回读的 `plan` / `planName` / `display`：目录检查用 `path.dirname(plan)`，`plan_exit` 卡片直接和 `display` 比，批准文本仍按 basename 找。另加一条 `plan path was read back from the product note, not recomputed`，只有解析成功才为真。
+- **验证**：盒子上 plan-only harness（`out/smoke-plan-e5.mjs`，镜像 E5 节）**22 passed / 0 failed**。变异 `MUTATE_PLAN_PARSE=1`（回读强制空）→ **15 passed / 7 failed**，含 `plan path was read back…`、目录、写入、卡片、批准等路径相关项，并带笔记/拒绝详情。另：`git init` 项目上旧写法 `planFile(..., repo:false)` 与产品回读路径 **disagree**（data/storage/plans vs `.mcode/plans`），`folderWrong=false` / `folderProduct=true`，复现「六条挂错路径」；同一条件下新回读逻辑 6/0（含「product chose in-repo plan folder」）。
+- **状态**：PR 未合并（分支 `fix/smoke-plan-path-from-product`）。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
