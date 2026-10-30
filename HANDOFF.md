@@ -617,6 +617,11 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - PR: https://github.com/WyattCode/MCode/pull/155 （未合并）
 - 桌面：Composer `chooseAgent`/`chooseModel`/`chooseSmart`/`chooseModelEffort` 与 App `cycleAgent`/`cycleEffort`/`stepEffort` 失败 `notifyFailure(common.requestFailed)`，成功才 announce；行菜单 `move:` 与 `createNamedProject` 的 `app.move` 失败同样 toast。
 - 验证：smoke「Review polish r124」；未合并。
+### 续五十八：删除/归档/恢复与移出项目失败提示（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/156 （未合并）
+- 桌面：会话删除（单条/批量/设置页归档删除）、归档与撤销归档、项目批量归档、设置页恢复、移出项目：RPC 失败补 `common.requestFailed`（撤销归档用 `toast.archiveUndoFailed`）；成功 toast 只在实际成功后发出，批量按成功条数计数。
+- 验证：smoke「Review polish r125」；未合并。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
