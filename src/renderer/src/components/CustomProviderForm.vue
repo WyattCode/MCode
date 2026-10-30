@@ -355,16 +355,23 @@ const removingModel = ref<ModelRow>()
 
 async function confirmRemoveModel() {
   const row = removingModel.value
-  removingModel.value = undefined
   if (!row) return
-  const removed = editing ? await app.removeCustomModel(editing.id, row.id).then(() => true, () => false) : false
+  if (editing) {
+    try {
+      await app.removeCustomModel(editing.id, row.id)
+    } catch (err) {
+      notice.danger((err instanceof Error ? err.message : String(err)) || t("set.models.removeFailed"))
+      return
+    }
+  }
   form.value.models = form.value.models.filter((entry) => entry.key !== row.key)
-  if (removed) {
+  if (editing) {
     // Saved already: the model leaves the saved form too, and every other unsaved change stays unsaved.
     const saved = JSON.parse(pristine.value) as typeof form.value
     saved.models = saved.models.filter((entry) => entry.key !== row.key)
     pristine.value = JSON.stringify(saved)
   }
+  removingModel.value = undefined
 }
 
 /* ------------------------------------------------------------ limits and inputs */

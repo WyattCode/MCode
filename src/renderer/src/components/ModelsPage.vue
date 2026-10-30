@@ -164,7 +164,6 @@ const removing = ref<{ id: string; name: string; custom: boolean }>()
 
 async function confirmRemove() {
   const target = removing.value
-  removing.value = undefined
   if (!target) return
   try {
     if (target.custom) {
@@ -178,6 +177,7 @@ async function confirmRemove() {
       notify(t("set.models.disconnected", { name: target.name }), { level: "success" })
     }
     await app.ensureUsableModel()
+    removing.value = undefined
   } catch {
     notifyFailure(t(target.custom ? "set.models.removeFailed" : "set.models.disconnectFailed"))
   }
