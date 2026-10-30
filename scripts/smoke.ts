@@ -2462,6 +2462,7 @@ async function main() {
   section("Review polish r107")
   section("Review polish r108")
   section("Review polish r109")
+  section("Review polish r110")
   {
     const root = process.cwd()
     const main = await fs.readFile(
@@ -2894,6 +2895,19 @@ async function main() {
     const attach = attachAt >= 0 ? main.slice(Math.max(0, attachAt - 160), attachAt + 550) : ""
     check("r109: shell.attach uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}shell\.attach/.test(attach))
     check("r109: shell.attach toasts on failure", attach.includes("没能连接终端"))
+    const cfgAt = main.indexOf("LaunchedEffect(connected, refreshCommandsTick)")
+    const cfg = cfgAt >= 0 ? main.slice(cfgAt, cfgAt + 3000) : ""
+    check("r110: config.get uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}config\.get/.test(cfg))
+    check("r110: config.get clears projects only after success", cfg.indexOf("rpcOrThrow") >= 0 && cfg.indexOf("rpcOrThrow") < cfg.indexOf("projects.clear()"))
+    check("r110: config.get toasts on failure", cfg.includes("没能加载设置"))
+    const listAt = main.indexOf('id.startsWith("list")')
+    const list = listAt >= 0 ? main.slice(listAt, listAt + 2000) : ""
+    check("r110: session.list checks ok before clear", list.indexOf('optBoolean("ok")') >= 0 && list.indexOf('optBoolean("ok")') < list.indexOf("sessions.clear()"))
+    check("r110: session.list toasts on failure", list.includes("没能加载会话"))
+    const getAt = main.indexOf("// History first; the live stream rides on top of it.")
+    const get = getAt >= 0 ? main.slice(getAt, getAt + 2500) : ""
+    check("r110: session.get uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}session\.get/.test(get))
+    check("r110: session.get toasts on failure", get.includes("没能打开对话"))
   }
 
   section("Permission guide")

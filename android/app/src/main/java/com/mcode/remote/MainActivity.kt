@@ -2646,19 +2646,26 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             .put("request", JSONObject().put("type", "session.watch").put("sessionIDs", org.json.JSONArray().put(id))))
         // History first; the live stream rides on top of it.
         scope.launch {
-            val ticket = "h${System.nanoTime()}"
-            val deferred = client.awaitResponse(ticket)
-            request(JSONObject().put("type", "session.get").put("sessionID", id), ticket)
             /*
              * The loading line comes down however this read ends. It used to be
              * cleared only after a reply arrived, so a `session.get` that timed
              * out or was refused left 「正在加载对话…」 on screen for good - the
              * conversation never opened again without a restart.
+             *
+             * rpcOrThrow also refuses ok:false: a quiet empty pane used to
+             * look like an empty conversation rather than a failed open.
              */
             val res = try {
-                runCatching { deferred.await() }.getOrNull()
+                rpcOrThrow(JSONObject().put("type", "session.get").put("sessionID", id))
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                if (seq == selectSeq) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, "没能打开对话", Toast.LENGTH_SHORT).show()
+                    }
+                }
+                null
             } finally {
-                client.forgetResponse(ticket)
                 if (seq == selectSeq) loadingThread = false
             }
             if (res == null || seq != selectSeq) return@launch
@@ -2781,8 +2788,21 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             "response" -> {
                 val id = f.optString("id")
                 if (id.startsWith("list")) {
+                    /*
+                     * Do not clear first: an ok:false (or empty) list reply
+                     * used to wipe every row and leave the drawer blank.
+                     */
+                    if (f.has("ok") && !f.optBoolean("ok")) {
+                        Toast.makeText(context, "没能加载会话", Toast.LENGTH_SHORT).show()
+                        return
+                    }
+                    val data = f.optJSONObject("data")
+                    val listProbe = data?.optJSONArray("sessions")
+                    if (data == null || listProbe == null) {
+                        Toast.makeText(context, "没能加载会话", Toast.LENGTH_SHORT).show()
+                        return
+                    }
                     sessions.clear()
-                    val data = f.optJSONObject("data") ?: return
                     val running = data.optJSONArray("running")?.let { arr -> (0 until arr.length()).map { arr.optString(it) }.toSet() } ?: emptySet()
                     val list = data.optJSONArray("sessions") ?: return
                     for (i in 0 until list.length()) {
@@ -3076,21 +3096,34 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      */
     LaunchedEffect(connected, refreshCommandsTick) {
         if (!connected) return@LaunchedEffect
-        val read = runCatching { rpc(JSONObject().put("type", "config.get")) }.getOrNull()
-            ?.optJSONObject("data")?.optJSONObject("config")
-        appConfig = read
-        // Claude's projects page lists `config.projects`, newest added first.
-        projects.clear()
-        read?.optJSONArray("projects")?.let { arr ->
-            for (i in 0 until arr.length()) arr.optString(i).takeIf { it.isNotBlank() }?.let { projects.add(it) }
-        }
-        projectNames.clear()
-        read?.optJSONObject("projectNames")?.let { obj ->
-            for (key in obj.keys()) if (obj.optString(key).isNotBlank()) projectNames[key] = obj.optString(key)
-        }
-        projectUsed.clear()
-        read?.optJSONObject("projectUsed")?.let { obj ->
-            for (key in obj.keys()) projectUsed[key] = obj.optLong(key)
+        /*
+         * config.get must succeed before the lists are wiped: a refused
+         * or timed-out read used to clear projects / names / used, so a
+         * blip looked like every project had been removed.
+         */
+        try {
+            val read = rpcOrThrow(JSONObject().put("type", "config.get"))
+                .optJSONObject("data")?.optJSONObject("config")
+                ?: error("no config")
+            appConfig = read
+            // Claude's projects page lists `config.projects`, newest added first.
+            projects.clear()
+            read.optJSONArray("projects")?.let { arr ->
+                for (i in 0 until arr.length()) arr.optString(i).takeIf { it.isNotBlank() }?.let { projects.add(it) }
+            }
+            projectNames.clear()
+            read.optJSONObject("projectNames")?.let { obj ->
+                for (key in obj.keys()) if (obj.optString(key).isNotBlank()) projectNames[key] = obj.optString(key)
+            }
+            projectUsed.clear()
+            read.optJSONObject("projectUsed")?.let { obj ->
+                for (key in obj.keys()) projectUsed[key] = obj.optLong(key)
+            }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            withContext(Dispatchers.Main) {
+                Toast.makeText(context, "没能加载设置", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
