@@ -3618,9 +3618,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             onGoalRemove = {
                 currentSession?.let { sid ->
                     scope.launch {
-                        runCatching { rpc(JSONObject().put("type", "session.goal").put("sessionID", sid).put("condition", JSONObject.NULL)) }
-                        runCatching { rpc(JSONObject().put("type", "session.goalMode").put("sessionID", sid).put("on", false)) }
-                        withContext(Dispatchers.Main) { goalMode = false }
+                        runCatching {
+                            rpc(JSONObject().put("type", "session.goal").put("sessionID", sid).put("condition", JSONObject.NULL))
+                            rpc(JSONObject().put("type", "session.goalMode").put("sessionID", sid).put("on", false))
+                        }.onSuccess {
+                            withContext(Dispatchers.Main) { goalMode = false }
+                        }.onFailure {
+                            withContext(Dispatchers.Main) { Toast.makeText(context, "没能保存目标", Toast.LENGTH_SHORT).show() }
+                        }
                     }
                 }
             },

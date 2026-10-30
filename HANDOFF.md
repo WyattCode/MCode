@@ -221,6 +221,13 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 续七十九：automation journal / Android 清目标 / boot-prefs 损坏拒覆写（2026-10-30）
+- PR: https://github.com/WyattCode/MCode/pull/177 （未合并）
+- Windows：`automation-terminal-reports.json` unreadable/quarantine-fail 设 journalBlocked 拒写；corrupt 先 quarantine。
+- Android：`onGoalRemove` 仅 RPC 成功才清 goalMode，失败 Toast「没能保存目标」。
+- Windows：`boot-prefs.json` corrupt quarantine；unreadable/quarantine-fail 拒 saveBootPrefs（避免静默重开 GPU 加速）。
+- 验证：slice smoke「Review polish r146」；未合并。
+
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
 Pad 9 Pro Max（`M367FC`）接上后，第一次把「平板发指令 → 主机跑模型 → 回复回画到平板」整条链路走通。

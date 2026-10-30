@@ -2145,6 +2145,26 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r146")
+  {
+    const automationSrc = readFileSync(path.join(root, "src/server/automation/service.ts"), "utf8")
+    check("automation journal: journalBlocked field", automationSrc.includes("journalBlocked"))
+    check("automation journal: writeJournal guards journalBlocked", automationSrc.includes("this.journalBlocked) return this.writing"))
+    check("automation journal: replayJournal quarantines", automationSrc.includes("quarantine(this.journal)"))
+    check("automation journal: replayJournal distinguishes ENOENT", automationSrc.includes('code === "ENOENT"'))
+    const activitySrc = readFileSync(path.join(root, "android/app/src/main/java/com/mcode/remote/MainActivity.kt"), "utf8")
+    const goalRemove = activitySrc.slice(activitySrc.indexOf("onGoalRemove ="), activitySrc.indexOf("onGoalRemove =") + 900)
+    check("android onGoalRemove: failure toast", goalRemove.includes("没能保存目标"))
+    check("android onGoalRemove: single runCatching", (goalRemove.match(/runCatching/g) || []).length === 1)
+    check("android onGoalRemove: both RPCs", goalRemove.includes("session.goal") && goalRemove.includes("session.goalMode"))
+    const bootSrc = readFileSync(path.join(root, "src/main/boot-prefs.ts"), "utf8")
+    check("boot-prefs: inspectBootPrefsText", bootSrc.includes("inspectBootPrefsText"))
+    check("boot-prefs: corrupt flag", bootSrc.includes("corrupt"))
+    const mainSrc = readFileSync(path.join(root, "src/main/index.ts"), "utf8")
+    check("index: saveBootPrefs checks bootPrefsBlocked", mainSrc.includes("bootPrefsBlocked"))
+    check("index: boot-prefs quarantine via renameSync", mainSrc.includes("renameSync(bootPrefsFile"))
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }

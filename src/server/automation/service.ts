@@ -323,6 +323,8 @@ export class AutomationService {
   /** Where an unreadable file was kept, and what to tell anyone who asks. */
   private evidence: string | undefined
   private problem: string | undefined
+  /** Set when the terminal-report journal could not be read; nothing may be written over it. */
+  private journalBlocked: string | undefined
   /** Runs that have ended and are not yet settled and told; mirrored to the journal. */
   private reports: TerminalReport[] = []
   /** How many reports the last start replayed, for the checks. */
@@ -339,7 +341,7 @@ export class AutomationService {
   }
 
   private writeJournal(): Promise<void> {
-    if (this.blocked || this.fromNewerVersion) return this.writing
+    if (this.blocked || this.fromNewerVersion || this.journalBlocked) return this.writing
     const snapshot = JSON.stringify({ schemaVersion: AUTOMATION_SCHEMA_VERSION, reports: this.reports }, null, 2)
     this.writing = this.writing.then(() => writeAtomic(this.journal, snapshot)).catch(() => undefined)
     return this.writing
@@ -352,14 +354,32 @@ export class AutomationService {
    * still open for a run the app died in.
    */
   private async replayJournal(): Promise<boolean> {
-    const raw = await fs.readFile(this.journal, "utf8").catch(() => undefined)
-    if (raw === undefined) return false
+    let raw: string
+    try {
+      raw = await fs.readFile(this.journal, "utf8")
+    } catch (error) {
+      const code = (error as { code?: string } | undefined)?.code
+      if (code === "ENOENT") return false
+      this.journalBlocked = `the terminal-report journal ${this.journal} could not be read (${error instanceof Error ? error.message : String(error)}), so nothing is saved over them`
+      console.warn("[automation] " + this.journalBlocked)
+      return false
+    }
     let reports: TerminalReport[] = []
     try {
       const parsed = JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw) as { reports?: unknown }
       reports = Array.isArray(parsed.reports) ? (parsed.reports as TerminalReport[]).filter((entry) => entry && typeof entry.sessionID === "string") : []
     } catch {
-      // A journal that will not parse holds nothing that can be trusted; the sweep still settles the runs.
+      // A journal that will not parse holds nothing that can be trusted; keep it aside and start clean.
+      const aside = await quarantine(this.journal)
+      if (aside === undefined) {
+        this.journalBlocked = `the terminal-report journal ${this.journal} could not be read and could not be kept aside, so nothing is saved over them`
+        console.warn("[automation] " + this.journalBlocked)
+        return false
+      }
+      console.warn(`[automation] the terminal-report journal could not be read; kept as ${aside}`)
+      this.reports = []
+      await this.writeJournal()
+      return false
     }
     let settled = false
     for (const report of reports) {

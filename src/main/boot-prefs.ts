@@ -38,6 +38,22 @@ export function readBootPrefs(text: string): BootPrefs {
   }
 }
 
+/** What a boot-prefs file turned out to be: the choices, or why they could not be trusted. */
+export type BootPrefsLoad = { prefs: BootPrefs; unreadable?: string; corrupt?: boolean }
+
+/**
+ * Like readBootPrefs, but says whether the file was corrupt (so the caller can
+ * keep it aside instead of silently writing defaults over it) or unreadable.
+ */
+export function inspectBootPrefsText(text: string): BootPrefsLoad {
+  try {
+    JSON.parse(text)
+  } catch {
+    return { prefs: { ...BOOT_DEFAULTS }, corrupt: true }
+  }
+  return { prefs: readBootPrefs(text) }
+}
+
 export function writeBootPrefs(prefs: BootPrefs): string {
   return JSON.stringify({ theme: prefs.theme, hardwareAcceleration: prefs.hardwareAcceleration })
 }
