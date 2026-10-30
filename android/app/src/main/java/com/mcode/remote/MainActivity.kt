@@ -3829,6 +3829,18 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 }
                             } finally {
                                 goalResending.set(false)
+                    scope.launch {
+                        runCatching {
+                            rpc(JSONObject().put("type", "session.goal").put("sessionID", sessionID).put("condition", condition))
+                            rpc(JSONObject().put("type", "session.prompt").put("sessionID", sessionID).put("text", condition))
+                            // The reader may have left this conversation while the
+                            // two round trips were out; the row it names is still
+                            // the one that started running, so the id is taken
+                            // before the calls rather than re-read after them.
+                            withContext(Dispatchers.Main) { setRunning(sessionID, true) }
+                        }.onFailure {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, "没能重新执行目标", Toast.LENGTH_SHORT).show()
                             }
                         }
                     }
@@ -6247,6 +6259,9 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 )
                             }.onFailure {
                                 Toast.makeText(context, "没能重新发送，请重试", Toast.LENGTH_SHORT).show()
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(context, "没能发送，请重试", Toast.LENGTH_SHORT).show()
+                                }
                             }
                         }
                     }

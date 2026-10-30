@@ -2720,6 +2720,30 @@ async function main() {
       /onSuccess/.test(reopen) && reopen.indexOf("onSuccess") < reopen.indexOf("select(id)"),
     )
     check("r97: archive reopen toasts on failure", reopen.includes("没能恢复会话"))
+  section("Review polish r98")
+  {
+    const fsp = await import("node:fs/promises")
+    const nodePath = await import("node:path")
+    const root = process.cwd()
+    const appVue = await fsp.readFile(nodePath.join(root, "src/renderer/src/App.vue"), "utf8")
+    const initAt = appVue.indexOf("async function initProject(")
+    const initBody = initAt >= 0 ? appVue.slice(initAt, initAt + 450) : ""
+    check("r98: initProject captures currentID", /const id = app\.currentID/.test(initBody))
+    check("r98: initProject sends to that id", /send\(t\("init\.prompt"\), \[\], id\)/.test(initBody))
+
+    const main = await fsp.readFile(
+      nodePath.join(root, "android/app/src/main/java/com/mcode/remote/MainActivity.kt"),
+      "utf8",
+    )
+    const resendAt = main.indexOf("onGoalResend = {")
+    const resend = resendAt >= 0 ? main.slice(resendAt, resendAt + 1400) : ""
+    check("r98: goal resend toasts on failure", resend.includes("没能重新执行目标"))
+    check("r98: goal resend handles failure", /onFailure/.test(resend))
+    check("r98: goal resend still sets running on success", /setRunning\(sessionID, true\)/.test(resend))
+    const editAt = main.indexOf('"没能撤回，请重试"')
+    const edit = editAt >= 0 ? main.slice(editAt, editAt + 1200) : ""
+    check("r98: edit resend toasts on prompt failure", edit.includes("没能发送，请重试"))
+    check("r98: edit resend prompt handles failure", /onFailure/.test(edit) && edit.indexOf("session.prompt") < edit.indexOf("没能发送，请重试"))
   }
 
   section("Permission guide")

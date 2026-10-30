@@ -2088,8 +2088,11 @@ async function shareSession() {
  * already has. This only supplies the brief.
  */
 async function initProject() {
-  if (!app.currentID || app.busy) return
-  await app.send(t("init.prompt"))
+  // Pin the conversation that owned the command: send() otherwise re-reads
+  // currentID, and a switch mid-flight would start the brief elsewhere.
+  const id = app.currentID
+  if (!id || app.busy) return
+  await app.send(t("init.prompt"), [], id)
 }
 
 /**

@@ -474,6 +474,12 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - 桌面：`chooseModelEffort` 一次捕获 `target`；`toggleGoalMode` 捕获 `next`/`target`，toast 用捕获值。
 - Android：归档恢复成功才切回会话列表并打开，失败 Toast。
 - 验证：smoke「Review polish r97」；未合并。
+### 续三十一：init 会话捕获、目标重跑与编辑重发失败提示（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/129 （未合并）
+- 桌面：`initProject` 一次捕获 `id` 传给 `send`，避免切会话把初始化提示发错地方。
+- Android：目标「重新执行」失败 Toast；编辑重发在 revert 成功后 prompt 失败也 Toast。
+- 验证：smoke「Review polish r98」；未合并。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
