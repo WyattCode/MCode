@@ -6034,13 +6034,16 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             // than sliced here: a revert also rewinds the cursor, and
                             // guessing at it left the cut turn on screen.
                             select(sid)
-                            runCatching {
-                                rpc(
+                            val sent = runCatching {
+                                rpcOrThrow(
                                     JSONObject().put("type", "session.prompt")
                                         .put("sessionID", sid)
                                         .put("text", text)
                                         .put("attachments", org.json.JSONArray()),
                                 )
+                            }.isSuccess
+                            if (!sent) {
+                                Toast.makeText(context, "发送失败", Toast.LENGTH_SHORT).show()
                             }
                         }
                     }

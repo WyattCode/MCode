@@ -1156,8 +1156,19 @@ async function addDroppedProjects(directories: string[]) {
 /* MiMo's add then browseProject: listed, the last one the latest pick, and home with it chosen. */
 async function addAndBrowse(directories: string[]) {
   const last = directories[directories.length - 1]!
+  let failed = false
+  let failure: unknown = null
   for (const directory of directories) {
-    await app.addProject(directory, { used: directory === last, switched: directory === last })
+    try {
+      await app.addProject(directory, { used: directory === last, switched: directory === last })
+    } catch (err) {
+      failed = true
+      failure = err
+    }
+  }
+  if (failed) {
+    notifyFailure(t("common.requestFailed"), failure instanceof Error ? failure.message : String(failure))
+    return
   }
   startIn(last)
 }
@@ -1193,7 +1204,12 @@ function newTaskFromSide() {
 
 async function newSessionIn(directory: string) {
   if (alreadyNewTask(directory)) return
-  await app.addProject(directory, { used: true, silent: true })
+  try {
+    await app.addProject(directory, { used: true, silent: true })
+  } catch (err) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    return
+  }
   startIn(directory)
 }
 

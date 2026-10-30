@@ -2145,6 +2145,34 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+
+  section("Review polish r126")
+  {
+    const root = process.cwd()
+    const home = (await fs.readFile(path.join(root, "src/renderer/src/components/HomeHero.vue"), "utf8")).replace(/\r\n/g, "\n")
+    const srcAt = home.indexOf("if (source) {")
+    const src = srcAt >= 0 ? home.slice(srcAt, srcAt + 700) : ""
+    check("HomeHero createBlank(source) try/catch", src.includes("try {") && src.includes('home.blankFailed", { error:') && src.includes("await app.addProject(source"))
+    const exAt = home.indexOf("async function existing")
+    const ex = exAt >= 0 ? home.slice(exAt, exAt + 450) : ""
+    check("HomeHero existing try/catch", ex.includes("try {") && ex.includes("notifyFailure") && ex.includes("common.requestFailed") && ex.includes("take(directory)"))
+    const settings = (await fs.readFile(path.join(root, "src/renderer/src/components/SettingsDialog.vue"), "utf8")).replace(/\r\n/g, "\n")
+    const addAt = settings.indexOf("async function addProject()")
+    const add = addAt >= 0 ? settings.slice(addAt, addAt + 450) : ""
+    check("SettingsDialog addProject try/catch", add.includes("try {") && add.includes("notifyFailure") && add.includes("void loadTrees()"))
+    const appVue = (await fs.readFile(path.join(root, "src/renderer/src/App.vue"), "utf8")).replace(/\r\n/g, "\n")
+    const browseAt = appVue.indexOf("async function addAndBrowse")
+    const browse = browseAt >= 0 ? appVue.slice(browseAt, browseAt + 650) : ""
+    check("App addAndBrowse fail-closed", browse.includes("let failed") && browse.includes("notifyFailure") && browse.includes("return") && browse.includes("startIn(last)"))
+    const newAt = appVue.indexOf("async function newSessionIn")
+    const neu = newAt >= 0 ? appVue.slice(newAt, newAt + 450) : ""
+    check("App newSessionIn try/catch", neu.includes("try {") && neu.includes("notifyFailure") && neu.includes("startIn(directory)"))
+    const main = (await fs.readFile(path.join(root, "android/app/src/main/java/com/mcode/remote/MainActivity.kt"), "utf8")).replace(/\r\n/g, "\n")
+    const sentAt = main.indexOf("val sent = runCatching")
+    const sent = sentAt >= 0 ? main.slice(sentAt, sentAt + 550) : ""
+    check("Android edit-resend prompt toast", sent.includes("rpcOrThrow") && sent.includes('put("type", "session.prompt")') && sent.includes("发送失败"))
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }

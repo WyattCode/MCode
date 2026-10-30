@@ -209,9 +209,20 @@ function take(directory: string) {
 async function createBlank(title: string, source?: string) {
   naming.value = false
   if (source) {
-    await app.addProject(source, { switched: true })
+    try {
+      await app.addProject(source, { switched: true })
+    } catch (err) {
+      notifyFailure(t("home.blankFailed", { error: err instanceof Error ? err.message : String(err) }))
+      return
+    }
     const folderName = source.split(/[\\/]/).filter(Boolean).pop()
-    if (title !== folderName) await app.patchConfig({ projectNames: { ...(app.config?.projectNames ?? {}), [source]: title } })
+    if (title !== folderName) {
+      try {
+        await app.patchConfig({ projectNames: { ...(app.config?.projectNames ?? {}), [source]: title } })
+      } catch {
+        // patchConfig already toasts; still take the folder onto the list.
+      }
+    }
     take(source)
     return
   }
@@ -230,7 +241,12 @@ async function existing() {
   const [directory] = await pickProjectFolder(t("dialog.pickProjectFolder"), false)
   if (!directory) return
   // Onto the project list, or back onto it if it was removed, with no conversation made.
-  await app.addProject(directory, { switched: true })
+  try {
+    await app.addProject(directory, { switched: true })
+  } catch (err) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    return
+  }
   take(directory)
 }
 

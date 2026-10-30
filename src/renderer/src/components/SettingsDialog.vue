@@ -676,7 +676,12 @@ async function addProject() {
   const [directory] = await pickProjectFolder(t("dialog.pickProjectFolder"), false)
   if (!directory) return
   // MiMo's add with activate off: listed, nothing opened, no conversation made.
-  await app.addProject(directory, { switched: false })
+  try {
+    await app.addProject(directory, { switched: false })
+  } catch (err) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    return
+  }
   void loadTrees()
 }
 
