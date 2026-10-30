@@ -20,7 +20,7 @@ import { Config } from "../src/server/config"
 import { Permissions, PermissionDenied } from "../src/server/permission"
 import { SessionStore } from "../src/server/session/store"
 import { SessionRunner } from "../src/server/session/runner"
-import { BashTool, OutputDecoder, PREVIEW_CHARS, PROGRESS_EVERY_MS, gitIdentityEnv, shell } from "../src/server/tool/bash"
+import { BashTool, OutputDecoder, PREVIEW_CHARS, PROGRESS_EVERY_MS, awaitBashShellWarm, bashShellIsWarmed, gitIdentityEnv, prewarmBashShell, shell } from "../src/server/tool/bash"
 import { WebFetchTool, htmlToMarkdown, imageAttachment } from "../src/server/tool/webfetch"
 import { ToolOutputs } from "../src/server/tool/truncate"
 import { windowsPath } from "../src/server/shell-path"
@@ -205,6 +205,38 @@ export async function roundTenBashChecks(check: Check, section: (name: string) =
       if (savedShell === undefined) delete process.env.SHELL
       else process.env.SHELL = savedShell
     }
+  }
+
+
+  section("Round 10 (bash): platform shell prewarm (first-bash cold start, 续九)")
+  {
+    // Paths relative to the repository root, as the other round-10 source checks read them.
+    const bashSrc = await fs.readFile("src/server/tool/bash.ts", "utf8")
+    const indexSrc = await fs.readFile("src/server/index.ts", "utf8")
+    check("bash.ts exports prewarmBashShell and the cold-start progress line", bashSrc.includes("export function prewarmBashShell") && bashSrc.includes("正在启动 shell…"))
+    check(
+      "index.ts imports prewarmBashShell next to stopBashCommands",
+      /stopBashCommands,\s*prewarmBashShell/.test(indexSrc.replace(/\s+/g, " ")),
+    )
+    check("index.ts calls prewarmBashShell(config.get().shell) before returning the backend", /prewarmBashShell\(\s*config\.get\(\)\.shell\s*\)/.test(indexSrc))
+
+    prewarmBashShell()
+    const warmed = await awaitBashShellWarm(15_000)
+    check("prewarmBashShell marks the shell warmed", warmed && bashShellIsWarmed())
+
+    const progress: string[] = []
+    const started = Date.now()
+    const result = await run(
+      { command: process.platform === "win32" ? "echo warm" : "true" },
+      { progress: (value) => progress.push(value) },
+    )
+    const elapsed = Date.now() - started
+    check("a bash after prewarm completes", !String(result.output).startsWith("ERROR"), result.output)
+    check("a warm bash does not re-announce cold start", !progress.some((line) => line.includes("正在启动 shell…")), progress)
+    if (process.platform !== "win32") {
+      check("on Linux a warm no-op bash finishes quickly", elapsed < 3000, elapsed)
+    }
+    check("warm result metadata does not claim shellCold", result.metadata?.shellCold !== true, result.metadata)
   }
 
   section("Round 10 (bash): workdir in POSIX spelling, and one that is not there (T10-35)")

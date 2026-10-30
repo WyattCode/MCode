@@ -202,6 +202,8 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
    - ~~联网搜索在确认卡片里选了「关闭网络搜索」之后，只能把 `config.json` 的 `websearch` 改回 `"auto"`~~：第七十八轮已在设置页「浏览器」分组加开关（18 语言表补齐）。~~**平板端没有**这个开关~~：第七十八轮（续六）已在平板 `SettingsScreen` 常规 › 浏览器补上（关=`false`，开=`auto`）。
    - ~~联网搜索在确认卡片里选了「关闭网络搜索」之后，只能把 `config.json` 的 `websearch` 改回 `"auto"`~~：第七十八轮已在设置页「浏览器」分组加开关（18 语言表补齐）。~~**平板端没有**这个开关~~：第七十八轮（续六）已在平板设置补上。
    - 全新配置第一次运行时，第一条 bash 命令要 16 秒左右，之后正常（第三十五轮探针看到的，原因未查；只影响新装后的第一条命令）。
+   - ~~联网搜索在确认卡片里选了「关闭网络搜索」之后，只能把 `config.json` 的 `websearch` 改回 `"auto"`~~：第七十八轮已在设置页「浏览器」分组加开关（18 语言表补齐）。**平板端没有**这个开关。
+   - ~~全新配置第一次运行时，第一条 bash 命令要 16 秒左右，之后正常~~：第七十八轮（续九）已查清——Windows 上首次拉起 PowerShell/.NET（外加 AMSI/Defender 首扫）的冷启动约 10–20 秒，同配置重启仍快是因为系统缓存还热；bash 工具用的是 `spawn` 不是 ConPTY。后端监听后 `prewarmBashShell` 在空闲时付这笔账，若仍冷则卡片先显示「正在启动 shell…」。Linux 上首条约数毫秒，本轮未重测 Windows 墙钟（机器离线）。
    - ~~Linux 托盘图标仍是把 512 的配色图缩成一张 16 交给托盘~~：第七十八轮已修（每配色 7 个尺寸 PNG + `addRepresentation`，注意必须走 `dataURL` 不能走 `buffer`）。
    - ~~`command -v rm` 这种只查命令位置的写法也被当成删除来问~~：第七十八轮已修（`-v`/`-V` 不派生程序）。
    - 12 条提示在 MiMo 的所有语言里都是英文，MCode 照参照保留（名单在 `scripts/i18n-check.ts` 的 `REFERENCE_ENGLISH`）；若决定翻译，要同时改参照比对。
@@ -255,6 +257,13 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - **修法**：不再猜 `repo`。第一轮计划请求结束后，从产品自己贴的那条笔记里把路径读回来：先匹配 `Write your plan to (.+?) with the write tool.`，否则匹配 `A plan is already written at (.+?)\.`；两条都不中就单独一条检查失败并带上笔记开头。读到的 `display` 若是绝对路径就直接用，否则按 `/` 拆开用 `path.join(e.project, ...)` 拼回绝对路径，`planName` 取它的 basename。之后所有路径相关的检查都用回读的 `plan` / `planName` / `display`：目录检查用 `path.dirname(plan)`，`plan_exit` 卡片直接和 `display` 比，批准文本仍按 basename 找。另加一条 `plan path was read back from the product note, not recomputed`，只有解析成功才为真。
 - **验证**：盒子上 plan-only harness（`out/smoke-plan-e5.mjs`，镜像 E5 节）**22 passed / 0 failed**。变异 `MUTATE_PLAN_PARSE=1`（回读强制空）→ **15 passed / 7 failed**，含 `plan path was read back…`、目录、写入、卡片、批准等路径相关项，并带笔记/拒绝详情。另：`git init` 项目上旧写法 `planFile(..., repo:false)` 与产品回读路径 **disagree**（data/storage/plans vs `.mcode/plans`），`folderWrong=false` / `folderProduct=true`，复现「六条挂错路径」；同一条件下新回读逻辑 6/0（含「product chose in-repo plan folder」）。
 - **状态**：PR 未合并（分支 `fix/smoke-plan-path-from-product`）。
+### 第七十八轮（续九）：全新配置首条 bash 约 16 秒（2026-10-30）
+
+- **现象**：全新配置第一次运行时，第一条 bash 约 16 秒，之后约 0.2 秒；同一配置重启应用也不会再慢（第三十五轮探针；小尾巴未查原因）。
+- **排查**：Linux 盒子上 `bash -c true` 首条约 5ms，复现不了。Windows 上 bash 工具默认 `pwsh`/`powershell`（已带 `-NoProfile`），用 `child_process.spawn` 而非 ConPTY；约 16 秒符合 PowerShell/.NET 冷启动（外加 AMSI/Defender 对 shell 二进制的首次扫描）。同配置重启仍快，说明成本在操作系统缓存，不在 `config.json`。`git --version` 的 15s 超时与「重启也快」不符，不是根因。
+- **处理**：后端 socket 听好后火即 `prewarmBashShell(config.get().shell)`，用与工具相同的 shell 与 spawn 旗标跑一次空命令，把冷启动付在开机空闲；若首条工具调用时仍未热完，卡片先 `progress("正在启动 shell…")` 并在 metadata 打 `shellCold`，不假装已经加速。冷启动本身消不掉，只是不再卡在对话中间。
+- **验证**：`smoke-round10-bash` 新增「platform shell prewarm」：源码接线（`prewarmBashShell(config.get().shell)`、进度文案）、预热后 `bashShellIsWarmed`、热路径不再报 cold、Linux 上热后 no-op < 3s。Windows 墙钟本轮机器离线未重测。
+- **状态**：PR 未合并（分支 `fix/first-bash-cold-start`）。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
