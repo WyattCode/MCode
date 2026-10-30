@@ -2646,8 +2646,7 @@ async function chooseAccess(next: Access) {
 }
 
 async function confirmFull() {
-  confirmingFull.value = false
-  await applyAccess("full")
+  if (await applyAccess("full")) confirmingFull.value = false
 }
 
 /*
@@ -2655,24 +2654,27 @@ async function confirmFull() {
  * home screen it is the default, written into the config; that map arithmetic
  * is shared with the settings switch, which drops full access the same way.
  */
-async function applyAccess(next: Access) {
+async function applyAccess(next: Access): Promise<boolean> {
   const id = sessionID.value
   if (accessHere.value && id) {
     try {
       await app.setAccess(id, next)
       app.announceAccess(next)
+      return true
     } catch (err) {
       notifyFailure(t("composer.access.failed"), err instanceof Error ? err.message : String(err))
+      return false
     }
-    return
   }
   const patch = app.config ? accessPatch(app.config, next) : undefined
-  if (!patch) return
+  if (!patch) return false
   try {
     await app.patchConfig(patch, { quiet: true })
     app.announceAccess(next)
+    return true
   } catch (err) {
     notifyFailure(t("composer.access.failed"), err instanceof Error ? err.message : String(err))
+    return false
   }
 }
 

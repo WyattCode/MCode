@@ -2145,6 +2145,50 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r130")
+  {
+    const settings = read("src/renderer/src/components/SettingsDialog.vue")
+    const clearAt = settings.indexOf("async function clearBrowsing")
+    const clear = clearAt >= 0 ? settings.slice(clearAt, clearAt + 500) : ""
+    check(
+      "r130: clearBrowsing confirm after success",
+      clear.includes("confirmingClear.value = false") &&
+        clear.includes("set.browsingDataFailed") &&
+        clear.includes("set.browsingDataCleared") &&
+        clear.indexOf("if (reason)") < clear.indexOf("confirmingClear.value = false") &&
+        clear.indexOf("confirmingClear.value = false") < clear.indexOf("set.browsingDataCleared"),
+    )
+    const plugins = read("src/renderer/src/components/PluginsView.vue")
+    const togAt = plugins.indexOf("async function toggle")
+    const tog = togAt >= 0 ? plugins.slice(togAt, togAt + 700) : ""
+    check(
+      "r130: PluginsView.toggle null fail-closed",
+      tog.includes("const client = app.client") &&
+        tog.includes("if (!client)") &&
+        tog.includes("if (!result)") &&
+        tog.includes("common.requestFailed") &&
+        tog.includes('type: "mcp.toggle"') &&
+        !tog.includes("app.client?.request"),
+    )
+    const composer = read("src/renderer/src/components/Composer.vue")
+    const confAt = composer.indexOf("async function confirmFull")
+    const conf = confAt >= 0 ? composer.slice(confAt, confAt + 300) : ""
+    check(
+      "r130: confirmFull closes only after success",
+      conf.includes('if (await applyAccess("full"))') &&
+        conf.includes("confirmingFull.value = false") &&
+        conf.indexOf('if (await applyAccess("full"))') < conf.indexOf("confirmingFull.value = false"),
+    )
+    const applyAt = composer.indexOf("async function applyAccess")
+    const apply = applyAt >= 0 ? composer.slice(applyAt, applyAt + 900) : ""
+    check(
+      "r130: applyAccess returns boolean",
+      apply.includes("Promise<boolean>") &&
+        apply.includes("return true") &&
+        apply.includes("return false"),
+    )
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }

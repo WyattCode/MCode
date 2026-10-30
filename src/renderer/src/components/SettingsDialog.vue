@@ -1520,10 +1520,13 @@ function chooseChime(value: string) {
 const confirmingClear = ref(false)
 
 async function clearBrowsing() {
-  confirmingClear.value = false
   const reason = await window.mcode.browserClearData()
-  if (reason) notifyFailure(t("set.browsingDataFailed", { error: reason }))
-  else notify(t("set.browsingDataCleared"))
+  if (reason) {
+    notifyFailure(t("set.browsingDataFailed", { error: reason }))
+    return
+  }
+  confirmingClear.value = false
+  notify(t("set.browsingDataCleared"))
 }
 
 /*
