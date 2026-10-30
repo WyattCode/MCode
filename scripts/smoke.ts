@@ -472,6 +472,8 @@ import { expandCommand, listCommands } from "../src/server/command"
 import { expandTemplate, fileReferences, shellPlaceholders, substituteShell } from "../src/shared/command"
 import { SEARCH, SKILL_FILE_SAMPLE, SkillSearchTool, SkillTool, searchSkills, searchTokens } from "../src/server/tool/skill"
 import { stepTitle as skillStepTitle, toolVerb as skillToolVerb } from "../src/renderer/src/lib/tool-meta"
+import { readFileSync } from "node:fs"
+import { mayJoinSteering } from "../src/server/session/steer-join"
 
 let passed = 0
 let failed = 0
@@ -2159,6 +2161,25 @@ async function main() {
     check("a multi choice toggles each label", JSON.stringify(toggleChoice(["a"], "b", true)) === '["a","b"]' && JSON.stringify(toggleChoice(["a", "b"], "a", true)) === '["b"]')
     check("typed text is appended once", JSON.stringify(mergeCustom([["a"], []], ["b", " "])) === '[["a","b"],[]]' && JSON.stringify(mergeCustom([["a"]], ["a"])) === '[["a"]]')
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
+  }
+
+  section("Steer join after Stop")
+  {
+    check("an open turn accepts a steered prompt", mayJoinSteering(true, false))
+    check("a stopped turn refuses a steered join", !mayJoinSteering(true, true))
+    check("no steering list, nothing to join", !mayJoinSteering(false, false))
+  }
+
+  section("Steer join wiring")
+  {
+    const runner = readFileSync(new URL("../src/server/session/runner.ts", import.meta.url), "utf8")
+    const abortAt = runner.indexOf("  abort(sessionID: string): void {")
+    const abortEnd = abortAt < 0 ? -1 : runner.indexOf("\n  }\n", abortAt)
+    const abortBody = abortAt >= 0 && abortEnd > abortAt ? runner.slice(abortAt, abortEnd) : ""
+    check("abort closes the steering list", abortBody.includes("this.steering.delete(sessionID)"))
+    check("prompt asks whether the turn is still joinable", runner.includes("mayJoinSteering(Boolean(open), aborted)"))
+    check("prompt lets a stopped turn start fresh", runner.includes("this.running.has(input.sessionID) && !aborted"))
+    check("finally only clears its own running entry", runner.includes("if (this.running.get(sessionID) === controller) this.running.delete(sessionID)"))
   }
 
   section("Permission guide")

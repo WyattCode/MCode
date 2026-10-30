@@ -337,6 +337,24 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 **回归**：`permissionTarget` 三条（卡片 id / 无 id 用头 / 过期 id）；MCP Not now / Trust 文档烟测。`permissionTarget` 改回「只回头」时前两条必红（mutate-fail 已证）。
 
 未做：中途压缩圆环（#109）、驾驶舱 ack（#110）、storage remove（#111）、composerTarget（#112）、新 CSS token、REFERENCE_ENGLISH。
+### 续十六：Stop 后再发不能并进正在收尾的回合（2026-10-30）
+
+复核主线（避开未合并的 #102–#113）时确认：
+
+1. **每个回合** `launch()` 都会打开 `steering`；`abort()` 只 abort 控制器，**不关** steering。`prompt()` 在 busy 检查之前只要有 open 就 `join`，也不看 `signal.aborted`。
+2. **桌面** `app.abort` 在 abort RPC 一返回就清掉本地 `running`，用户可以立刻再发。那条消息会写进「不会再 resume」的 steering，`finally` 里 `stranded = waiting.length > 0 && !controller.signal.aborted` 为假，列表被丢掉——**话进了 transcript，却没有下一回合回答**。
+3. **Android** 的 `onStop` 原先不乐观清 `setRunning`，和桌面不一致；本地仍标 running 时下一发会当 steer。
+
+**修法**（`fix/review-polish-r83`，未合并）：
+
+- 新 `steer-join.ts`：`mayJoinSteering(hasOpen, turnAborted)`。
+- `abort()` 同步 `steering.delete`；`prompt()` 用 `mayJoinSteering`，且对**已 abort** 的 live 控制器不报 busy、不入 queue（cleanup 未完时允许开新回合）。
+- `launch` 的 `finally` 对 `running` / `steering` 做身份守卫，避免迟到 cleanup 抹掉 Stop 之后新开的回合。
+- Android `onStop`：先 `setRunning(sid, false)` 再发 `session.abort`。
+
+**回归**：`mayJoinSteering` 三元 + runner/Android 源码 scrape；mutate-fail（谓词改回「只看 hasOpen」、去掉 abort 里的 `steering.delete`）两条都能检出，恢复后转绿。
+
+未做：QuestionForm busy、桌面 settings 耐久边、ContextRing 非 #109 路径、新 CSS token、REFERENCE_ENGLISH；#102–#113 路径未碰。
 
 
 ### 平板真机验证：端到端首次打通（2026-10-29）

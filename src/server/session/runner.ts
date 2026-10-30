@@ -90,6 +90,7 @@ import type { Usage as TurnUsage } from "@shared/protocol"
 import { ABORTED_TOOL } from "../provider/history"
 import { INTERRUPTED_FINISH, INTERRUPTED_NOTE, LENGTH_NOTE, THOUGHT_LENGTH_NOTE, LOOP_ANSWERS, LOOP_ENDED, LOOP_ENDED_CODE, LOOP_FINISH, CONTINUATION_LIMITS, continuationFor, createLoopMonitor, frameSteered, recallHint, reminder, repeatNoteFor, repeatsCall, withNotes, withRecallHint, withSameStepsNote } from "./reminders"
 import { withPatchCheckpoint } from "./patch-checkpoint"
+import { mayJoinSteering } from "./steer-join"
 import { LoopMonitor, TEXT_LOOP_BUFFER, WanderWatch, applyCrops, describeLoop, detectStreak, stepDigest, suggestLoopNextStep, textLoopNoteFor, type LoopIncident } from "./loop-health"
 import { interruptedTurn } from "@shared/resume"
 // session chat
@@ -808,6 +809,13 @@ export class SessionRunner {
     // subagents: Stop on a conversation stops the subagents working for it first.
     for (const child of [...(this.children.get(sessionID) ?? [])]) this.abort(child)
     this.running.get(sessionID)?.abort()
+    /*
+     * Close the steering list now. A prompt that arrives after Stop must not
+     * join a turn that will not resume; leaving the entry up let it write the
+     * message into a list the finally-block then discarded because the
+     * controller was aborted.
+     */
+    this.steering.delete(sessionID)
     // ...and the requests that are not the turn: the title, and Smart's routing question.
     for (const controller of [...(this.background.get(sessionID) ?? [])]) controller.abort()
     this.pressured.delete(sessionID)
@@ -1772,11 +1780,18 @@ export class SessionRunner {
      * is simply mid-answer.
      */
     const open = this.steering.get(input.sessionID)
+    const live = this.running.get(input.sessionID)
+    const aborted = live?.signal.aborted === true
     // OpenCode v2's queue: kept until the running turn ends, then sent as a turn of its own.
-    if (input.delivery === "queue" && (open || this.running.has(input.sessionID))) return this.enqueue(input)
-    if (open) return this.join(open, input)
+    // A stopped turn is not "running" for queue or busy purposes — its controller
+    // stays in the map only until cleanup finishes; enqueueing into it would sit
+    // forever because finally skips sendQueued when aborted.
+    if (input.delivery === "queue" && !aborted && (open || this.running.has(input.sessionID))) return this.enqueue(input)
+    if (mayJoinSteering(Boolean(open), aborted) && open) return this.join(open, input)
 
-    if (this.running.has(input.sessionID)) throw new CodedError("This session is already working on something", "error.sessionBusy")
+    // An aborted controller is finishing cleanup; the finally block only clears
+    // its own entry, so a prompt here may claim the session for a new turn.
+    if (this.running.has(input.sessionID) && !aborted) throw new CodedError("This session is already working on something", "error.sessionBusy")
 
     // A command's agent and model belong to the turn this starts, never to one already running.
     if (input.agent || input.model) this.turnOverrides.set(input.sessionID, { agent: input.agent, model: input.model })
@@ -2698,10 +2713,6 @@ export class SessionRunner {
         }
         // The turn ended for a reason of its own: nothing to carry on at the next start. A turn cut off by the quit keeps its claim.
         if (!this.closing) await this.store.update(sessionID, { claim: undefined }).catch(() => undefined)
-        this.running.delete(sessionID)
-        this.retrying.delete(sessionID)
-        this.workingIn.delete(sessionID)
-
         /*
          * The last read of the waiting list, and the only one that can see a
          * message that arrived after the loop had stopped looking. Everything
@@ -2714,10 +2725,16 @@ export class SessionRunner {
          * and goes to the model with whatever is asked next, which is what Stop
          * has to mean if it is to mean anything.
          */
-        const waiting = this.steering.get(sessionID)?.waiting ?? []
+        const steering = this.steering.get(sessionID)
+        const waiting = steering?.waiting ?? []
         const stranded = waiting.length > 0 && !controller.signal.aborted
         const carried = [...waiting]
-        this.steering.delete(sessionID)
+        if (this.running.get(sessionID) === controller) this.running.delete(sessionID)
+        this.retrying.delete(sessionID)
+        this.workingIn.delete(sessionID)
+        // Drop steering only when this turn still owns it. abort() clears it up
+        // front; a new turn after Stop has a different entry that must remain.
+        if (this.steering.get(sessionID) === steering) this.steering.delete(sessionID)
         if (stranded) {
           void this.resume(sessionID, carried)
           return
