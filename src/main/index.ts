@@ -1,5 +1,5 @@
 import fs from "node:fs/promises"
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, readFileSync, renameSync } from "node:fs"
 import { execFile, execFileSync, spawnSync } from "node:child_process"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -9,7 +9,7 @@ import { PRUNE_DELAY_MS, pruneCrashDumps, startLocalCrashDumps } from "./crash-d
 import { refreshEnvironment } from "./shell-env"
 import { applyRuntimeEnv, bundledRuntimeEnv } from "./runtimes"
 import { DailyLog, LOG_DIR } from "./log-file"
-import { BOOT_DEFAULTS, BOOT_PREFS_FILE, readBootPrefs, themePref, windowBackground, writeBootPrefs, type BootPrefs } from "./boot-prefs"
+import { BOOT_DEFAULTS, BOOT_PREFS_FILE, inspectBootPrefsText, readBootPrefs, themePref, windowBackground, writeBootPrefs, type BootPrefs } from "./boot-prefs"
 import { startBackend, type Backend } from "../server/index"
 import { startRemoteGateway, type RemoteGateway } from "../server/remote/gateway"
 import { loadOrCreateToken } from "../server/remote/token"
@@ -261,9 +261,36 @@ if (runtimeNames.length) console.info(`[runtimes] bundled runtimes named in ${ru
  */
 const bootPrefsFile = path.join(app.getPath("userData"), BOOT_PREFS_FILE)
 let bootPrefs: BootPrefs = { ...BOOT_DEFAULTS }
+/** Set when boot-prefs.json could not be read or kept aside; nothing may be written over it. */
+let bootPrefsBlocked: string | undefined
 try {
-  bootPrefs = readBootPrefs(readFileSync(bootPrefsFile, "utf8"))
-} catch {
+  const text = readFileSync(bootPrefsFile, "utf8")
+  const loaded = inspectBootPrefsText(text)
+  if (loaded.corrupt) {
+    let aside: string | undefined
+    for (let attempt = 0; attempt < 4 && aside === undefined; attempt++) {
+      const target = `${bootPrefsFile}.corrupt-${new Date().toISOString().replace(/[:.]/g, "-")}${attempt ? `-${attempt}` : ""}`
+      try {
+        renameSync(bootPrefsFile, target)
+        aside = target
+      } catch (error) {
+        if ((error as { code?: string } | undefined)?.code !== "EEXIST") break
+      }
+    }
+    if (aside === undefined) {
+      bootPrefsBlocked = `boot-prefs.json could not be read and could not be kept aside, so nothing is saved over it`
+      console.warn("[boot-prefs] " + bootPrefsBlocked)
+    } else {
+      console.warn(`[boot-prefs] boot-prefs.json could not be read; kept as ${aside}`)
+    }
+  } else {
+    bootPrefs = readBootPrefs(text)
+  }
+} catch (error) {
+  if ((error as { code?: string } | undefined)?.code !== "ENOENT") {
+    bootPrefsBlocked = `boot-prefs.json could not be read (${error instanceof Error ? error.message : String(error)}), so nothing is saved over it`
+    console.warn("[boot-prefs] " + bootPrefsBlocked)
+  }
   // No file yet: follow the system.
 }
 nativeTheme.themeSource = bootPrefs.theme
@@ -336,6 +363,10 @@ let hiddenAtLogin = startsHidden(process.platform, process.argv)
 /* Written for the next launch; a failed write only means the next boot uses the old choice. */
 function saveBootPrefs(patch: Partial<BootPrefs>): void {
   bootPrefs = { ...bootPrefs, ...patch }
+  if (bootPrefsBlocked) {
+    console.warn("[boot-prefs] not saved: " + bootPrefsBlocked)
+    return
+  }
   try {
     writeAtomicSync(bootPrefsFile, writeBootPrefs(bootPrefs))
   } catch (error) {

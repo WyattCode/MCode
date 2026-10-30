@@ -4013,6 +4013,9 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             withContext(Dispatchers.Main) {
                                 Toast.makeText(context, "无法清除目标", Toast.LENGTH_SHORT).show()
                             }
+                            withContext(Dispatchers.Main) { goalMode = false }
+                        }.onFailure {
+                            withContext(Dispatchers.Main) { Toast.makeText(context, "没能保存目标", Toast.LENGTH_SHORT).show() }
                         }
                     }
                 }
