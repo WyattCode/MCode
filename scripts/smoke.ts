@@ -3099,6 +3099,7 @@ async function main() {
   section("Review polish r142")
   section("Review polish r143")
   section("Review polish r144")
+  section("Review polish r147")
   {
     const { readFileSync } = await import("node:fs")
     const { join } = await import("node:path")
@@ -3938,6 +3939,17 @@ async function main() {
     const mainSrc = readFileSync(path.join(root, "src/main/index.ts"), "utf8")
     check("index: saveBootPrefs checks bootPrefsBlocked", mainSrc.includes("bootPrefsBlocked"))
     check("index: boot-prefs quarantine via renameSync", mainSrc.includes("renameSync(bootPrefsFile"))
+    const ws = readFileSync(join(root, "src/main/window-state.ts"), "utf8")
+    check("window-state blocks writes after an unreadable file", ws.includes("windowStateBlocked"))
+    check("window-state save refuses while blocked", /if \(windowStateBlocked\)/.test(ws))
+    check("window-state quarantines a corrupt file", ws.includes("quarantineSync") || ws.includes(".corrupt-"))
+    const ci = readFileSync(join(root, "src/main/composer-input.ts"), "utf8")
+    check("composer-input blocks writes after a failed read", ci.includes("blocked"))
+    check("composer-input write returns false while blocked", /if \(blocked\)[\s\S]{0,200}return false/.test(ci))
+    const drafts = readFileSync(join(root, "src/renderer/src/lib/composer-drafts.ts"), "utf8")
+    check("drafts never write after a failed load", drafts.includes("return loadFailed ? undefined : file"))
+    const main = readFileSync(join(root, "src/main/index.ts"), "utf8")
+    check("login-item blocks writes after a failed read", main.includes("loginItemBlocked"))
   }
 
   section("Permission guide")

@@ -21,16 +21,57 @@ export const WINDOW_STATE_FILE = "window.json"
 /* MiMo's minimum; a remembered size smaller than it is grown to it. */
 const MIN = WINDOW_MIN
 
+/** Set when window.json could not be read; nothing may be written over it. */
+let windowStateBlocked: string | undefined
+
 function file(): string {
   return path.join(app.getPath("userData"), WINDOW_STATE_FILE)
 }
 
+/** Moves an unreadable window.json aside so a fresh one can be written; undefined if that fails. */
+function quarantineSync(target: string): string | undefined {
+  const iso = new Date().toISOString().replace(/[:.]/g, "-")
+  for (let i = 0; i < 4; i++) {
+    const aside = i === 0 ? `${target}.corrupt-${iso}` : `${target}.corrupt-${iso}-${i}`
+    try {
+      fs.renameSync(target, aside)
+      return aside
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") continue
+      return undefined
+    }
+  }
+  return undefined
+}
+
 function read(): SavedWindow | undefined {
+  let text: string
   try {
-    return readSavedWindow(JSON.parse(fs.readFileSync(file(), "utf8")))
-  } catch {
+    text = fs.readFileSync(file(), "utf8")
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined
+    windowStateBlocked =
+      "window.json could not be read, so nothing is saved over it until it is fixed or removed."
+    console.warn("[window-state] window.json could not be read:", err instanceof Error ? err.message : err)
     return undefined
   }
+  let saved: SavedWindow | undefined
+  try {
+    saved = readSavedWindow(JSON.parse(text))
+  } catch {
+    saved = undefined
+  }
+  if (saved) return saved
+  const aside = quarantineSync(file())
+  if (!aside) {
+    windowStateBlocked =
+      "window.json is unreadable and could not be moved aside, so nothing is saved over it."
+    console.warn("[window-state] window.json is unreadable and could not be moved aside")
+    return undefined
+  }
+  console.warn("[window-state] window.json was unreadable; kept as", aside)
+  windowStateBlocked = undefined
+  return undefined
 }
 
 /**
@@ -84,6 +125,10 @@ export function saveWindowState(window: BrowserWindow): void {
   )
   if (!state) return
   baselines.set(window, state.bounds)
+  if (windowStateBlocked) {
+    console.warn("[window-state] not saving:", windowStateBlocked)
+    return
+  }
   try {
     writeAtomicSync(file(), JSON.stringify(state, null, 2))
   } catch {

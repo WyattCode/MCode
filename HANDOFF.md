@@ -734,6 +734,13 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - Android：`onGoalRemove` 仅 RPC 成功才清 goalMode，失败 Toast「没能保存目标」。
 - Windows：`boot-prefs.json` corrupt quarantine；unreadable/quarantine-fail 拒 saveBootPrefs（避免静默重开 GPU 加速）。
 - 验证：slice smoke「Review polish r146」；未合并。
+### 续八十：window.json / composer-input / login-item 损坏拒覆写（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/178 （未合并）
+- Windows：`window.json` unreadable/quarantine-fail 设 windowStateBlocked 拒 saveWindowState；corrupt 先 quarantine。
+- Windows：`composer-input.json` 读失败设 blocked 拒 save/flush；渲染层 loadFailed 后一律不写（不再仅空草稿）。
+- Windows：`login-item.json` unreadable 拒写（开发构建）。
+- 验证：slice smoke「Review polish r147」；未合并。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
