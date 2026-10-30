@@ -752,6 +752,12 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - Windows Office：`VersionStore` 区分 ENOENT / 不可读 / 损坏；损坏 quarantine；blocked 时拒绝覆写 manifest。
 - Settings：`loadAgents`（agents.state）失败 toast，不再显示成「未配置」。
 - 验证：slice smoke「Review polish r149」；未合并。
+### 续八十三：writers ledger 损坏拒覆写；models.dev 缓存 fail-closed；技能路径开关失败 toast（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- Windows：`SnapshotStore.ledger()` 对损坏的 `*.writers.json` 先 quarantine，失败则记入 `unreadableLedgers`，`noteWrites` 拒写；`ModelCatalog` 对不可读缓存 `cacheWriteBlocked` 拒覆写，损坏则 quarantine 后再写。
+- 桌面：Settings `switchSkillPath` await + `notifyFailure`（不再 `void` 静默）。
+- 验证：slice smoke「Review polish r150」；未合并。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 

@@ -18,6 +18,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import { randomUUID } from "node:crypto"
 import { overlayCatalog, trimCatalog, type Catalog } from "@shared/models-dev"
+import { quarantine } from "../storage"
 
 /** MiMo's freshness window for the cache and its refresh period. */
 export const CATALOG_FRESH_MS = 5 * 60 * 1000
@@ -50,6 +51,8 @@ export class ModelCatalog {
   private flight?: Promise<void>
   private timer?: ReturnType<typeof setInterval>
   private readonly listeners = new Set<() => void>()
+  /** Set when the on-disk cache could not be read; nothing is written over it for this run. */
+  private cacheWriteBlocked = false
 
   constructor(private readonly options: CatalogOptions) {}
 
@@ -103,6 +106,11 @@ export class ModelCatalog {
     const response = await (this.options.fetch ?? fetch)(`${source}/api.json`, { signal: AbortSignal.timeout(CATALOG_TIMEOUT_MS) })
     if (!response.ok) throw new Error(`models.dev HTTP ${response.status}`)
     const next = trimCatalog(await response.json())
+    if (!(await this.mayWriteCache())) {
+      // Unreadable or quarantine-failed cache: publish in memory only.
+      this.publish(await this.compose(next))
+      return
+    }
     await fs.mkdir(path.dirname(this.options.cacheFile), { recursive: true })
     const temporary = `${this.options.cacheFile}.${randomUUID()}.tmp`
     try {
@@ -120,10 +128,51 @@ export class ModelCatalog {
     return Boolean(stat && Date.now() - stat.mtimeMs < CATALOG_FRESH_MS)
   }
 
-  private async readCache(): Promise<Catalog | undefined> {
+  /**
+   * Whether a successful download may replace the on-disk cache.
+   * ENOENT → yes. Unreadable → no (blocked). Corrupt → quarantine then yes;
+   * quarantine-fail → blocked.
+   */
+  private async mayWriteCache(): Promise<boolean> {
+    if (this.cacheWriteBlocked) return false
+    let raw: string
     try {
-      return trimCatalog(JSON.parse(await fs.readFile(this.options.cacheFile, "utf8")))
-    } catch {
+      raw = await fs.readFile(this.options.cacheFile, "utf8")
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code === "ENOENT") return true
+      this.cacheWriteBlocked = true
+      this.options.onError?.(cause)
+      return false
+    }
+    try {
+      JSON.parse(raw)
+      return true
+    } catch (cause) {
+      const aside = await quarantine(this.options.cacheFile)
+      if (aside === undefined) {
+        this.cacheWriteBlocked = true
+        this.options.onError?.(cause)
+        return false
+      }
+      return true
+    }
+  }
+
+  private async readCache(): Promise<Catalog | undefined> {
+    let raw: string
+    try {
+      raw = await fs.readFile(this.options.cacheFile, "utf8")
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code !== "ENOENT") {
+        this.cacheWriteBlocked = true
+        this.options.onError?.(cause)
+      }
+      return undefined
+    }
+    try {
+      return trimCatalog(JSON.parse(raw))
+    } catch (cause) {
+      this.options.onError?.(cause)
       return undefined
     }
   }

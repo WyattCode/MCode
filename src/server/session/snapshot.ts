@@ -2,7 +2,7 @@ import { spawn } from "node:child_process"
 import { createHash } from "node:crypto"
 import fs from "node:fs/promises"
 import path from "node:path"
-import { readBytesWaiting, writeAtomic } from "../storage"
+import { quarantine, readBytesWaiting, writeAtomic } from "../storage"
 import type { SnapshotFile } from "./store"
 
 /**
@@ -1149,8 +1149,21 @@ export class Snapshots {
         const parsed = JSON.parse(raw) as unknown
         return parsed && typeof parsed === "object" ? (parsed as Record<string, Writer>) : {}
       } catch {
-        // Derived from the turns themselves; a file that will not parse is
-        // rebuilt from the next turn rather than standing in anyone's way.
+        /*
+         * A ledger that will not parse still holds other conversations' claims
+         * until it is moved aside. Writing over it now would name only this
+         * turn's files and erase every other claim — the same danger as an
+         * unreadable ledger, which noteWrites already refuses. Quarantine
+         * first so the next write can rebuild; if that fails, mark unreadable
+         * and refuse for the rest of this run.
+         */
+        const aside = await quarantine(file)
+        if (aside === undefined) {
+          this.unreadableLedgers.add(file)
+          this.ledgers.delete(file)
+          return {}
+        }
+        this.unreadableLedgers.delete(file)
         return {}
       }
     })()
