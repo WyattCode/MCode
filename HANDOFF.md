@@ -223,7 +223,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ### 续五十二：图片预览定位失败、拖入路径 IPC、MCP 导入扫描失败提示（2026-10-30）
 
-- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- PR: https://github.com/WyattCode/MCode/pull/150 （未合并）
 - 桌面：ImagePreview「在资源管理器中显示」失败 → `officeCard.revealFailed`；Composer `attachPaths` 的 `describeFiles` IPC 失败 → `common.requestFailed`；`mcp.importScan` 空回复不再打开空导入页。
 - 验证：smoke「Review polish r119」；未合并。
 
