@@ -2145,6 +2145,60 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r140")
+  {
+    const { readFileSync } = await import("node:fs")
+    const { join } = await import("node:path")
+    const root = process.cwd()
+    const source = readFileSync(join(root, "src/renderer/src/components/parts/MessageSource.vue"), "utf8").replace(/\r\n/g, "\n")
+    const openAt = source.indexOf("async function openSource")
+    const openEnd = source.indexOf("</script>", openAt)
+    const open = openAt >= 0 && openEnd > openAt ? source.slice(openAt, openEnd) : ""
+    check(
+      "r140: MessageSource openSource try/catch + notifyFailure",
+      open.includes("try {") &&
+        open.includes("await app.open(id)") &&
+        open.includes("notifyFailure") &&
+        open.includes("common.requestFailed") &&
+        source.includes('import { notify, notifyFailure } from "../../lib/toast"'),
+    )
+
+    const store = readFileSync(join(root, "src/renderer/src/stores/app.ts"), "utf8").replace(/\r\n/g, "\n")
+    const pinAt = store.indexOf("async function togglePinned")
+    const pinEnd = store.indexOf("const recentSort", pinAt)
+    const pin = pinAt >= 0 && pinEnd > pinAt ? store.slice(pinAt, pinEnd) : ""
+    check(
+      "r140: togglePinned success-only toast",
+      (() => {
+        const tryAt = pin.indexOf("try {")
+        const awaitAt = pin.indexOf("await patchConfig", tryAt)
+        const toastAt = pin.indexOf("notify(t(was ? \"side.unpinnedToast\"", awaitAt)
+        return tryAt >= 0 && pin.includes("catch {") && awaitAt > tryAt && toastAt > awaitAt
+      })(),
+    )
+
+    const forkAt = store.indexOf("async function forkFrom")
+    const forkEnd = store.indexOf("async function remove(", forkAt)
+    const fork = forkAt >= 0 && forkEnd > forkAt ? store.slice(forkAt, forkEnd) : ""
+    check(
+      "r140: forkFrom open try/catch + notifyFailure",
+      (() => {
+        const openAt = fork.indexOf("await open(session.id)")
+        const tryBefore = fork.lastIndexOf("try {", openAt)
+        const toastAt = fork.indexOf("notify(how.here", openAt)
+        return (
+          openAt >= 0 &&
+          tryBefore >= 0 &&
+          tryBefore < openAt &&
+          toastAt > openAt &&
+          fork.includes("notifyFailure") &&
+          fork.includes("common.requestFailed") &&
+          fork.includes("return session")
+        )
+      })(),
+    )
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }

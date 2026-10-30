@@ -10,7 +10,7 @@
 import type { MessageSource } from "@shared/protocol"
 import { computed } from "vue"
 import { sessionTitle, t } from "../../lib/i18n"
-import { notify } from "../../lib/toast"
+import { notify, notifyFailure } from "../../lib/toast"
 import { useApp } from "../../stores/app"
 
 const props = defineProps<{ source: MessageSource }>()
@@ -26,7 +26,11 @@ async function openSource() {
     notify(t("stream.chatSourceGone"))
     return
   }
-  await app.open(id)
+  try {
+    await app.open(id)
+  } catch (err) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+  }
 }
 </script>
 

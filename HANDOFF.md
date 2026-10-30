@@ -221,6 +221,12 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 续七十三：会话来源打开/置顶/分叉打开失败可见（2026-10-30）
+
+- PR: （打开后填入；未合并）
+- Windows：`MessageSource.openSource` 对 `app.open` 加 try/catch + `notifyFailure(common.requestFailed)`；`togglePinned` 对 `patchConfig` 加 try/catch，仅成功后 toast；`forkFrom` 对 `open` 加 try/catch，失败 toast、成功 toast 仅在 open 成功后，分叉会话仍留在列表。
+- 验证：slice smoke「Review polish r140」；未合并。
+
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
 Pad 9 Pro Max（`M367FC`）接上后，第一次把「平板发指令 → 主机跑模型 → 回复回画到平板」整条链路走通。
