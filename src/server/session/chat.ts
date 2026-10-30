@@ -168,6 +168,8 @@ export class SessionChat {
   /** The hop count of the chat message each conversation is handling right now. */
   private readonly hops = new Map<string, number>()
   private announcing = false
+  /** Set when chat-queue.json could not be read: nothing is written over it for the rest of this run. */
+  private queueBlocked = false
 
   constructor(
     private readonly store: SessionStore,
@@ -372,7 +374,7 @@ export class SessionChat {
    * passes through.
    */
   private persist(): void {
-    if (!this.storage) return
+    if (!this.storage || this.queueBlocked) return
     const entries: StoredEntry[] = []
     for (const queue of this.queues.values()) {
       for (const entry of queue) {
@@ -403,7 +405,25 @@ export class SessionChat {
    */
   async restore(): Promise<void> {
     if (!this.storage) return
-    const saved = await this.storage.read<{ entries?: StoredEntry[] }>(QUEUE_KEY).catch(() => undefined)
+    const read = await this.storage.readOrCorrupt<{ entries?: StoredEntry[] }>(QUEUE_KEY)
+    if (read.unreadable) {
+      // The file is there but cannot be read: writing over it would destroy
+      // whatever is in it, so nothing is written for the rest of this run.
+      this.queueBlocked = true
+      console.warn(`[chat] ${QUEUE_KEY} could not be read; leaving it in place and not writing over it`)
+      return
+    }
+    let saved: { entries?: StoredEntry[] } | undefined = read.value
+    if (read.corrupt) {
+      const aside = await this.storage.quarantine(QUEUE_KEY)
+      if (aside === undefined) {
+        this.queueBlocked = true
+        console.warn(`[chat] ${QUEUE_KEY} is corrupt and could not be set aside; leaving it in place and not writing over it`)
+        return
+      }
+      console.warn(`[chat] ${QUEUE_KEY} was corrupt; kept as ${aside}`)
+      saved = undefined
+    }
     const entries = (saved?.entries ?? []).filter((entry) => entry && typeof entry.text === "string" && entry.target && entry.from)
     if (!entries.length) return
     // Taken off the file first: a delivery that fails must not be tried again on every start.

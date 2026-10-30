@@ -3580,8 +3580,15 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 currentSession?.let { sid ->
                     scope.launch {
                         runCatching { rpc(JSONObject().put("type", "session.access").put("sessionID", sid).put("access", level)) }
-                        val at = sessions.indexOfFirst { it.id == sid }
-                        if (at >= 0) sessions[at] = sessions[at].copy(access = level)
+                            .onSuccess {
+                                val at = sessions.indexOfFirst { it.id == sid }
+                                if (at >= 0) sessions[at] = sessions[at].copy(access = level)
+                            }
+                            .onFailure {
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(context, "无法切换权限", Toast.LENGTH_SHORT).show()
+                                }
+                            }
                     }
                 }
             },
@@ -6198,8 +6205,15 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 currentSession?.let { sid ->
                                     scope.launch {
                                         runCatching { rpc(JSONObject().put("type", "session.access").put("sessionID", sid).put("access", level)) }
-                                        val at2 = sessions.indexOfFirst { it.id == sid }
-                                    if (at2 >= 0) sessions[at2] = sessions[at2].copy(access = level, goalMode = sessions[at2].goalMode)
+                                            .onSuccess {
+                                                val at2 = sessions.indexOfFirst { it.id == sid }
+                                                if (at2 >= 0) sessions[at2] = sessions[at2].copy(access = level)
+                                            }
+                                            .onFailure {
+                                                withContext(Dispatchers.Main) {
+                                                    Toast.makeText(context, "无法切换权限", Toast.LENGTH_SHORT).show()
+                                                }
+                                            }
                                     }
                                 }
                             },
@@ -6232,7 +6246,16 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         val next = !goalMode
                         goalMode = next
                         currentSession?.let { sid ->
-                            scope.launch { runCatching { rpc(JSONObject().put("type", "session.goalMode").put("sessionID", sid).put("on", next)) } }
+                            scope.launch {
+                                runCatching {
+                                    rpc(JSONObject().put("type", "session.goalMode").put("sessionID", sid).put("on", next))
+                                }.onFailure {
+                                    goalMode = !next
+                                    withContext(Dispatchers.Main) {
+                                        Toast.makeText(context, "无法开启目标模式", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            }
                         }
                     },
                     verticalAlignment = Alignment.CenterVertically,

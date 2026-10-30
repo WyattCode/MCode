@@ -2145,6 +2145,21 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r144")
+  {
+    const { readFileSync } = await import("node:fs")
+    const { join } = await import("node:path")
+    const root = process.cwd()
+    const chatSrc = readFileSync(join(root, "src/server/session/chat.ts"), "utf8")
+    check("chat queue has a blocked flag", chatSrc.includes("queueBlocked"))
+    check("chat queue reads through readOrCorrupt", chatSrc.includes("readOrCorrupt"))
+    check("chat persist refuses to write when blocked", /if \(!this\.storage \|\| this\.queueBlocked\) return/.test(chatSrc))
+    check("chat restore handles unreadable queue", chatSrc.includes("read.unreadable"))
+    const androidSrc = readFileSync(join(root, "android/app/src/main/java/com/mcode/remote/MainActivity.kt"), "utf8")
+    check("android access failure is surfaced", (androidSrc.match(/无法切换权限/g) ?? []).length >= 2)
+    check("android wide goal failure is surfaced", androidSrc.includes("无法开启目标模式"))
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }
