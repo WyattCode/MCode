@@ -520,6 +520,11 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - PR: https://github.com/WyattCode/MCode/pull/137 （未合并）
 - Android：`openArtifact` 改 `rpcOrThrow`，空/过大/不支持类型 Toast；插件页任一侧 `mcp.list`/`skill.list` 失败即 `pluginsFailed` + Toast「没能加载插件」；变更轨 `git.branches` 失败 Toast「没能加载分支」。
 - 验证：smoke「Review polish r106」；未合并。
+### 续四十：模型切换 ok:false 不改 pill；作品/斜杠命令加载失败提示（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- Android：`session.model` 改 `rpcOrThrow`（plain rpc 把 ok:false 当成功仍改 pill）；`artifact.list` / `command.list` 改 `rpcOrThrow` + Toast「没能加载作品」/「没能加载命令」。
+- 验证：smoke「Review polish r107」；未合并。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 

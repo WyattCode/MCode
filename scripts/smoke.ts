@@ -2459,6 +2459,7 @@ async function main() {
   section("Review polish r104")
   section("Review polish r105")
   section("Review polish r106")
+  section("Review polish r107")
   {
     const root = process.cwd()
     const main = await fs.readFile(
@@ -2855,6 +2856,18 @@ async function main() {
     const br = brAt >= 0 ? main.slice(Math.max(0, brAt - 120), brAt + 550) : ""
     check("r106: git.branches uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}git\.branches/.test(br))
     check("r106: git.branches toasts on failure", br.includes("没能加载分支"))
+    const modelAt = main.indexOf('put("type", "session.model")')
+    const model = modelAt >= 0 ? main.slice(Math.max(0, modelAt - 80), modelAt + 200) : ""
+    check("r107: session.model uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}session\.model/.test(model))
+    check("r107: session.model does not use plain rpc", !/rpc\(JSONObject\(\)\.put\("type", "session\.model"/.test(model))
+    const artAt = main.indexOf('put("type", "artifact.list")')
+    const art = artAt >= 0 ? main.slice(Math.max(0, artAt - 80), artAt + 1200) : ""
+    check("r107: artifact.list uses rpcOrThrow", /rpcOrThrow\(ask/.test(art))
+    check("r107: artifact.list toasts on failure", art.includes("没能加载作品"))
+    const cmdAt = main.indexOf('put("type", "command.list")')
+    const cmd = cmdAt >= 0 ? main.slice(Math.max(0, cmdAt - 200), cmdAt + 1000) : ""
+    check("r107: command.list uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}command\.list/.test(cmd))
+    check("r107: command.list toasts on failure", cmd.includes("没能加载命令"))
   }
 
   section("Permission guide")
