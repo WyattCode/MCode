@@ -2145,6 +2145,28 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r110")
+  {
+    const root = process.cwd()
+    const main = await fs.readFile(
+      path.join(root, "android/app/src/main/java/com/mcode/remote/MainActivity.kt"),
+      "utf8",
+    )
+    const cfgAt = main.indexOf("LaunchedEffect(connected, refreshCommandsTick)")
+    const cfg = cfgAt >= 0 ? main.slice(cfgAt, cfgAt + 3000) : ""
+    check("r110: config.get uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}config\.get/.test(cfg))
+    check("r110: config.get clears projects only after success", cfg.indexOf("rpcOrThrow") >= 0 && cfg.indexOf("rpcOrThrow") < cfg.indexOf("projects.clear()"))
+    check("r110: config.get toasts on failure", cfg.includes("没能加载设置"))
+    const listAt = main.indexOf('id.startsWith("list")')
+    const list = listAt >= 0 ? main.slice(listAt, listAt + 2000) : ""
+    check("r110: session.list checks ok before clear", list.indexOf('optBoolean("ok")') >= 0 && list.indexOf('optBoolean("ok")') < list.indexOf("sessions.clear()"))
+    check("r110: session.list toasts on failure", list.includes("没能加载会话"))
+    const getAt = main.indexOf("// History first; the live stream rides on top of it.")
+    const get = getAt >= 0 ? main.slice(getAt, getAt + 2500) : ""
+    check("r110: session.get uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}session\.get/.test(get))
+    check("r110: session.get toasts on failure", get.includes("没能打开对话"))
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }

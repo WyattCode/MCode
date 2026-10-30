@@ -221,6 +221,12 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 续四十三：会话列表/设置加载 fail-closed；打开对话失败提示（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- Android：`session.list` 在 ok:false/缺 data 时不再先 `sessions.clear()`，Toast「没能加载会话」；连上后 `config.get` 改 `rpcOrThrow`，成功才清并回填 projects，失败 Toast「没能加载设置」；`select` 的 `session.get` 改 `rpcOrThrow`，失败 Toast「没能打开对话」。
+- 验证：smoke「Review polish r110」；未合并。
+
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
 Pad 9 Pro Max（`M367FC`）接上后，第一次把「平板发指令 → 主机跑模型 → 回复回画到平板」整条链路走通。
