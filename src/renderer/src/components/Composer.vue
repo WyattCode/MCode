@@ -2738,12 +2738,13 @@ const effortLabel = computed(() => {
  */
 async function chooseModelEffort(provider: string, model: string, level: Effort) {
   menu.value = undefined
-  const before = app.modelPick(sessionID.value)
-  if (!sessionID.value) {
+  const target = sessionID.value
+  const before = app.modelPick(target)
+  if (!target) {
     await app.patchConfig({ model: { provider, model }, smart: false, effort: level })
   } else {
-    await app.setModel({ provider, model }, sessionID.value)
-    await app.setEffort(level, sessionID.value)
+    await app.setModel({ provider, model }, target)
+    await app.setEffort(level, target)
   }
   app.announceModel(before, { provider, model })
 }
@@ -3054,7 +3055,8 @@ async function chooseAgent(next: (typeof AGENTS)[number]) {
 
 async function chooseModel(provider: string, model: string) {
   menu.value = undefined
-  const before = app.modelPick(sessionID.value)
+  const target = sessionID.value
+  const before = app.modelPick(target)
   const chosen = findModel(app.providers, { provider, model })
   const variants = props.side ? [] : (chosen?.variants ?? [])
   /*
@@ -3066,13 +3068,14 @@ async function chooseModel(provider: string, model: string) {
    * else its first), so the level is written whenever the one in force is not
    * on offer.
    */
-  if (!sessionID.value) {
+  if (!target) {
     const effort = clampEffort(variants, app.config?.effort, chosen?.defaultEffort)
     await app.patchConfig({ model: { provider, model }, smart: false, ...(effort && effort !== app.config?.effort ? { effort } : {}) })
   } else {
-    await app.setModel({ provider, model }, sessionID.value)
-    const effort = clampEffort(variants, session.value?.effort ?? app.config?.effort, chosen?.defaultEffort)
-    if (effort && effort !== session.value?.effort) await app.setEffort(effort, sessionID.value)
+    await app.setModel({ provider, model }, target)
+    const hereEffort = session.value?.id === target ? session.value?.effort : undefined
+    const effort = clampEffort(variants, hereEffort ?? app.config?.effort, chosen?.defaultEffort)
+    if (effort && effort !== (hereEffort ?? app.config?.effort)) await app.setEffort(effort, target)
   }
   app.announceModel(before, { provider, model })
 }
@@ -3080,9 +3083,10 @@ async function chooseModel(provider: string, model: string) {
 /* Smart: the model is picked from the conversation's first message. */
 async function chooseSmart() {
   menu.value = undefined
-  const before = app.modelPick(sessionID.value)
-  if (!sessionID.value) await app.patchConfig({ smart: true })
-  else await app.setSmart(sessionID.value)
+  const target = sessionID.value
+  const before = app.modelPick(target)
+  if (!target) await app.patchConfig({ smart: true })
+  else await app.setSmart(target)
   app.announceModel(before, "smart")
 }
 

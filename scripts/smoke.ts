@@ -2249,6 +2249,8 @@ async function main() {
   section("Review polish r87")
   {
     // Walk up from cwd so a smoke runner started in scripts/ still finds sources.
+  section("Review polish r88")
+  {
     let root = process.cwd()
     for (let i = 0; i < 6; i++) {
       try {
@@ -2308,6 +2310,54 @@ async function main() {
       "goal mode toast uses the value just written",
       /const next = !goalMode\.value/.test(composer) && /notify\(t\(next \?/.test(composer),
     )
+    const composer = await fs.readFile(path.join(root, "src/renderer/src/components/Composer.vue"), "utf8")
+
+    const voiceAt = activity.indexOf("fun finishVoice(")
+    check("finishVoice is present", voiceAt >= 0)
+    const voiceEnd = activity.indexOf("fun beginRecording(", voiceAt)
+    const voice = activity.slice(voiceAt, voiceEnd > 0 ? voiceEnd : voiceAt + 2500)
+    check("finishVoice captures forSession", voice.includes("val forSession = currentSession"))
+    check("finishVoice rpc targets forSession", /put\("sessionID",\s*forSession\)/.test(voice))
+    check("finishVoice guards same-session inject", voice.includes("currentSession == forSession"))
+    check(
+      "finishVoice keeps words in the spoken session",
+      voice.includes('draft.$forSession') || voice.includes("draftStore.edit()"),
+    )
+
+    const goalAt = activity.indexOf("goalEdit?.let")
+    check("goalEdit dialog is present", goalAt >= 0)
+    const goal = activity.slice(goalAt, goalAt + 1800)
+    const nullAt = goal.indexOf("goalEdit = null")
+    const goalReq = goal.indexOf("session.goal")
+    check(
+      "goalEdit clears before session.goal",
+      nullAt >= 0 && goalReq >= 0 && nullAt < goalReq,
+      { nullAt, goalReq },
+    )
+    check("goalEdit rpc uses captured sid", /put\("sessionID",\s*sid\)/.test(goal))
+
+    function fnBody(name: string) {
+      const at = composer.indexOf(`async function ${name}(`)
+      if (at < 0) return ""
+      const brace = composer.indexOf("{", at)
+      let depth = 0
+      for (let i = brace; i < composer.length; i++) {
+        const ch = composer[i]
+        if (ch === "{") depth++
+        else if (ch === "}") {
+          depth--
+          if (depth === 0) return composer.slice(at, i + 1)
+        }
+      }
+      return composer.slice(at, at + 800)
+    }
+    for (const name of ["chooseModelEffort", "chooseModel", "chooseSmart"] as const) {
+      const body = fnBody(name)
+      check(`${name} captures target`, /const target = sessionID\.value/.test(body))
+    }
+    check("chooseModelEffort uses target", /setEffort\(level,\s*target\)/.test(fnBody("chooseModelEffort")))
+    check("chooseModel uses target", /setModel\(\{ provider, model \},\s*target\)/.test(fnBody("chooseModel")))
+    check("chooseSmart uses target", /setSmart\(target\)/.test(fnBody("chooseSmart")))
   }
 
   section("Permission guide")

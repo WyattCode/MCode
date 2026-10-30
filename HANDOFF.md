@@ -410,6 +410,12 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - Android：`select` 同步清 `queuedPrompts`；队列撤回/立即发送闭包捕获 `queueSessionID`；删除/重命名确认先清 target 再 request。
 - 桌面：权限「拒绝并说明」提交钮进 `data-cnav`；QuestionDock 数字键跳过 disabled；Composer `toggleGoalMode` 用按下时的 `next` 提示。
 - 验证：smoke「Review polish r87」；未合并。
+### 续二十一：语音/目标会话捕获、模型切换目标（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/119 （未合并）
+- Android：`finishVoice` 捕获 `forSession`，切走则写入该会话草稿；`goalEdit` 先清再 request 并捕获 sid。
+- 桌面：`chooseModel` / `chooseModelEffort` / `chooseSmart` 一次捕获 `target`。
+- 验证：smoke「Review polish r88」；未合并。
 
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
