@@ -183,6 +183,8 @@ async function useWorktree(directory: string) {
   try {
     await app.addProject(directory, { used: true })
   } catch (err) {
+
+    if (added.value === directory) added.value = undefined
     notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
     return
   }

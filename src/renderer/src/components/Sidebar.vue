@@ -392,21 +392,37 @@ async function setDown(event: DragEvent, kind: CarryKind, key: string, group?: s
     if (next !== list) {
       // Anything pinned that this list does not name - a pinned project - keeps its place at the end.
       const rest = (app.config?.pinnedTabs ?? []).filter((id) => !next.includes(id))
-      await app.patchConfig({ pinnedTabs: [...next, ...rest] })
+      try {
+        await app.patchConfig({ pinnedTabs: [...next, ...rest] })
+      } catch {
+        // patchConfig already toasts prefSaveFailed.
+      }
     }
     return
   }
   if (kind === "project") {
     const list = normalProjects.value.map((project) => project.directory)
     const next = movedBefore(list, held.key, key)
-    if (next !== list) await app.patchConfig({ projectOrder: next })
+    if (next !== list) {
+      try {
+        await app.patchConfig({ projectOrder: next })
+      } catch {
+        // patchConfig already toasts prefSaveFailed.
+      }
+    }
     return
   }
   const project = projects.value.find((entry) => entry.directory === group)
   if (!project || !group) return
   const list = inManualOrder(project.children, (session) => session.id, app.config?.taskOrder?.[group]).map((session) => session.id)
   const next = movedBefore(list, held.key, key)
-  if (next !== list) await app.patchConfig({ taskOrder: { ...(app.config?.taskOrder ?? {}), [group]: next } })
+  if (next !== list) {
+    try {
+      await app.patchConfig({ taskOrder: { ...(app.config?.taskOrder ?? {}), [group]: next } })
+    } catch {
+      // patchConfig already toasts prefSaveFailed.
+    }
+  }
 }
 
 const carrying = (kind: CarryKind, key: string) => carried.value?.kind === kind && carried.value.key === key

@@ -704,6 +704,11 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - PR: （打开后填入；未合并）
 - Windows：`MessageSource.openSource` 对 `app.open` 加 try/catch + `notifyFailure(common.requestFailed)`；`togglePinned` 对 `patchConfig` 加 try/catch，仅成功后 toast；`forkFrom` 对 `open` 加 try/catch，失败 toast、成功 toast 仅在 open 成功后，分叉会话仍留在列表。
 - 验证：slice smoke「Review polish r140」；未合并。
+### 续七十四：工作树加入/新建分支空结果/侧栏拖拽排序失败可见（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/172 （未合并）
+- Windows：`HomeHero.useWorktree` 对 `addProject` 加 try/catch，失败 `notifyFailure(common.requestFailed)` 并清掉 `added`、不 `choose`；`BranchPicker.create` 空结果 toast `home.branchCreateFailed`；`Sidebar.setDown` 拖拽排序对 `patchConfig` 加 try/catch（patchConfig 已 toast）。
+- 验证：slice smoke「Review polish r141」；未合并。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 

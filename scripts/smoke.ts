@@ -3095,6 +3095,7 @@ async function main() {
   section("Review polish r138")
   section("Review polish r139")
   section("Review polish r140")
+  section("Review polish r141")
   {
     const { readFileSync } = await import("node:fs")
     const { join } = await import("node:path")
@@ -3805,6 +3806,46 @@ async function main() {
           fork.includes("return session")
         )
       })(),
+    const home = readFileSync(join(root, "src/renderer/src/components/HomeHero.vue"), "utf8").replace(/\r\n/g, "\n")
+    const wtAt = home.indexOf("async function useWorktree")
+    const wtEnd = home.indexOf("function none", wtAt)
+    const wt = wtAt >= 0 && wtEnd > wtAt ? home.slice(wtAt, wtEnd) : ""
+    check(
+      "r141: useWorktree try/catch + notifyFailure",
+      wt.includes("try {") &&
+        wt.includes("await app.addProject(directory, { used: true })") &&
+        !wt.includes(".catch(() => {})") &&
+        wt.includes("notifyFailure") &&
+        wt.includes("common.requestFailed") &&
+        wt.includes("added.value = undefined") &&
+        wt.includes("return") &&
+        wt.includes("choose(directory)"),
+    )
+
+    const bp = readFileSync(join(root, "src/renderer/src/components/BranchPicker.vue"), "utf8").replace(/\r\n/g, "\n")
+    const crAt = bp.indexOf("async function create()")
+    const crEnd = bp.indexOf("function onNewKey", crAt)
+    const cr = crAt >= 0 && crEnd > crAt ? bp.slice(crAt, crEnd) : ""
+    check(
+      "r141: BranchPicker create null-result toast",
+      cr.includes('if (!result)') &&
+        cr.includes("notifyFailure") &&
+        cr.includes("home.branchCreateFailed") &&
+        cr.includes("common.requestFailed") &&
+        cr.includes("return"),
+    )
+
+    const side = readFileSync(join(root, "src/renderer/src/components/Sidebar.vue"), "utf8").replace(/\r\n/g, "\n")
+    const sdAt = side.indexOf("async function setDown")
+    const sdEnd = side.indexOf("const carrying", sdAt)
+    const sd = sdAt >= 0 && sdEnd > sdAt ? side.slice(sdAt, sdEnd) : ""
+    check(
+      "r141: Sidebar setDown patchConfig try/catch",
+      sd.includes("try {") &&
+        sd.includes("catch {") &&
+        sd.includes("await app.patchConfig({ pinnedTabs:") &&
+        sd.includes("await app.patchConfig({ projectOrder:") &&
+        sd.includes("await app.patchConfig({ taskOrder:"),
     )
   }
 
