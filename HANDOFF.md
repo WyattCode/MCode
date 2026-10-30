@@ -223,7 +223,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ### 续四十二：@ 提及列目录/搜索失败提示；终端 attach 失败提示（2026-10-30）
 
-- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- PR: https://github.com/WyattCode/MCode/pull/140 （未合并）
 - Android：输入条 `@` 菜单 `file.listDir`/`file.search` 改 `rpcOrThrow`，失败 Toast「没能列出文件」/「没能搜索文件」（不再静默成空列表）；终端 `shell.attach` 改 `rpcOrThrow`，失败 Toast「没能连接终端」。
 - 验证：smoke「Review polish r109」；未合并。
 
