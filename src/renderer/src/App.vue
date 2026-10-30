@@ -3643,13 +3643,16 @@ const openProjects = computed(() => app.projects)
 
 /** Steps the session's agent, wrapping - there are only ever a handful. */
 async function cycleAgent(by: 1 | -1) {
+  // One target for the write and the announcement, so a switch mid-flight
+  // cannot retarget the choice.
+  const target = app.currentID
   const current = app.current?.agent ?? app.config?.agent ?? "build"
   const at = AGENT_NAMES.indexOf(current)
   const next = AGENT_NAMES[(at + by + AGENT_NAMES.length) % AGENT_NAMES.length]
   if (!next) return
-  const before = app.modeOf(app.currentID)
-  await app.setAgent(next)
-  app.announceMode(before, app.currentID)
+  const before = app.modeOf(target)
+  await app.setAgent(next, target)
+  app.announceMode(before, target)
 }
 
 /**

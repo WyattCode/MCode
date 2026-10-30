@@ -3045,12 +3045,15 @@ function toggle(which: "model" | "access" | "plus" | "context") {
 
 async function chooseAgent(next: (typeof AGENTS)[number]) {
   menu.value = undefined
-  const before = app.modeOf(sessionID.value)
+  // One target for the write and the announcement: the conversation the chip
+  // named, even if the box switches while the request is in flight.
+  const target = sessionID.value
+  const before = app.modeOf(target)
   // No session on the home screen, so the choice is the app's default - which
   // is what the task this box creates will start as.
-  if (!sessionID.value) await app.patchConfig({ agent: next })
-  else await app.setAgent(next)
-  app.announceMode(before, sessionID.value)
+  if (!target) await app.patchConfig({ agent: next })
+  else await app.setAgent(next, target)
+  app.announceMode(before, target)
 }
 
 async function chooseModel(provider: string, model: string) {
