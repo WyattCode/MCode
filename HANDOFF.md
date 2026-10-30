@@ -221,6 +221,12 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 续七十六：layout/background-usage 损坏拒覆写；Android 技能开关失败 Toast（2026-10-30）
+- PR: https://github.com/WyattCode/MCode/pull/174 （未合并）
+- Windows：`readStorageLayout` 对 unreadable/quarantine-fail 拒写 marker；`BackgroundUsage` blocked 拒写 `usage-background.json`。
+- Android：Plugins `onToggleSkill` 在 config.get/set 失败时 Toast「无法切换技能」，成功才 refresh。
+- 验证：slice smoke「Review polish r143」；未合并。
+
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
 Pad 9 Pro Max（`M367FC`）接上后，第一次把「平板发指令 → 主机跑模型 → 回复回画到平板」整条链路走通。

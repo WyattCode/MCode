@@ -43,8 +43,25 @@ export async function readStorageLayout(storage: Storage): Promise<StorageLayout
    * one number, so little is lost either way - but the rule that nothing writes
    * over a document it could not read has no useful exceptions.
    */
-  if (read.corrupt) await storage.quarantine(LAYOUT_KEY)
-  const stored = read.corrupt ? undefined : read.value
+  let stored: Partial<StorageLayout> | undefined
+  if (read.unreadable) {
+    console.warn(
+      "[storage-layout] layout marker is unreadable; leaving it in place and not writing over it",
+    )
+    return { schemaVersion: STORAGE_LAYOUT_VERSION, fromNewerVersion: false }
+  } else if (read.corrupt) {
+    const aside = await storage.quarantine(LAYOUT_KEY)
+    if (aside === undefined) {
+      console.warn(
+        "[storage-layout] layout marker is corrupt and could not be quarantined; leaving it in place and not writing over it",
+      )
+      return { schemaVersion: STORAGE_LAYOUT_VERSION, fromNewerVersion: false }
+    }
+    console.warn(`[storage-layout] layout marker was corrupt; quarantined to ${aside}`)
+    stored = undefined
+  } else {
+    stored = read.value
+  }
   const version = typeof stored?.schemaVersion === "number" ? stored.schemaVersion : 0
   if (version > STORAGE_LAYOUT_VERSION) return { schemaVersion: version, fromNewerVersion: true }
   if (version !== STORAGE_LAYOUT_VERSION) {

@@ -3356,9 +3356,13 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                      * desktop toggles it the same way: read the config, change
                      * the one list, write it back.
                      */
-                    val config = runCatching { rpc(JSONObject().put("type", "config.get")) }
-                        .getOrNull()?.optJSONObject("data")?.optJSONObject("config")
-                    val off = config?.optJSONArray("disabledSkills")?.let { arr ->
+                    val reply = runCatching { rpc(JSONObject().put("type", "config.get")) }.getOrNull()
+                    val config = reply?.optJSONObject("data")?.optJSONObject("config")
+                    if (config == null) {
+                        Toast.makeText(context, "无法切换技能", Toast.LENGTH_LONG).show()
+                        return@launch
+                    }
+                    val off = config.optJSONArray("disabledSkills")?.let { arr ->
                         (0 until arr.length()).mapNotNull { arr.optString(it).ifBlank { null } }.toMutableList()
                     } ?: mutableListOf()
                     if (enabled) off.remove(name) else if (name !in off) off.add(name)
@@ -3367,8 +3371,9 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             JSONObject().put("type", "config.set")
                                 .put("patch", JSONObject().put("disabledSkills", org.json.JSONArray(off))),
                         )
+                    }.onSuccess { refreshPlugins++ }.onFailure {
+                        Toast.makeText(context, "无法切换技能", Toast.LENGTH_LONG).show()
                     }
-                    refreshPlugins++
                 }
             },
             onClose = { leftMode = LeftMode.Recent },
@@ -4631,16 +4636,21 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 onRefresh = { refreshPlugins++ },
                                 onToggleSkill = { name, enabled ->
                                     scope.launch {
-                                        val config = runCatching { rpc(JSONObject().put("type", "config.get")) }
-                                            .getOrNull()?.optJSONObject("data")?.optJSONObject("config")
-                                        val off = config?.optJSONArray("disabledSkills")?.let { arr ->
+                                        val reply = runCatching { rpc(JSONObject().put("type", "config.get")) }.getOrNull()
+                                        val config = reply?.optJSONObject("data")?.optJSONObject("config")
+                                        if (config == null) {
+                                            Toast.makeText(context, "无法切换技能", Toast.LENGTH_LONG).show()
+                                            return@launch
+                                        }
+                                        val off = config.optJSONArray("disabledSkills")?.let { arr ->
                                             (0 until arr.length()).mapNotNull { arr.optString(it).ifBlank { null } }.toMutableList()
                                         } ?: mutableListOf()
                                         if (enabled) off.remove(name) else if (name !in off) off.add(name)
                                         runCatching {
                                             rpc(JSONObject().put("type", "config.set").put("patch", JSONObject().put("disabledSkills", org.json.JSONArray(off))))
+                                        }.onSuccess { refreshPlugins++ }.onFailure {
+                                            Toast.makeText(context, "无法切换技能", Toast.LENGTH_LONG).show()
                                         }
-                                        refreshPlugins++
                                     }
                                 },
                                 onClose = { leftMode = LeftMode.Recent },

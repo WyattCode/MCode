@@ -2145,6 +2145,54 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r143")
+  {
+    const { readFileSync } = await import("node:fs")
+    const { join } = await import("node:path")
+    const root = process.cwd()
+    const layout = readFileSync(join(root, "src/server/storage-layout.ts"), "utf8")
+    const bg = readFileSync(
+      join(root, "src/server/session/background-usage.ts"),
+      "utf8",
+    )
+    const android = readFileSync(
+      join(root, "android/app/src/main/java/com/mcode/remote/MainActivity.kt"),
+      "utf8",
+    )
+    check(
+      "layout refuses to overwrite a damaged file",
+      layout.includes("read.unreadable") &&
+        layout.includes("not writing over it") &&
+        layout.includes("aside === undefined"),
+    )
+    check(
+      "background usage refuses to overwrite when blocked",
+      bg.includes("private blocked = false") &&
+        bg.includes("this.blocked = true") &&
+        bg.includes("if (!this.blocked) await this.storage.write"),
+    )
+    const toastCount = (android.match(/无法切换技能/g) ?? []).length
+    check("skill toggle surfaces failures", toastCount >= 4)
+    check(
+      "skill toggle only refreshes on success",
+      android.includes(".onSuccess { refreshPlugins++ }") &&
+        android.includes("if (config == null)"),
+    )
+    const toggleBodies = [...android.matchAll(/onToggleSkill = \{[\s\S]*?onClose =/g)].map((m) => m[0])
+    check(
+      "old unconditional refresh after config.set is gone from skill toggles",
+      toggleBodies.length >= 2 &&
+        toggleBodies.every(
+          (body) =>
+            body.includes("if (config == null)") &&
+            (body.match(/无法切换技能/g) ?? []).length >= 2 &&
+            body.includes(".onSuccess { refreshPlugins++ }") &&
+            body.includes(".onFailure") &&
+            !/runCatching \{[\s\S]*?config\.set[\s\S]*?\}\s*\n\s*refreshPlugins\+\+/.test(body),
+        ),
+    )
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }
