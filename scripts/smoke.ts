@@ -2145,6 +2145,51 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r133")
+  {
+    const { readFile } = await import("node:fs/promises")
+    const qs = await readFile("src/renderer/src/stores/questions.ts", "utf8")
+    const acceptAt = qs.indexOf("async function acceptEdits")
+    const accept = acceptAt >= 0 ? qs.slice(acceptAt, acceptAt + 500) : ""
+    check(
+      "acceptEdits try/catch toast",
+      accept.includes("try {") &&
+        accept.includes('patchConfig({ accessLevel: "auto" }, { quiet: true })') &&
+        accept.includes('notifyFailure(t("composer.access.failed")') &&
+        accept.includes("catch (failure)"),
+    )
+
+    const settings = await readFile("src/renderer/src/components/SettingsDialog.vue", "utf8")
+    const swAt = settings.indexOf("async function switchAgents")
+    const swEnd = settings.indexOf("async function removeAgents", swAt)
+    const sw = swAt >= 0 ? settings.slice(swAt, swEnd > swAt ? swEnd : swAt + 450) : ""
+    check(
+      "switchAgents null-client fail-closed",
+      sw.includes("const client = app.client") &&
+        sw.includes("if (!client)") &&
+        sw.includes('t("set.agents.toggleFailed")') &&
+        sw.includes("common.requestFailed") &&
+        sw.includes('type: "agents.setEnabled"') &&
+        !sw.includes("app.client?.request"),
+    )
+
+    const android = await readFile("android/app/src/main/java/com/mcode/remote/MainActivity.kt", "utf8")
+    const lpAt = android.indexOf("fun loadProviders(")
+    const lp = lpAt >= 0 ? android.slice(lpAt, lpAt + 700) : ""
+    check(
+      "loadProviders userInitiated toast",
+      lp.includes("userInitiated: Boolean = false") &&
+        lp.includes("if (userInitiated)") &&
+        lp.includes("没能读取模型列表"),
+    )
+    check("onModel loadProviders(true)", android.includes("onModel = { loadProviders(true); modelPicker = true }"))
+    check("onFixKey loadProviders(true)", android.includes("onFixKey = { loadProviders(true); showProviders = true }"))
+    check(
+      "welcome loadProviders default",
+      /loadProviders\(\)/.test(android) && android.includes("fun loadProviders(userInitiated"),
+    )
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }

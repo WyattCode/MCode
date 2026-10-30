@@ -221,6 +221,13 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 续六十六：帮我审批失败 toast；全局指令开关空 client 不清空；Android 模型列表加载失败提示（2026-10-30）
+
+- Windows `questions.acceptEdits`（权限引导「帮我审批」）：`setAccess` / `patchConfig` 失败 try/catch + `composer.access.failed` toast（config 分支 quiet 避免双 toast）。
+- Windows Settings `switchAgents`：空 client / 空结果 toast，保留原 `agents` 状态，不再写成 undefined。
+- Android `loadProviders(userInitiated)`：用户打开模型选择/修复密钥时 Toast「没能读取模型列表」；欢迎帧后台拉取仍静默。
+- 验证：smoke「Review polish r133」；PR https://github.com/WyattCode/MCode/pull/XXX（未合并）。
+
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
 Pad 9 Pro Max（`M367FC`）接上后，第一次把「平板发指令 → 主机跑模型 → 回复回画到平板」整条链路走通。

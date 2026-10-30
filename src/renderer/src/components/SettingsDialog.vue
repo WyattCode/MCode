@@ -234,8 +234,18 @@ async function openAgents() {
 }
 
 async function switchAgents(enabled: boolean) {
+  const client = app.client
+  if (!client) {
+    notifyFailure(t("set.agents.toggleFailed") + t("common.requestFailed"))
+    return
+  }
   try {
-    agents.value = await app.client?.request({ type: "agents.setEnabled", enabled })
+    const result = await client.request({ type: "agents.setEnabled", enabled })
+    if (!result) {
+      notifyFailure(t("set.agents.toggleFailed") + t("common.requestFailed"))
+      return
+    }
+    agents.value = result
   } catch (err) {
     notifyFailure(t("set.agents.toggleFailed") + reasonText(err))
   }

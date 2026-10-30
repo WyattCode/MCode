@@ -193,8 +193,12 @@ export const useQuestions = defineStore("questions", () => {
 
   /** 帮我审批: the middle access level for this conversation, which the server applies to what is already waiting. */
   async function acceptEdits(): Promise<void> {
-    if (app.currentID) await app.setAccess(app.currentID, "auto")
-    else await app.patchConfig({ accessLevel: "auto" })
+    try {
+      if (app.currentID) await app.setAccess(app.currentID, "auto")
+      else await app.patchConfig({ accessLevel: "auto" }, { quiet: true })
+    } catch (failure) {
+      notifyFailure(t("composer.access.failed"), failure instanceof Error ? failure.message : String(failure))
+    }
   }
 
   /*
