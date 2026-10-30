@@ -355,6 +355,23 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 **回归**：`mayJoinSteering` 三元 + runner/Android 源码 scrape；mutate-fail（谓词改回「只看 hasOpen」、去掉 abort 里的 `steering.delete`）两条都能检出，恢复后转绿。
 
 未做：QuestionForm busy、桌面 settings 耐久边、ContextRing 非 #109 路径、新 CSS token、REFERENCE_ENGLISH；#102–#113 路径未碰。
+### 续十七：QuestionForm busy、配置 blocked 拒写、Android 发送防双击（2026-10-30）
+
+复核主线（避开未合并的 #102–#114）时确认三处：
+
+1. **QuestionForm** 的选项/跳过/自定义框在 `sending` 时会禁用，但停靠栏 Enter 点的隐藏 `data-cnav-primary`、分页钮没有；`advance` / `onCustomKey` 也不看 busy，连按可能在答复在途时翻页。
+2. **config `persist`** 在 `blocked`（配置读不出、不能盖写）时静默跳过——这是对的，且 smoke-round23 钉住这行——但 `apply` 先改内存再 `persist`，界面以为保存成功，重启后改动消失。
+3. **Android InputCapsule** 发送钮在 `setRunning(true)` 重绘前没有在途锁，连点会打出两次 `session.prompt`（`respondingIds` / `onStop` 乐观清 running 分属 #112 / #114，未碰）。
+
+**修法**（`fix/review-polish-r84`，未合并）：
+
+- QuestionForm：primary / pager `:disabled="sending"`；`advance` 与 `onCustomKey` 开头拒 busy。
+- `settingsWritable` + `apply` 在突变前抛 `error.configInvalid`；`persist` 的 quiet return 保留。
+- InputCapsule：本地 `sending` 状态，clickable 在途禁用并包住 onSend。
+
+**回归**：smoke「Review polish r84」——settingsWritable 二元、apply/persist scrape、QuestionForm scrape、Android sending scrape；mutate-fail 见 NOTES。
+
+未做：#102–#114 路径、ContextRing 过满空环（对照 MiMo 故意无弧）、新 CSS token、REFERENCE_ENGLISH。
 
 
 ### 平板真机验证：端到端首次打通（2026-10-29）

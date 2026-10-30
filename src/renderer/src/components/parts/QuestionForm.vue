@@ -83,6 +83,8 @@ function submit(ch: string[][], cu: string[]): void {
 
 /* Submit once everything is answered or skipped; otherwise the next page, then the first gap. */
 function advance(ch: string[][], cu: string[], sk: boolean[]): void {
+  // A reply already in flight owns the card; nothing here may start a second one.
+  if (sending.value) return
   const done = doneList(ch, cu, sk)
   if (done.every(Boolean)) {
     submit(ch, cu)
@@ -133,6 +135,8 @@ function onCustom(event: Event): void {
 }
 
 function onCustomKey(event: KeyboardEvent): void {
+  // The textarea is disabled while a reply is in flight; a key already queued must not slip past it.
+  if (sending.value) return
   if (event.key !== "Enter" || event.shiftKey || event.isComposing || event.keyCode === 229) return
   event.preventDefault()
   if (allDone.value) submit(chosen.value, custom.value)
@@ -209,7 +213,7 @@ const Actions: FunctionalComponent = () => {
             type="button"
             class="q-page"
             data-confirm-pager-prev
-            :disabled="page === 0"
+            :disabled="page === 0 || sending"
             :title="t('questionDock.prevQ')"
             :aria-label="t('questionDock.prevQ')"
             @click="page -= 1"
@@ -223,7 +227,7 @@ const Actions: FunctionalComponent = () => {
             type="button"
             class="q-page"
             data-confirm-pager-next
-            :disabled="last"
+            :disabled="last || sending"
             :title="t('questionDock.next')"
             :aria-label="t('questionDock.next')"
             @click="page += 1"
@@ -347,6 +351,7 @@ const Actions: FunctionalComponent = () => {
       data-cnav-primary
       aria-hidden="true"
       tabindex="-1"
+      :disabled="sending"
       @click="submit(chosen, custom)"
     />
   </div>
