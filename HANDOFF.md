@@ -221,6 +221,14 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 续五十：平板项目页走真实 RPC；手机重命名/移除失败可见；桌面新建项目空结果提示（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- Android 宽屏嵌入 `ProjectsScreen`：createBlank/add/rename/remove 从本地假状态改为 `rpcOrThrow` + Toast；`project.add` 键改为 `directory`。
+- Android 窄屏：`onRename`/`onRemove` 失败不再静默/假成功。
+- Windows：`createNamedProject` 在 client 空回复时 `notifyFailure(menu.createFailed)`。
+- 验证：smoke「Review polish r117」；未合并。
+
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
 Pad 9 Pro Max（`M367FC`）接上后，第一次把「平板发指令 → 主机跑模型 → 回复回画到平板」整条链路走通。
