@@ -2053,6 +2053,11 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             } finally {
                 respondingIds.remove(requestId)
             }
+            val ok = runCatching {
+                rpcOrThrow(JSONObject().put("type", "permission.respond").put("requestID", requestId).put("response", response))
+            }.isSuccess
+            if (ok) clearPerm(requestId)
+            else Toast.makeText(context, "答复没有送达，请重试", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -2073,6 +2078,9 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             } finally {
                 respondingIds.remove(requestId)
             }
+            val ok = runCatching { rpcOrThrow(req) }.isSuccess
+            if (ok) clearPerm(requestId)
+            else Toast.makeText(context, "答复没有送达，请重试", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -2107,6 +2115,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             } finally {
                 respondingIds.remove(requestId)
             }
+            val ok = runCatching {
+                rpcOrThrow(JSONObject().put("type", "question.reply").put("requestID", requestId).put("answers", org.json.JSONArray().put(org.json.JSONArray(answer))))
+            }.isSuccess
+            // An answer that never arrived left the question card gone and the
+            // model still waiting for it - the same silence either way.
+            // rpcOrThrow: plain rpc treats ok:false as success and would clear the card.
+            if (ok) clearPerm(requestId)
+            else Toast.makeText(context, "回答没有送达，请重试", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -3952,6 +3968,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     setRunning(sid, false)
                     request(JSONObject().put("type", "session.abort").put("sessionID", sid))
                 }
+                val sid = currentSession
+                if (sid != null) request(JSONObject().put("type", "session.abort").put("sessionID", sid))
             },
         )
     }
@@ -5542,15 +5560,19 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 // its working directory.
                 LaunchedEffect(root) {
                     if (terminalId != null) return@LaunchedEffect
-                    val opened = runCatching {
-                        rpc(JSONObject().put("type", "shell.open").put("directory", root).put("cols", 100).put("rows", 40))
-                    }.getOrNull() ?: return@LaunchedEffect
-                    val id = opened.optJSONObject("data")?.optString("shellID").orEmpty()
-                    if (id.isBlank()) return@LaunchedEffect
-                    terminalId = id
-                    val attached = runCatching { rpc(JSONObject().put("type", "shell.attach").put("shellID", id)) }.getOrNull()
-                    val seen = attached?.optJSONObject("data")?.optString("data").orEmpty()
-                    if (seen.isNotBlank()) terminalText = seen.takeLast(8000)
+                    runCatching {
+                        val opened = rpcOrThrow(JSONObject().put("type", "shell.open").put("directory", root).put("cols", 100).put("rows", 40))
+                        val id = opened.optJSONObject("data")?.optString("shellID").orEmpty()
+                        if (id.isBlank()) error("empty shellID")
+                        terminalId = id
+                        val attached = runCatching { rpc(JSONObject().put("type", "shell.attach").put("shellID", id)) }.getOrNull()
+                        val seen = attached?.optJSONObject("data")?.optString("data").orEmpty()
+                        if (seen.isNotBlank()) terminalText = seen.takeLast(8000)
+                    }.onFailure {
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(context, "没能打开终端", Toast.LENGTH_SHORT).show()
+                        }
+                    }
                 }
                 Box(
                     Modifier

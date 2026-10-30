@@ -500,6 +500,11 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - PR: https://github.com/WyattCode/MCode/pull/133 （未合并）
 - Android：Settings `onPatch` 用 `rpcOrThrow`，成功才刷新 `appConfig`，失败 Toast；会话设置页「追求目标」失败回滚开关并 Toast（与输入胶囊一致）。
 - 验证：smoke「Review polish r102」；未合并。
+### 续三十六：权限/提问 ok:false 不撤卡；终端打开失败提示（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/134 （未合并）
+- Android：`respondPerm` / `respondPermReason` / `answerQuestion` 改 `rpcOrThrow`（plain `rpc` 把 ok:false 当成功会撤卡）；终端 `shell.open` 失败 Toast；停止钮捕获 sid。
+- 验证：smoke「Review polish r103」；未合并。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 

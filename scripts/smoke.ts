@@ -2455,6 +2455,7 @@ async function main() {
   section("Review polish r100")
   section("Review polish r101")
   section("Review polish r102")
+  section("Review polish r103")
   {
     const root = process.cwd()
     const main = await fs.readFile(
@@ -2793,6 +2794,23 @@ async function main() {
     check("r102: settings goalMode uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}session\.goalMode/.test(goal))
     check("r102: settings goalMode reverts on failure", /onFailure[\s\S]{0,120}goalMode = !next/.test(goal))
     check("r102: settings goalMode toasts", goal.includes("没能切换目标模式"))
+    const respondAt = main.indexOf("fun respondPerm(")
+    const respond = respondAt >= 0 ? main.slice(respondAt, respondAt + 900) : ""
+    check("r103: respondPerm uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,120}permission\.respond/.test(respond))
+    check("r103: respondPerm does not clear on plain rpc success", !/runCatching \{\s*\n\s*rpc\(JSONObject\(\)\.put\("type", "permission\.respond"/.test(respond))
+    const reasonAt = main.indexOf("fun respondPermReason(")
+    const reason = reasonAt >= 0 ? main.slice(reasonAt, reasonAt + 700) : ""
+    check("r103: respondPermReason uses rpcOrThrow", reason.includes("rpcOrThrow(req)"))
+    const askAt = main.indexOf("fun answerQuestion(")
+    const ask = askAt >= 0 ? main.slice(askAt, askAt + 900) : ""
+    check("r103: answerQuestion uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,120}question\.reply/.test(ask))
+    const shellAt = main.indexOf('put("type", "shell.open")')
+    const shell = shellAt >= 0 ? main.slice(Math.max(0, shellAt - 200), shellAt + 900) : ""
+    check("r103: shell.open uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}shell\.open/.test(shell))
+    check("r103: shell.open toasts on failure", shell.includes("没能打开终端"))
+    const stopAt = main.indexOf("onStop = {")
+    const stop = stopAt >= 0 ? main.slice(stopAt, stopAt + 280) : ""
+    check("r103: onStop pins sid", /val sid = currentSession/.test(stop) && stop.includes("session.abort"))
   }
 
   section("Permission guide")
