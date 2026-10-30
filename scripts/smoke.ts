@@ -461,6 +461,8 @@ import { roundFortyEightChecks } from "./smoke-round48"
 import { roundFortyNineChecks } from "./smoke-round49"
 import { roundFiftyThreeChecks } from "./smoke-round53"
 import { roundSeventyEightChecks } from "./smoke-round78"
+// The Windows Hello reveal gate: the preference, the PowerShell, the session and the wiring.
+import { userVerifyChecks } from "./smoke-user-verify"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -7252,6 +7254,7 @@ async function main() {
   await roundFortyNineChecks(check, section)
   await roundFiftyThreeChecks(check, section)
   await roundSeventyEightChecks(check, section)
+  await userVerifyChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

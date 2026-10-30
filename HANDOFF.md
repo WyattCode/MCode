@@ -204,6 +204,8 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
    - 全新配置第一次运行时，第一条 bash 命令要 16 秒左右，之后正常（第三十五轮探针看到的，原因未查；只影响新装后的第一条命令）。
    - ~~联网搜索在确认卡片里选了「关闭网络搜索」之后，只能把 `config.json` 的 `websearch` 改回 `"auto"`~~：第七十八轮已在设置页「浏览器」分组加开关（18 语言表补齐）。**平板端没有**这个开关。
    - ~~全新配置第一次运行时，第一条 bash 命令要 16 秒左右，之后正常~~：第七十八轮（续九）已查清——Windows 上首次拉起 PowerShell/.NET（外加 AMSI/Defender 首扫）的冷启动约 10–20 秒，同配置重启仍快是因为系统缓存还热；bash 工具用的是 `spawn` 不是 ConPTY。后端监听后 `prewarmBashShell` 在空闲时付这笔账，若仍冷则卡片先显示「正在启动 shell…」。Linux 上首条约数毫秒，本轮未重测 Windows 墙钟（机器离线）。
+   - ~~联网搜索在确认卡片里选了「关闭网络搜索」之后，只能把 `config.json` 的 `websearch` 改回 `"auto"`~~：第七十八轮已在设置页「浏览器」分组加开关（18 语言表补齐）。**平板端没有**这个开关。
+   - ~~全新配置第一次运行时，第一条 bash 命令要 16 秒左右~~：续九 / PR #107（`fix/first-bash-cold-start`，未合并）——根因是 Windows PowerShell/.NET 冷启动；启动时 `prewarmBashShell`，仍冷则进度「正在启动 shell…」。Linux 只验接线；Windows 墙钟可再验。
    - ~~Linux 托盘图标仍是把 512 的配色图缩成一张 16 交给托盘~~：第七十八轮已修（每配色 7 个尺寸 PNG + `addRepresentation`，注意必须走 `dataURL` 不能走 `buffer`）。
    - ~~`command -v rm` 这种只查命令位置的写法也被当成删除来问~~：第七十八轮已修（`-v`/`-V` 不派生程序）。
    - 12 条提示在 MiMo 的所有语言里都是英文，MCode 照参照保留（名单在 `scripts/i18n-check.ts` 的 `REFERENCE_ENGLISH`）；若决定翻译，要同时改参照比对。
@@ -264,6 +266,20 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - **处理**：后端 socket 听好后火即 `prewarmBashShell(config.get().shell)`，用与工具相同的 shell 与 spawn 旗标跑一次空命令，把冷启动付在开机空闲；若首条工具调用时仍未热完，卡片先 `progress("正在启动 shell…")` 并在 metadata 打 `shellCold`，不假装已经加速。冷启动本身消不掉，只是不再卡在对话中间。
 - **验证**：`smoke-round10-bash` 新增「platform shell prewarm」：源码接线（`prewarmBashShell(config.get().shell)`、进度文案）、预热后 `bashShellIsWarmed`、热路径不再报 cold、Linux 上热后 no-op < 3s。Windows 墙钟本轮机器离线未重测。
 - **状态**：PR 未合并（分支 `fix/first-bash-cold-start`）。
+### 第七十八轮（续十）：Windows Hello 显示密钥门闩（2026-10-30）
+
+接着续九（#107 首条 bash 冷启动预热，未合并）。本轮做 **Windows Hello / OS 用户验证作为「显示密钥」的额外门闩**，不替代 DPAPI。
+
+**调查**：Electron 41 的 `systemPreferences.promptTouchID` 仅 darwin；无内置 Windows Hello API。路径：主进程用 PowerShell 调 WinRT `UserConsentVerifier`（无原生插件），模式照 `login-item.ts`。
+
+**范围（最小可交付）**：
+- 设置 → 权限：Windows 上「显示密钥前验证」开关（`user-verify.json`）
+- 打开 MCP 环境变量/请求头「显示」、自定义供应商 API Key 眼睛前先验证；会话内解锁，锁屏/`suspend` 清掉
+- `safeStorage` 仍封存 credentials；模型调用不弹 Hello
+- Linux：接线 + 纯逻辑 smoke（60）；真 Hello 需 Windows 手测
+
+**验证**：`smoke-user-verify` 60 过；typecheck / i18ncheck（18 表补 `set.userVerify*`）绿。PR 未合并（`feat/windows-hello-lock`）。
+
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 

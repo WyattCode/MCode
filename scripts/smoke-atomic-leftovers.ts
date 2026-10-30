@@ -193,7 +193,7 @@ export async function atomicLeftoverChecks(check: Check, section: (name: string)
     const main = await read("src/main/index.ts")
     const at = main.indexOf("void app.whenReady().then(async () => {\n  const profile = app.getPath(\"userData\")")
     const block = at < 0 ? "" : main.slice(at, main.indexOf("\n})", at))
-    check("main sweeps the profile beside boot-prefs, display-server, login-item and window.json", /sweepWriterTemps\(profile, \{ names: \[BOOT_PREFS_FILE, DISPLAY_SERVER_FILE, LOGIN_ITEM_FILE, WINDOW_STATE_FILE\] \}\)/.test(block), block)
+    check("main sweeps the profile beside boot-prefs, display-server, login-item, user-verify and window.json", /sweepWriterTemps\(profile, \{ names: \[BOOT_PREFS_FILE, DISPLAY_SERVER_FILE, LOGIN_ITEM_FILE, USER_VERIFY_FILE, WINDOW_STATE_FILE\] \}\)/.test(block), block)
     check("the updates folder beside update-transaction.json", /sweepWriterTemps\(path\.dirname\(transactionFile\), \{ names: \[TRANSACTION_FILE\] \}\)/.test(block))
     check("and storage/ beside composer-input.json, its older temp name included", /sweepWriterTemps\(path\.join\(profile, "storage"\), \{ names: \[COMPOSER_INPUT_FILE\], pidOnly: \[COMPOSER_INPUT_FILE\] \}\)/.test(block))
   }

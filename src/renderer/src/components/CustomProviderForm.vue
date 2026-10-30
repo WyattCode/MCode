@@ -5,7 +5,7 @@ import { THINKING_LEVELS } from "@shared/effort-menu"
 import { normalizeBaseURL, normalizeModelId } from "@shared/custom-endpoint"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
-import { notice } from "../lib/toast"
+import { notice, notifyFailure } from "../lib/toast"
 import { useEscapeLayerWhile } from "../lib/escape-layer"
 import ConfirmDialog from "./ConfirmDialog.vue"
 import SelectMenu from "./SelectMenu.vue"
@@ -153,6 +153,29 @@ const busy = ref(false)
 const tried = ref(false)
 /* A variable name is only a name, so an edit shows it; a typed key starts hidden. */
 const keyShown = ref(Boolean(editing?.environment))
+
+/*
+ * The eye. Hiding is free; showing a key is showing a secret, so when the
+ * Windows Hello gate is on the OS is asked first - the same gate the settings
+ * page puts in front of the MCP secrets. A canceled prompt leaves the field as
+ * it was, a failed one says so, and a machine without Hello never asks.
+ */
+async function toggleKeyShown() {
+  if (keyShown.value) {
+    keyShown.value = false
+    return
+  }
+  const status = await Promise.resolve(window.mcode.userVerifyStatus?.()).catch(() => undefined)
+  if (status?.supported && status.requireGate && !status.unlocked) {
+    const result = await window.mcode.userVerifyUnlock(t("set.userVerify")).catch(() => ({ ok: false, outcome: "failed" }))
+    if (!result.ok) {
+      if (result.outcome === "unavailable" || result.outcome === "unsupported") notifyFailure(t("set.userVerifyUnavailable"))
+      else if (result.outcome !== "canceled") notifyFailure(t("set.userVerifyFailed"))
+      return
+    }
+  }
+  keyShown.value = true
+}
 
 /* ------------------------------------------------------------ the checks */
 
@@ -596,7 +619,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
               :title="t(keyShown ? 'model.hideKey' : 'model.showKey')"
               :aria-label="t(keyShown ? 'model.hideKey' : 'model.showKey')"
               data-custom-key-toggle
-              @click="keyShown = !keyShown"
+              @click="toggleKeyShown"
             >
               <svg v-if="keyShown" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M10.7 5.1A10.4 10.4 0 0 1 12 5c7 0 10 7 10 7a13 13 0 0 1-1.7 2.7M6.6 6.6C3.5 8.7 2 12 2 12s3 7 10 7a9.7 9.7 0 0 0 5.4-1.6M2 2l20 20M9.9 9.9a3 3 0 0 0 4.2 4.2" />

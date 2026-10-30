@@ -28,6 +28,7 @@ import { closeHidesToTray } from "@shared/protocol"
 import { label, setLabels } from "./labels"
 import { sweepWriterTemps, writeAtomicSync } from "./atomic-write"
 import { LOGIN_ITEM_FILE, loginItemSupported, parseLoginItem, readLaunchAtLogin, startsHidden, writeLaunchAtLogin, type LoginItemStore } from "./login-item"
+import { USER_VERIFY_FILE, UserVerifySession, checkUserVerifyAvailable, parseUserVerifyPref, renderUserVerifyPref, userVerifySupported, type UserVerifyAvailability, type UserVerifyRunner } from "./user-verify"
 import { BROWSER_ACTS, EDIT_ACTIONS, VIEW_ACTIONS, WINDOW_ACTIONS, actionOf, clipboardText, directoryAsk, panelBounds, titlebarMode } from "./ipc-input"
 import { buildMenu } from "./menu"
 import { readMenuKeys } from "./menu-keys"
@@ -290,6 +291,41 @@ const loginItemStore: LoginItemStore = {
 }
 
 /*
+ * Windows Hello as a reveal gate (user-verify.ts): an extra UI unlock in front
+ * of showing credentials, never a replacement for DPAPI, which still seals
+ * them. Off unless turned on, and Windows only - there is no Hello elsewhere.
+ */
+const userVerifyFile = path.join(app.getPath("userData"), USER_VERIFY_FILE)
+let userVerifyRequireGate = false
+try {
+  userVerifyRequireGate = parseUserVerifyPref(readFileSync(userVerifyFile, "utf8"))
+} catch {
+  // No file yet: the gate is off.
+}
+const userVerifySession = new UserVerifySession()
+/** What Hello said the last time it was asked; asked once, since a device does not appear mid-session. */
+let userVerifyAvailable: UserVerifyAvailability | undefined
+
+/*
+ * The only way to reach WinRT's UserConsentVerifier from here. Unused off
+ * Windows, where the handlers answer unsupported before it is ever called.
+ */
+const userVerifyRunner: UserVerifyRunner = {
+  run: (script) =>
+    new Promise((resolve) => {
+      execFile(
+        "powershell.exe",
+        ["-NoProfile", "-NoLogo", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
+        { windowsHide: true, timeout: 120000 },
+        (error, stdout, stderr) => {
+          const code = error ? (typeof (error as { code?: unknown }).code === "number" ? (error as { code: number }).code : 1) : 0
+          resolve({ code, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") })
+        },
+      )
+    }),
+}
+
+/*
  * Started by the login item on Windows: the window is made but not shown, as
  * MiMo keeps it in the tray. The tray setting is only known once the window
  * has read the settings, so should it be off the window is shown after all
@@ -330,7 +366,7 @@ const updateTransactions = createTransactions(fileTransactionStore(transactionFi
 void app.whenReady().then(async () => {
   const profile = app.getPath("userData")
   const swept = [
-    ...(await sweepWriterTemps(profile, { names: [BOOT_PREFS_FILE, DISPLAY_SERVER_FILE, LOGIN_ITEM_FILE, WINDOW_STATE_FILE] })),
+    ...(await sweepWriterTemps(profile, { names: [BOOT_PREFS_FILE, DISPLAY_SERVER_FILE, LOGIN_ITEM_FILE, USER_VERIFY_FILE, WINDOW_STATE_FILE] })),
     ...(await sweepWriterTemps(path.dirname(transactionFile), { names: [TRANSACTION_FILE] })),
     ...(await sweepWriterTemps(path.join(profile, "storage"), { names: [COMPOSER_INPUT_FILE], pidOnly: [COMPOSER_INPUT_FILE] })),
   ]
@@ -1737,6 +1773,36 @@ app.whenReady().then(async () => {
     return { ok: true, enabled: writeLaunchAtLogin(app, process.platform, loginItemStore, enabled === true) }
   })
 
+  /*
+   * Windows Hello's reveal gate. The status asks Hello once and remembers the
+   * answer; the switch is written for the next launch and locks this session,
+   * so turning it on makes the next reveal ask; the unlock is the prompt itself.
+   */
+  ipcMain.handle("mcode:user-verify-status", async () => {
+    const supported = userVerifySupported(process.platform)
+    if (!supported) return { supported, requireGate: false, unlocked: false }
+    if (userVerifyAvailable === undefined) userVerifyAvailable = await checkUserVerifyAvailable(userVerifyRunner)
+    return { supported, requireGate: userVerifyRequireGate, unlocked: userVerifySession.unlocked, available: userVerifyAvailable }
+  })
+  ipcMain.handle("mcode:user-verify-set-gate", (_event, enabled: unknown) => {
+    if (!userVerifySupported(process.platform)) return { ok: false, requireGate: false }
+    const next = enabled === true
+    try {
+      writeAtomicSync(userVerifyFile, renderUserVerifyPref(next))
+    } catch (err) {
+      console.warn("[user-verify] the choice could not be saved:", err instanceof Error ? err.message : err)
+    }
+    userVerifyRequireGate = next
+    // Either way the session starts over: turning it on must ask next time, and turning it off has nothing left to unlock.
+    userVerifySession.clear()
+    return { ok: true, requireGate: next }
+  })
+  ipcMain.handle("mcode:user-verify-unlock", async (_event, reason: unknown) => {
+    if (!userVerifySupported(process.platform)) return { ok: false, outcome: "unsupported" }
+    const text = typeof reason === "string" && reason.trim() ? reason.trim().slice(0, 200) : "MCode"
+    return userVerifySession.ensureUnlocked(userVerifyRunner, userVerifyRequireGate, text)
+  })
+
   /* Answers whether the icon took, so Settings can say so or keep the old one (MiMo's setAppIcon). */
   ipcMain.handle("mcode:app-icon", (event, id: unknown) => {
     const window = BrowserWindow.fromWebContents(event.sender)
@@ -1880,6 +1946,13 @@ app.whenReady().then(async () => {
     console.info("[quit] powerMonitor shutdown")
     noteOsQuit()
   })
+
+  /*
+   * The reveal gate is for this session only: a locked screen or a suspend
+   * ends it, so whoever comes back is asked again before credentials show.
+   */
+  powerMonitor.on("lock-screen", () => userVerifySession.clear())
+  powerMonitor.on("suspend", () => userVerifySession.clear())
 
   /*
    * N11-16: waking up. A provider stream that was open when the machine slept

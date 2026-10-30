@@ -382,6 +382,11 @@ const api = {
   launchAtLogin: (): Promise<{ supported: boolean; enabled: boolean }> => ipcRenderer.invoke("mcode:launch-at-login"),
   setLaunchAtLogin: (enabled: boolean): Promise<{ ok: boolean; enabled: boolean }> => ipcRenderer.invoke("mcode:set-launch-at-login", enabled),
 
+  /** Windows Hello's reveal gate: offered on Windows only, and off unless turned on. */
+  userVerifyStatus: (): Promise<{ supported: boolean; requireGate: boolean; unlocked: boolean; available?: string }> => ipcRenderer.invoke("mcode:user-verify-status"),
+  userVerifySetGate: (enabled: boolean): Promise<{ ok: boolean; requireGate: boolean }> => ipcRenderer.invoke("mcode:user-verify-set-gate", enabled),
+  userVerifyUnlock: (reason: string): Promise<{ ok: boolean; outcome?: string; skipped?: boolean }> => ipcRenderer.invoke("mcode:user-verify-unlock", reason),
+
   /** Menu accelerators the renderer turns into in-app commands. */
   onMenu: (handler: (command: string) => void): (() => void) => {
     /*

@@ -1,0 +1,110 @@
+{
+  "zhCN": {
+    "set.userVerify": "显示密钥前验证",
+    "set.userVerifySub": "显示 API Key 和 MCP 密钥前需要 Windows Hello（或 PIN）验证；凭据始终由系统密钥库加密保存。",
+    "set.userVerifyUnavailable": "Windows Hello 或设备解锁不可用",
+    "set.userVerifyFailed": "验证失败"
+  },
+  "zhTW": {
+    "set.userVerify": "顯示密鑰前驗證",
+    "set.userVerifySub": "顯示 API Key 與 MCP 密鑰前需要 Windows Hello（或 PIN）驗證；憑證一律由系統金鑰存放區加密保存。",
+    "set.userVerifyUnavailable": "Windows Hello 或裝置解鎖無法使用",
+    "set.userVerifyFailed": "驗證失敗"
+  },
+  "en": {
+    "set.userVerify": "Windows Hello to reveal secrets",
+    "set.userVerifySub": "Ask for Windows Hello (or your PIN) before showing API keys and MCP secrets; credentials stay sealed by the system store.",
+    "set.userVerifyUnavailable": "Windows Hello or device unlock is not available",
+    "set.userVerifyFailed": "Verification failed"
+  },
+  "ar": {
+    "set.userVerify": "التحقق عبر Windows Hello قبل إظهار المفاتيح",
+    "set.userVerifySub": "يُطلب التحقق عبر Windows Hello (أو رمز PIN) قبل إظهار مفاتيح API وأسرار MCP؛ تبقى بيانات الاعتماد مشفّرة في مخزن النظام.",
+    "set.userVerifyUnavailable": "Windows Hello أو فتح قفل الجهاز غير متاح",
+    "set.userVerifyFailed": "فشل التحقق"
+  },
+  "bs": {
+    "set.userVerify": "Windows Hello za prikaz tajni",
+    "set.userVerifySub": "Prije prikaza API ključeva i MCP tajni traži se Windows Hello (ili PIN); akreditivi ostaju šifrovani u sistemskoj pohrani.",
+    "set.userVerifyUnavailable": "Windows Hello ili otključavanje uređaja nije dostupno",
+    "set.userVerifyFailed": "Verifikacija nije uspjela"
+  },
+  "da": {
+    "set.userVerify": "Windows Hello for at vise hemmeligheder",
+    "set.userVerifySub": "Der kræves Windows Hello (eller din PIN-kode), før API-nøgler og MCP-hemmeligheder vises; legitimationsoplysningerne forbliver krypteret i systemets lager.",
+    "set.userVerifyUnavailable": "Windows Hello eller oplåsning af enheden er ikke tilgængelig",
+    "set.userVerifyFailed": "Verificeringen mislykkedes"
+  },
+  "de": {
+    "set.userVerify": "Windows Hello zum Anzeigen von Geheimnissen",
+    "set.userVerifySub": "Vor dem Anzeigen von API-Schlüsseln und MCP-Geheimnissen wird Windows Hello (oder die PIN) verlangt; die Zugangsdaten bleiben im Systemspeicher verschlüsselt.",
+    "set.userVerifyUnavailable": "Windows Hello oder Geräteentsperrung ist nicht verfügbar",
+    "set.userVerifyFailed": "Bestätigung fehlgeschlagen"
+  },
+  "es": {
+    "set.userVerify": "Windows Hello para mostrar secretos",
+    "set.userVerifySub": "Se pide Windows Hello (o tu PIN) antes de mostrar claves de API y secretos de MCP; las credenciales siguen cifradas en el almacén del sistema.",
+    "set.userVerifyUnavailable": "Windows Hello o el desbloqueo del dispositivo no está disponible",
+    "set.userVerifyFailed": "La verificación ha fallado"
+  },
+  "fr": {
+    "set.userVerify": "Windows Hello pour afficher les secrets",
+    "set.userVerifySub": "Windows Hello (ou votre code PIN) est demandé avant d'afficher les clés d'API et les secrets MCP ; les identifiants restent chiffrés dans le magasin du système.",
+    "set.userVerifyUnavailable": "Windows Hello ou le déverrouillage de l'appareil n'est pas disponible",
+    "set.userVerifyFailed": "Échec de la vérification"
+  },
+  "ja": {
+    "set.userVerify": "シークレット表示前に Windows Hello で確認",
+    "set.userVerifySub": "API キーや MCP のシークレットを表示する前に Windows Hello（または PIN）での確認を求めます。認証情報はシステムのストアで暗号化されたままです。",
+    "set.userVerifyUnavailable": "Windows Hello またはデバイスのロック解除を利用できません",
+    "set.userVerifyFailed": "確認に失敗しました"
+  },
+  "ko": {
+    "set.userVerify": "비밀 정보를 표시하기 전에 Windows Hello 확인",
+    "set.userVerifySub": "API 키와 MCP 비밀 정보를 표시하기 전에 Windows Hello(또는 PIN)를 요구합니다. 자격 증명은 시스템 저장소에 암호화된 상태로 남습니다.",
+    "set.userVerifyUnavailable": "Windows Hello 또는 기기 잠금 해제를 사용할 수 없습니다",
+    "set.userVerifyFailed": "확인에 실패했습니다"
+  },
+  "nb": {
+    "set.userVerify": "Windows Hello for å vise hemmeligheter",
+    "set.userVerifySub": "Windows Hello (eller PIN-koden din) kreves før API-nøkler og MCP-hemmeligheter vises; påloggingsinformasjonen forblir kryptert i systemlageret.",
+    "set.userVerifyUnavailable": "Windows Hello eller opplåsing av enheten er ikke tilgjengelig",
+    "set.userVerifyFailed": "Verifiseringen mislyktes"
+  },
+  "pl": {
+    "set.userVerify": "Windows Hello przy pokazywaniu sekretów",
+    "set.userVerifySub": "Przed pokazaniem kluczy API i sekretów MCP wymagane jest Windows Hello (lub kod PIN); dane logowania pozostają zaszyfrowane w magazynie systemowym.",
+    "set.userVerifyUnavailable": "Windows Hello lub odblokowanie urządzenia jest niedostępne",
+    "set.userVerifyFailed": "Weryfikacja nie powiodła się"
+  },
+  "ptBR": {
+    "set.userVerify": "Windows Hello para revelar segredos",
+    "set.userVerifySub": "O Windows Hello (ou o PIN) é solicitado antes de mostrar chaves de API e segredos do MCP; as credenciais continuam criptografadas no armazenamento do sistema.",
+    "set.userVerifyUnavailable": "O Windows Hello ou o desbloqueio do dispositivo não está disponível",
+    "set.userVerifyFailed": "Falha na verificação"
+  },
+  "ru": {
+    "set.userVerify": "Windows Hello для показа секретов",
+    "set.userVerifySub": "Перед показом ключей API и секретов MCP требуется Windows Hello (или PIN-код); учётные данные остаются зашифрованными в системном хранилище.",
+    "set.userVerifyUnavailable": "Windows Hello или разблокировка устройства недоступны",
+    "set.userVerifyFailed": "Не удалось подтвердить личность"
+  },
+  "th": {
+    "set.userVerify": "ยืนยันด้วย Windows Hello ก่อนแสดงข้อมูลลับ",
+    "set.userVerifySub": "ต้องยืนยันด้วย Windows Hello (หรือ PIN) ก่อนแสดงคีย์ API และข้อมูลลับของ MCP โดยข้อมูลรับรองยังคงถูกเข้ารหัสไว้ในที่เก็บของระบบ",
+    "set.userVerifyUnavailable": "Windows Hello หรือการปลดล็อกอุปกรณ์ไม่พร้อมใช้งาน",
+    "set.userVerifyFailed": "การยืนยันล้มเหลว"
+  },
+  "tr": {
+    "set.userVerify": "Gizli bilgileri göstermek için Windows Hello",
+    "set.userVerifySub": "API anahtarları ve MCP sırları gösterilmeden önce Windows Hello (veya PIN) istenir; kimlik bilgileri sistem deposunda şifreli kalır.",
+    "set.userVerifyUnavailable": "Windows Hello veya cihaz kilidini açma kullanılamıyor",
+    "set.userVerifyFailed": "Doğrulama başarısız oldu"
+  },
+  "uk": {
+    "set.userVerify": "Windows Hello для показу секретів",
+    "set.userVerifySub": "Перед показом ключів API і секретів MCP потрібен Windows Hello (або PIN-код); облікові дані залишаються зашифрованими в системному сховищі.",
+    "set.userVerifyUnavailable": "Windows Hello або розблокування пристрою недоступні",
+    "set.userVerifyFailed": "Не вдалося підтвердити особу"
+  }
+}

@@ -202,6 +202,41 @@ function switchSkillPath(id: SkillPathSource) {
   void app.patchConfig({ skillPaths: { ...compat, [id]: !compat[id] } })
 }
 
+/* Windows Hello reveal gate: optional OS verify before showing secrets (DPAPI still seals at rest). */
+const userVerify = ref({ supported: false, requireGate: false, unlocked: false, available: "" as string })
+async function loadUserVerify() {
+  const status = await window.mcode.userVerifyStatus().catch(() => ({ supported: false, requireGate: false, unlocked: false, available: "" }))
+  userVerify.value = { supported: status.supported, requireGate: status.requireGate, unlocked: status.unlocked, available: status.available ?? "" }
+}
+async function switchUserVerifyGate() {
+  if (!userVerify.value.supported) return
+  const wanted = !userVerify.value.requireGate
+  userVerify.value = { ...userVerify.value, requireGate: wanted }
+  const result = await window.mcode.userVerifySetGate(wanted).catch(() => ({ ok: false, requireGate: !wanted }))
+  userVerify.value = { ...userVerify.value, requireGate: result.requireGate, unlocked: false }
+}
+/** Before showing a secret field: ask OS verify when the gate is on. */
+async function revealSecret(reasonKey = "set.userVerify"): Promise<boolean> {
+  if (!userVerify.value.supported || !userVerify.value.requireGate || userVerify.value.unlocked) return true
+  const result = await window.mcode.userVerifyUnlock(t(reasonKey)).catch(() => ({ ok: false, outcome: "failed" }))
+  if (result.ok) {
+    userVerify.value = { ...userVerify.value, unlocked: true }
+    return true
+  }
+  if (result.outcome === "canceled") return false
+  if (result.outcome === "unavailable" || result.outcome === "unsupported") notifyFailure(t("set.userVerifyUnavailable"))
+  else notifyFailure(t("set.userVerifyFailed"))
+  return false
+}
+async function toggleMcpReveal(slot: string) {
+  if (mcpRevealed.value[slot]) {
+    mcpRevealed.value[slot] = false
+    return
+  }
+  if (!(await revealSecret())) return
+  mcpRevealed.value[slot] = true
+}
+
 /* 开机自启: read from main, which asks the OS; a change shows what the OS then says. */
 const loginItem = ref({ supported: false, enabled: false })
 
@@ -766,7 +801,7 @@ watch(
   (next: Section) => {
     if (next === "files" || next === "mcp") void loadPaths()
     if (next === "files") void loadAgents()
-    if (next === "general") void loadLoginItem()
+    if (next === "general") { void loadLoginItem(); void loadUserVerify() }
     if (next !== "mcp") mcpView.value = "list"
     else void refreshMcp()
     if (next === "environment") void loadTrees()
@@ -1848,6 +1883,24 @@ onBeforeUnmount(() => {
                 <span class="knob" />
               </button>
             </div>
+
+            <div v-if="userVerify.supported" class="line" data-user-verify-row>
+              <div class="line-text">
+                <div class="line-title">{{ t("set.userVerify") }}</div>
+                <div class="line-sub">{{ t("set.userVerifySub") }}</div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: userVerify.requireGate }"
+                role="switch"
+                :aria-checked="userVerify.requireGate"
+                :aria-label="t('set.userVerify')"
+                data-user-verify-gate
+                @click="switchUserVerifyGate"
+              >
+                <span class="knob" />
+              </button>
+            </div>
           </div>
 
           <!-- MiMo's browser group, ahead of voice as MiMo orders them: the in-app browser itself, and what it has stored. -->
@@ -2410,7 +2463,7 @@ onBeforeUnmount(() => {
                   :data-mcp-env-val="at"
                   spellcheck="false"
                 />
-                <button type="button" class="ctl-btn" :data-mcp-env-reveal="at" @click="mcpRevealed[`env:${at}`] = !mcpRevealed[`env:${at}`]">
+                <button type="button" class="ctl-btn" :data-mcp-env-reveal="at" @click="toggleMcpReveal(`env:${at}`)">
                   {{ t(mcpRevealed[`env:${at}`] ? "set.mcpForm.hide" : "set.mcpForm.reveal") }}
                 </button>
                 <button type="button" class="ctl-btn" :data-mcp-env-rm="at" @click="mcpForm.env.splice(at, 1)">
@@ -2436,7 +2489,7 @@ onBeforeUnmount(() => {
                   :data-mcp-header-val="at"
                   spellcheck="false"
                 />
-                <button type="button" class="ctl-btn" :data-mcp-header-reveal="at" @click="mcpRevealed[`hdr:${at}`] = !mcpRevealed[`hdr:${at}`]">
+                <button type="button" class="ctl-btn" :data-mcp-header-reveal="at" @click="toggleMcpReveal(`hdr:${at}`)">
                   {{ t(mcpRevealed[`hdr:${at}`] ? "set.mcpForm.hide" : "set.mcpForm.reveal") }}
                 </button>
                 <button type="button" class="ctl-btn" :data-mcp-header-rm="at" @click="mcpForm.headers.splice(at, 1)">
