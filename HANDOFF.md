@@ -221,6 +221,13 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 续六十：项目重命名 fail-closed；导出日志失败可见；Android 附件全失败 Toast（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- Windows：`submitProjectRename` 同名校验与 `patchConfig` 失败时保留对话框；成功才关闭。`exportLog` 失败走 `reportSaveFailure(toast.exportFailed)`（对齐 `shareSession`）。
+- Android：文件选择器全部读失败时 Toast「没有附上文件」。
+- 验证：smoke「Review polish r127」；未合并。
+
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
 Pad 9 Pro Max（`M367FC`）接上后，第一次把「平板发指令 → 主机跑模型 → 回复回画到平板」整条链路走通。

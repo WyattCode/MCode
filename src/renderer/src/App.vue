@@ -421,14 +421,19 @@ async function submitSessionRename(title: string) {
 /* MiMo's project rename: another project already under that name is refused, and the new name is said. */
 async function submitProjectRename(name: string) {
   const directory = renamingProject.value
-  renamingProject.value = undefined
   if (!directory) return
   const names = app.config?.projectNames ?? {}
   if (app.projects.some((other) => other !== directory && projectName(other, names) === name)) {
     notifyFailure(t("toast.projectNameTaken", { name }))
     return
   }
-  await app.patchConfig({ projectNames: { ...names, [directory]: name } })
+  try {
+    await app.patchConfig({ projectNames: { ...names, [directory]: name } })
+  } catch {
+    // patchConfig already toasts; keep the dialog open so the typed name is not lost.
+    return
+  }
+  renamingProject.value = undefined
   notify(t("toast.projectRenamedTo", { name }), { level: "success" })
 }
 
@@ -487,8 +492,12 @@ async function exportLog() {
     "",
   ]
   const body = logLines.length ? logLines : [t("log.empty")]
-  const saved = await saveText("mcode-log.txt", [...header, ...body].join("\n"))
-  if (saved) notify(t("log.saved"), { action: revealAction(saved) })
+  try {
+    const saved = await saveText("mcode-log.txt", [...header, ...body].join("\n"))
+    if (saved) notify(t("log.saved"), { action: revealAction(saved) })
+  } catch (failure) {
+    reportSaveFailure(t("toast.exportFailed"), failure)
+  }
 }
 
 /**
