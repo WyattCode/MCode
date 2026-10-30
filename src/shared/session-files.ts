@@ -14,8 +14,8 @@ export interface SessionFiles {
   read: FileTouch[]
 }
 
-/** Tools whose `path` input names a file they changed. */
-const WRITERS = new Set(["write", "edit"])
+/** Tools whose path / file_path / notebook_path input names a file they changed. */
+const WRITERS = new Set(["write", "edit", "notebook_edit"])
 
 /**
  * What a conversation has produced and what it has looked at.
@@ -49,8 +49,8 @@ export function sessionFiles(messages: readonly Message[], directory: string): S
       const part = parts[at] as Partial<ToolPart>
       if (part.type !== "tool" || part.status !== "completed" || !part.name) continue
       const when = part.time?.completed ?? part.time?.created ?? message.time.created
-      // `file_path` since the tools took MiMo's names; `path` on turns stored before.
-      const target = part.input?.file_path ?? part.input?.path
+      // `file_path` since the tools took MiMo's names; `path` on turns stored before; notebooks use `notebook_path`.
+      const target = part.input?.file_path ?? part.input?.path ?? part.input?.notebook_path
       if (WRITERS.has(part.name)) {
         if (typeof target === "string") add(written, seenWritten, target, when)
       } else if (part.name === "patch") {

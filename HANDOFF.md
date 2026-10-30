@@ -435,6 +435,13 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - Android：会话长按表 压缩/撤销/归档 先清 sheetTarget 再 request；顶栏撤销/重做 rpcOrThrow + Toast。
 - 桌面：完整权限确认用 pendingFullFor 锁定打开时的会话（含首页 null）。
 - 验证：smoke「Review polish r91」；未合并。
+### 续二十五：笔记本改动进文件表/产物、编辑重发失败提示（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/123
+- 桌面：`files-tab` EDITING + `editTargets` 认 notebook_edit/patch/`notebook_path`；`session-files` 把 notebook_edit 记入 written。
+- Android：编辑并重发在 prompt 失败时 Toast「没能重新发送，请重试」。
+- 验证：smoke「Review polish r92」；未合并。
+
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 

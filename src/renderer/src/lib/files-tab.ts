@@ -86,13 +86,17 @@ export function relativeTo(root: string, file: string): string {
   return inside ? target.slice(base.length + 1) : target.replace(/^\.\//, "")
 }
 
-const EDITING = new Set(["edit", "write"])
+const EDITING = new Set(["edit", "write", "notebook_edit", "patch"])
 
-/* Every file one edit, write or patch call names, by its input and by the diff it recorded. */
+/* Every file one edit, write, notebook_edit or patch call names, by its input and by the diff it recorded. */
 export function editTargets(part: ToolPart): string[] {
   const out = new Set<string>()
-  // `file_path` since the tools took MiMo's names; `path` on turns stored before.
-  const named = part.input?.file_path ?? part.input?.path
+  // `file_path` since the tools took MiMo's names; `path` on older turns; notebooks use `notebook_path`.
+  const named =
+    part.input?.file_path ??
+    part.input?.path ??
+    part.input?.notebook_path ??
+    (typeof part.metadata?.path === "string" ? part.metadata.path : undefined)
   if (typeof named === "string" && named) out.add(named)
   const diff = part.metadata?.diff
   if (typeof diff === "string") for (const section of parseUnifiedDiff(diff)) if (section.file) out.add(section.file)
@@ -100,7 +104,7 @@ export function editTargets(part: ToolPart): string[] {
 }
 
 export interface EditCounts {
-  /* Finished edit, write and patch calls across the conversation. */
+  /* Finished edit, write, notebook_edit and patch calls across the conversation. */
   total: number
   /* Those that touched the file on show. */
   onFile: number
