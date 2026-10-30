@@ -193,12 +193,12 @@ function startClone(provider: ProviderStatus) {
 
 async function confirmClone(id: string) {
   const source = cloning.value
-  cloning.value = undefined
   if (!source) return
   try {
     const made = await app.copyCustomProvider(source.id, t("set.models.copyName", { name: source.name }), id)
     selected.value = made
     notify(t("set.models.copied"), { level: "success" })
+    cloning.value = undefined
   } catch {
     notifyFailure(t("set.models.copyFailed"))
   }

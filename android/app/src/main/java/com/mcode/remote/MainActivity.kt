@@ -4941,7 +4941,16 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                     MenuRow(label = "撤销上一回合的改动", onClick = {
                                             headerMenu = false
                                             currentSession?.let { sid ->
-                                                request(JSONObject().put("type", "session.undo").put("sessionID", sid))
+                                                scope.launch {
+                                                    try {
+                                                        rpcOrThrow(JSONObject().put("type", "session.undo").put("sessionID", sid))
+                                                    } catch (e: Exception) {
+                                                        if (e is kotlinx.coroutines.CancellationException) throw e
+                                                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                                            Toast.makeText(context, "没能撤销", Toast.LENGTH_SHORT).show()
+                                                        }
+                                                    }
+                                                }
                                             }
                                         })
                                     MenuRow(label = "重做撤销", onClick = {
