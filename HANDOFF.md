@@ -571,6 +571,13 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
 - 桌面：`voice.transcribe` 空回复 → `reportVoiceStatus`/`showVoiceFailure`/`stopVoice`；`agents.ensure` 空回复 → `notifyFailure`；开机自启 `!ok` → `notifyFailure`。
 - 验证：smoke「Review polish r116」；未合并。
+### 续五十：平板项目页走真实 RPC；手机重命名/移除失败可见；桌面新建项目空结果提示（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/148 （未合并）
+- Android 宽屏嵌入 `ProjectsScreen`：createBlank/add/rename/remove 从本地假状态改为 `rpcOrThrow` + Toast；`project.add` 键改为 `directory`。
+- Android 窄屏：`onRename`/`onRemove` 失败不再静默/假成功。
+- Windows：`createNamedProject` 在 client 空回复时 `notifyFailure(menu.createFailed)`。
+- 验证：smoke「Review polish r117」；未合并。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 

@@ -1927,7 +1927,10 @@ async function createNamedProject(title: string, source?: string) {
       return
     }
   }
-  if (!directory) return
+  if (!directory) {
+    notifyFailure(t("menu.createFailed", { error: t("common.requestFailed") }))
+    return
+  }
   if (source && title !== folderName(source)) {
     await app.patchConfig({ projectNames: { ...(app.config?.projectNames ?? {}), [source]: title } })
   }

@@ -3021,6 +3021,34 @@ async function main() {
     const ensure = ensureAt >= 0 ? settings.slice(ensureAt, ensureAt + 360) : ""
     check("r116: agents.ensure null toasts", ensure.includes("set.agents.openFailed") && ensure.includes("notifyFailure"))
     check("r116: agents.ensure no silent return", ensureAt >= 0 && !ensure.includes("if (!result) return"))
+  section("Review polish r117")
+  {
+    const root = process.cwd()
+    const main = await fs.readFile(path.join(root, "android/app/src/main/java/com/mcode/remote/MainActivity.kt"), "utf8")
+    const embAt = main.indexOf("LeftMode.Projects -> ProjectsScreen(")
+    const emb = embAt >= 0 ? main.slice(embAt, embAt + 9000) : ""
+    check("r117: pad createBlank uses rpcOrThrow", emb.includes('rpcOrThrow(JSONObject().put("type", "project.createBlank")'))
+    check("r117: pad createBlank no local projects.add(name)", !emb.includes("projects.add(name)"))
+    check("r117: pad addFolder uses directory key", emb.includes('put("type", "project.add").put("directory", directory)'))
+    check("r117: pad addFolder no path key", !emb.includes('put("type", "project.add").put("path", path)'))
+    check("r117: pad rename fail toast", emb.includes("重命名失败"))
+    check("r117: pad remove fail toast", emb.includes("移除失败"))
+    check("r117: pad remove rpcOrThrow", emb.includes('rpcOrThrow(JSONObject().put("type", "project.remove")'))
+
+    const compactRenameAt = main.indexOf("onRename = { directory, name ->")
+    const compactRename = compactRenameAt >= 0 ? main.slice(compactRenameAt, compactRenameAt + 1100) : ""
+    check("r117: phone rename toasts failure", compactRename.includes("重命名失败") && compactRename.includes("rpcOrThrow"))
+    const compactRemoveAt = main.indexOf("onRemove = { directory ->")
+    const compactRemove = compactRemoveAt >= 0 ? main.slice(compactRemoveAt, compactRemoveAt + 800) : ""
+    check("r117: phone remove fail-closed", compactRemove.includes("移除失败") && compactRemove.includes('if (ok) "已移除项目"'))
+
+    const appVue = await fs.readFile(path.join(root, "src/renderer/src/App.vue"), "utf8")
+    const createAt = appVue.indexOf("async function createNamedProject")
+    const create = createAt >= 0 ? appVue.slice(createAt, createAt + 900) : ""
+    const nullAt = create.indexOf("if (!directory)")
+    const nullBlock = nullAt >= 0 ? create.slice(nullAt, nullAt + 260) : ""
+    check("r117: createNamedProject null toasts", nullBlock.includes("notifyFailure") && nullBlock.includes("menu.createFailed"))
+    check("r117: createNamedProject opens block", nullBlock.includes("if (!directory) {"))
   }
 
   section("Permission guide")
