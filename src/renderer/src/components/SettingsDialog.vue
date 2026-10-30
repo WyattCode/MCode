@@ -127,9 +127,14 @@ watch(savedInstructions, (next: string) => {
 
 async function saveInstructions() {
   const text = draft.value.trim()
-  await app.patchConfig({ instructions: text })
-  draft.value = text
-  notify(t("set.instructionsSaved"))
+  try {
+    await app.patchConfig({ instructions: text })
+    draft.value = text
+    notify(t("set.instructionsSaved"))
+  } catch {
+    // patchConfig already toasts prefSaveFailed; leave the draft as typed.
+    return
+  }
 }
 
 /* This app's own files, and the open project's instruction files. */
