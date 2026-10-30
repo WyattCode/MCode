@@ -481,6 +481,7 @@ async function setMcpEnabled(name: string, enabled: boolean) {
     await app.patchConfig({ mcpServers: { ...(app.config?.mcpServers ?? {}), [name]: { ...entry, enabled } } }, { quiet: true })
   } catch (err) {
     notifyFailure(t("set.mcp.toggleFailed"), reasonText(err))
+    return
   }
   delete mcpTools.value[name]
   void refreshMcp()

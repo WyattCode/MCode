@@ -2145,6 +2145,44 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r134")
+  {
+    const root = process.cwd()
+    const { readFile } = await import("node:fs/promises")
+    const form = await readFile(`${root}/src/renderer/src/components/CustomProviderForm.vue`, "utf8")
+    const rmAt = form.indexOf("async function confirmRemoveModel")
+    const rmEnd = form.indexOf("/* ------------------------------------------------------------ limits", rmAt)
+    const rm = rmAt >= 0 && rmEnd > rmAt ? form.slice(rmAt, rmEnd) : ""
+    check("r134: confirmRemoveModel keeps dialog until done", !/removingModel\.value = undefined\n  if \(!row\)/.test(rm))
+    check("r134: confirmRemoveModel try/await removeCustomModel", rm.includes("await app.removeCustomModel") && rm.includes("try {"))
+    check("r134: confirmRemoveModel notice.danger on failure", rm.includes("notice.danger") && rm.includes("set.models.removeFailed"))
+    check("r134: confirmRemoveModel no then-true-false swallow", !rm.includes(".then(() => true, () => false)"))
+    check(
+      "r134: confirmRemoveModel clears dialog after form filter",
+      rm.includes("removingModel.value = undefined") && rm.lastIndexOf("removingModel.value = undefined") > rm.indexOf("form.value.models"),
+    )
+
+    const settings = await readFile(`${root}/src/renderer/src/components/SettingsDialog.vue`, "utf8")
+    const mcpAt = settings.indexOf("async function setMcpEnabled")
+    const mcpEnd = settings.indexOf("const codeModeOf", mcpAt)
+    const mcp = mcpAt >= 0 && mcpEnd > mcpAt ? settings.slice(mcpAt, mcpEnd) : ""
+    const mcpNorm = mcp.replace(/\r\n/g, "\n")
+    check(
+      "r134: setMcpEnabled returns after catch before wipe",
+      mcpNorm.includes('notifyFailure(t("set.mcp.toggleFailed"), reasonText(err))\n    return'),
+    )
+
+    const models = await readFile(`${root}/src/renderer/src/components/ModelsPage.vue`, "utf8")
+    const crAt = models.indexOf("async function confirmRemove()")
+    const crEnd = models.indexOf("/* MiMo 26.920", crAt)
+    const cr = crAt >= 0 && crEnd > crAt ? models.slice(crAt, crEnd) : ""
+    check("r134: ModelsPage confirmRemove no clear before try", !/removing\.value = undefined\n  if \(!target\)/.test(cr))
+    check(
+      "r134: ModelsPage confirmRemove clears after ensureUsableModel",
+      cr.includes("removing.value = undefined") && cr.lastIndexOf("removing.value = undefined") > cr.indexOf("ensureUsableModel"),
+    )
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }
