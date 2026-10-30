@@ -197,9 +197,13 @@ const skillPathRows = computed(() => {
   ]
 })
 
-function switchSkillPath(id: SkillPathSource) {
+async function switchSkillPath(id: SkillPathSource) {
   const compat = skillPathCompat(app.config?.skillPaths)
-  void app.patchConfig({ skillPaths: { ...compat, [id]: !compat[id] } })
+  try {
+    await app.patchConfig({ skillPaths: { ...compat, [id]: !compat[id] } }, { quiet: true })
+  } catch (err) {
+    notifyFailure(t("common.requestFailed"), reasonText(err))
+  }
 }
 
 /* 开机自启: read from main, which asks the OS; a change shows what the OS then says. */

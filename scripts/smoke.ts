@@ -2145,6 +2145,57 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r150")
+  {
+    const { readFileSync } = await import("node:fs")
+    const { join } = await import("node:path")
+    const root = process.cwd()
+    const snap = readFileSync(join(root, "src/server/session/snapshot.ts"), "utf8")
+    const ledgerAt = snap.indexOf("private ledger(directory: string)")
+    const ledger = ledgerAt >= 0 ? snap.slice(ledgerAt, ledgerAt + 2200) : ""
+    check(
+      "r150: writers ledger corrupt quarantines or marks unreadable",
+      ledger.includes("await quarantine(file)") &&
+        ledger.includes("this.unreadableLedgers.add(file)") &&
+        !ledger.includes("rebuilt from the next turn rather than standing"),
+    )
+    check(
+      "r150: snapshot imports quarantine",
+      /import \{[\s\S]*quarantine[\s\S]*\} from ["']\.\.\/storage["']/.test(snap),
+    )
+
+    const catalog = readFileSync(join(root, "src/server/provider/models-dev.ts"), "utf8")
+    check(
+      "r150: models-dev cacheWriteBlocked + mayWriteCache",
+      catalog.includes("cacheWriteBlocked") &&
+        catalog.includes("mayWriteCache") &&
+        catalog.includes("await quarantine(this.options.cacheFile)"),
+    )
+    check(
+      "r150: models-dev update refuses write when blocked",
+      catalog.includes("if (!(await this.mayWriteCache()))") &&
+        catalog.includes("publish(await this.compose(next))"),
+    )
+    check(
+      "r150: models-dev readCache marks unreadable",
+      catalog.includes('code !== "ENOENT"') && catalog.includes("this.cacheWriteBlocked = true"),
+    )
+
+    const settings = readFileSync(join(root, "src/renderer/src/components/SettingsDialog.vue"), "utf8")
+    const skillAt = settings.indexOf("async function switchSkillPath")
+    const skill = skillAt >= 0 ? settings.slice(skillAt, skillAt + 500) : ""
+    check(
+      "r150: switchSkillPath await + notifyFailure",
+      skill.includes("await app.patchConfig") &&
+        skill.includes('notifyFailure(t("common.requestFailed")') &&
+        skill.includes("{ quiet: true }"),
+    )
+    check(
+      "r150: switchSkillPath no void fire-and-forget",
+      !skill.includes("void app.patchConfig"),
+    )
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }
