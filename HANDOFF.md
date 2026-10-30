@@ -566,6 +566,11 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - PR: https://github.com/WyattCode/MCode/pull/146 （未合并）
 - Windows：`InfoCommitCard` 在 `git.push` / `git.commit` 无应答时写入 error，不再静默 return；`HomeHero.useWorktree` 加入项目失败 Toast 且不 choose；`createBlank` 无应答 Toast「创建失败」。
 - 验证：smoke「Review polish r115」；未合并。
+### 续四十九：语音转写空回复、打开 AGENTS、开机自启失败提示（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- 桌面：`voice.transcribe` 空回复 → `reportVoiceStatus`/`showVoiceFailure`/`stopVoice`；`agents.ensure` 空回复 → `notifyFailure`；开机自启 `!ok` → `notifyFailure`。
+- 验证：smoke「Review polish r116」；未合并。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 

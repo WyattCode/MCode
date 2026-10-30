@@ -249,6 +249,7 @@ async function switchLaunchAtLogin() {
   loginItem.value = { ...loginItem.value, enabled: wanted }
   const result = await window.mcode.setLaunchAtLogin(wanted).catch(() => ({ ok: false, enabled: !wanted }))
   loginItem.value = { ...loginItem.value, enabled: result.enabled }
+  if (!result.ok) notifyFailure(t("common.requestFailed"))
 }
 
 async function loadAgents() {
@@ -258,7 +259,10 @@ async function loadAgents() {
 async function openAgents() {
   try {
     const result = await app.client?.request({ type: "agents.ensure" })
-    if (!result) return
+    if (!result) {
+      notifyFailure(t("set.agents.openFailed") + t("common.requestFailed"))
+      return
+    }
     agents.value = result
     const cut = Math.max(result.path.lastIndexOf("/"), result.path.lastIndexOf("\\"))
     const failure = await window.mcode.openFile(result.path.slice(0, cut), result.path.slice(cut + 1))

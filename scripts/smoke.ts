@@ -3000,6 +3000,27 @@ async function main() {
     const blankAt = home.indexOf('type: "project.createBlank"')
     const blank = blankAt >= 0 ? home.slice(blankAt, blankAt + 320) : ""
     check("HomeHero createBlank null toasts", blank.includes("home.blankFailed") && blank.includes("common.requestFailed"))
+  section("Review polish r116")
+  {
+    const root = process.cwd()
+    const composer = await fs.readFile(path.join(root, "src/renderer/src/components/Composer.vue"), "utf8")
+    const hearAt = composer.indexOf("async function hearSegment")
+    const hear = hearAt >= 0 ? composer.slice(hearAt, hearAt + 2600) : ""
+    const nullAt = hear.indexOf("if (!result)")
+    const nullBlock = nullAt >= 0 ? hear.slice(nullAt, nullAt + 260) : ""
+    check("r116: voice null reports failed", nullBlock.includes('reportVoiceStatus("failed")'))
+    check("r116: voice null shows failure", nullBlock.includes('showVoiceFailure({ key: "voice.failed" })'))
+    check("r116: voice null stops recording", nullBlock.includes("stopVoice(run)"))
+    check("r116: voice null is not silent return", nullAt >= 0 && !nullBlock.includes("if (!result) return"))
+
+    const settings = await fs.readFile(path.join(root, "src/renderer/src/components/SettingsDialog.vue"), "utf8")
+    const launchAt = settings.indexOf("async function switchLaunchAtLogin")
+    const launch = launchAt >= 0 ? settings.slice(launchAt, launchAt + 600) : ""
+    check("r116: launch-at-login toasts on !ok", launch.includes("if (!result.ok)") && launch.includes("notifyFailure"))
+    const ensureAt = settings.indexOf('request({ type: "agents.ensure" })')
+    const ensure = ensureAt >= 0 ? settings.slice(ensureAt, ensureAt + 360) : ""
+    check("r116: agents.ensure null toasts", ensure.includes("set.agents.openFailed") && ensure.includes("notifyFailure"))
+    check("r116: agents.ensure no silent return", ensureAt >= 0 && !ensure.includes("if (!result) return"))
   }
 
   section("Permission guide")
