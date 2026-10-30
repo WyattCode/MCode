@@ -2145,6 +2145,29 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r113")
+  {
+    const { readFileSync } = await import("node:fs")
+    const main = readFileSync(
+      process.cwd() + "/android/app/src/main/java/com/mcode/remote/MainActivity.kt",
+      "utf8",
+    )
+    const authAt = main.indexOf('JSONObject().put("type", "provider.auth")')
+    const auth = authAt >= 0 ? main.slice(Math.max(0, authAt - 500), authAt + 1600) : ""
+    check("r113: provider.auth uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,160}provider\.auth/.test(auth))
+    check("r113: provider.auth refreshes onSuccess", auth.includes("onSuccess") && auth.includes("providers = fresh"))
+    check("r113: provider.auth toasts on failure", auth.includes("密钥没有保存成功"))
+    check("r113: provider.auth no plain rpc(", !/\brpc\(JSONObject\(\)\.put\("type", "provider\.auth"\)/.test(auth))
+    const msgAt = main.indexOf('JSONObject().put("type", "git.commitMessage")')
+    const msg = msgAt >= 0 ? main.slice(Math.max(0, msgAt - 200), msgAt + 500) : ""
+    check("r113: git.commitMessage uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,120}git\.commitMessage/.test(msg))
+    check("r113: git.commitMessage toasts blank", msg.includes("没能生成提交说明") || main.includes("没能生成提交说明"))
+    const commitAt = main.indexOf('JSONObject().put("type", "git.commit")')
+    const commit = commitAt >= 0 ? main.slice(Math.max(0, commitAt - 200), commitAt + 700) : ""
+    check("r113: git.commit uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,160}git\.commit"/.test(commit))
+    check("r113: git.commit keeps data.ok gate", commit.includes('optBoolean("ok")'))
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }
