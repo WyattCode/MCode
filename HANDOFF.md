@@ -694,6 +694,11 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - PR: https://github.com/WyattCode/MCode/pull/169 （未合并）
 - Windows：`InfoCommitCard.commit` 在 `git.commitMessage` 空/失败时设 `error` 并返回，不再默写 `"update"` 提交；`ModelsPage.saveEndpoint` / `SettingsDialog.saveInstructions` 对 `patchConfig` 加 try/catch，仅成功后清草稿并 toast「已保存」。
 - 验证：slice smoke「Review polish r138」；未合并。
+### 续七十二：环境页项目改名/项目根目录保存失败不假成功；分叉回源失败可见（2026-10-30）
+
+- PR: （打开后填入；未合并）
+- Windows：`SettingsDialog.saveEnv` / `pickProjectRoot` / `resetProjectRoot` 对 `patchConfig` 加 try/catch，仅成功后 toast；`MessageStream.backToSource` 对 `app.open` 加 try/catch，失败 `notifyFailure(common.requestFailed)`。
+- 验证：slice smoke「Review polish r139」；未合并。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
