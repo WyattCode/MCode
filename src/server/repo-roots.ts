@@ -55,6 +55,7 @@ export class RepoRoots {
   private readonly entries = new Map<string, Entry>()
   private loaded: Promise<void> | undefined
   private saving: ReturnType<typeof setTimeout> | undefined
+  private blocked: string | undefined
 
   constructor(
     private readonly storage?: Storage,
@@ -63,7 +64,28 @@ export class RepoRoots {
 
   private load(): Promise<void> {
     this.loaded ??= (async () => {
-      const stored = await this.storage?.read<{ v?: number; e?: Record<string, Partial<Entry>> }>(CACHE_KEY).catch(() => undefined)
+      if (!this.storage) return
+      const read = await this.storage.readOrCorrupt<{ v?: number; e?: Record<string, Partial<Entry>> }>(CACHE_KEY)
+      /*
+       * A cache the disk would not hand over is whole, not damaged, so it is
+       * neither moved aside nor written over: the answers are asked for again
+       * this run rather than replacing a file that may still be readable.
+       */
+      if (read.unreadable) {
+        this.blocked = read.unreadable
+        console.warn(`[repo-roots] the cache could not be read (${read.unreadable}); nothing is saved over it`)
+        return
+      }
+      if (read.corrupt) {
+        const aside = await this.storage.quarantine(CACHE_KEY)
+        if (aside === undefined) {
+          this.blocked = read.corrupt
+          console.warn(`[repo-roots] the cache is damaged and could not be moved aside; nothing is saved over it`)
+          return
+        }
+        console.warn(`[repo-roots] the cache was damaged; the file was kept as ${aside}`)
+      }
+      const stored = read.value
       for (const [directory, entry] of Object.entries(stored?.e ?? {})) {
         if (!directory || !entry || typeof entry !== "object") continue
         const root = typeof entry.root === "string" ? entry.root : null
@@ -76,7 +98,7 @@ export class RepoRoots {
   }
 
   private save(): void {
-    if (!this.storage || this.saving) return
+    if (!this.storage || this.saving || this.blocked) return
     this.saving = setTimeout(() => {
       this.saving = undefined
       const e: Record<string, Entry> = {}

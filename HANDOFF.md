@@ -221,6 +221,12 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 续七十八：remote-token / repo-roots 损坏拒覆写（2026-10-30）
+- PR: https://github.com/WyattCode/MCode/pull/176 （未合并）
+- Windows：`loadOrCreateToken` 对 unreadable/quarantine-fail 的 `remote-token.json` 拒写并抛错，避免静默换令牌导致安卓配对失效；corrupt 先 quarantine 再发新令牌。
+- `RepoRoots` 对 unreadable/quarantine-fail 的 `repo-roots-cache` 设 `blocked` 拒写。
+- 验证：slice smoke「Review polish r145」；未合并。
+
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
 Pad 9 Pro Max（`M367FC`）接上后，第一次把「平板发指令 → 主机跑模型 → 回复回画到平板」整条链路走通。

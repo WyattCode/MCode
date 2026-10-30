@@ -2145,6 +2145,17 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r145")
+  {
+    const token = readFileSync(path.join(root, "src/server/remote/token.ts"), "utf8")
+    check("remote token refuses an unreadable file", token.includes("could not be read") && token.includes("throw new Error"))
+    check("remote token quarantines a damaged file", token.includes("renameSync(file, aside)") && token.includes(".corrupt-"))
+    check("remote token no longer overwrites", !token.includes("Fallen through to a fresh one below; the old file is overwritten."))
+    const roots = readFileSync(path.join(root, "src/server/repo-roots.ts"), "utf8")
+    check("repo roots block a cache it cannot read", roots.includes("private blocked: string | undefined") && roots.includes("readOrCorrupt"))
+    check("repo roots refuse to save while blocked", roots.includes("this.saving || this.blocked"))
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }
