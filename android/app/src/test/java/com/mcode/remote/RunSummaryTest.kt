@@ -95,6 +95,12 @@ class RunSummaryTest {
         assertEquals("已读取 1 个文件", summary(tool("read", uid = "r1")))
     }
 
+    /** A notebook_edit is an edit, not a generic 操作. */
+    @Test
+    fun notebookEditIsAnEdit() {
+        assertEquals("已编辑 1 个文件", summary(tool("notebook_edit", "nb.ipynb", "n1")))
+    }
+
     /** Anything outside the four known buckets is an 操作. */
     @Test
     fun unknownToolsAreOperations() {

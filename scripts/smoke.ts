@@ -232,7 +232,7 @@ import { reachOf } from "../src/server/tool/registry"
 import { SUBAGENT_TIMERS, isStalled, noticeText, subagentAnswer, subagentOutput, subagentTone, actorAction, answerSummary, readLegacyMessage, statusHeader } from "../src/shared/subagent"
 import { STRUCTURED_REMINDER } from "../src/server/tool/subagent"
 import { COMPLETED_CAP, isPill, noticeStatus, pillStatus, subagentItems, subagentTime } from "../src/renderer/src/lib/subagents"
-import { stepTitle as subagentStepTitle, stepVerb as subagentStepVerb } from "../src/renderer/src/lib/tool-meta"
+import { stepTitle as subagentStepTitle, stepVerb as subagentStepVerb, bucketOf as polishBucketOf, opensPath as polishOpensPath, stepTitle as polishStepTitle, toolVerb as polishToolVerb } from "../src/renderer/src/lib/tool-meta"
 import type { SessionInfo as SubagentSession, SubagentNotice, SubagentNoticeStatus } from "../src/shared/protocol"
 // round 4: MiMo's built-in window tools and the pieces the window uses.
 import type { PresentSkip, PresentedFile } from "../src/server/tool/present"
@@ -2251,12 +2251,14 @@ async function main() {
     // Walk up from cwd so a smoke runner started in scripts/ still finds sources.
   section("Review polish r88")
   section("Review polish r92")
+  section("Review polish r93")
   {
     let root = process.cwd()
     for (let i = 0; i < 6; i++) {
       try {
         await fs.access(path.join(root, "src/renderer/src/components/Composer.vue"))
         await fs.access(path.join(root, "src/renderer/src/lib/files-tab.ts"))
+        await fs.access(path.join(root, "src/renderer/src/lib/tool-meta.ts"))
         break
       } catch {
         root = path.dirname(root)
@@ -2564,6 +2566,48 @@ async function main() {
     check("edit-resend sends session.prompt", promptAt >= 0)
     const afterPrompt = promptAt < 0 ? "" : editRegion.slice(promptAt, promptAt + 450)
     check("edit-resend toasts when prompt fails", afterPrompt.includes("onFailure") && afterPrompt.includes("没能重新发送"), afterPrompt)
+    const toolMeta = await fs.readFile(path.join(root, "src/renderer/src/lib/tool-meta.ts"), "utf8")
+    const aiTouch = await fs.readFile(path.join(root, "src/renderer/src/lib/ai-touch.ts"), "utf8")
+    const checkpoint = await fs.readFile(path.join(root, "src/server/session/patch-checkpoint.ts"), "utf8")
+    const activity = await fs.readFile(path.join(root, "android/app/src/main/java/com/mcode/remote/MainActivity.kt"), "utf8")
+    const summaryTest = await fs.readFile(path.join(root, "android/app/src/test/java/com/mcode/remote/RunSummaryTest.kt"), "utf8")
+
+    check("SPEAKS_AS maps notebook_edit to edit", /SPEAKS_AS[\s\S]*?notebook_edit\s*:\s*"edit"/.test(toolMeta))
+    check("notebook_edit speaks as edit", polishToolVerb("notebook_edit", "completed") === polishToolVerb("edit", "completed"))
+    check("notebook_edit buckets as edit", polishBucketOf("notebook_edit") === "edit")
+    check("notebook_edit opens a path", polishOpensPath("notebook_edit"))
+    const nbTitle = polishStepTitle({
+      type: "tool",
+      id: "t1",
+      callID: "c1",
+      name: "notebook_edit",
+      status: "completed",
+      input: { notebook_path: "nb.ipynb" },
+      metadata: {},
+      time: { created: 1, completed: 2 },
+    } as never)
+    check("stepTitle prefers notebook_path", nbTitle.includes("nb.ipynb"), nbTitle)
+
+    const noteAt = aiTouch.indexOf("export function noteToolWrites")
+    const noteFn = noteAt < 0 ? "" : aiTouch.slice(noteAt, noteAt + 900)
+    check("ai-touch notes notebook_edit", noteFn.includes("notebook_edit") && noteFn.includes("notebook_path"), noteFn.slice(0, 200))
+
+    check("checkpoint EDIT_TOOLS includes notebook_edit", /EDIT_TOOLS = new Set\([^\]]*notebook_edit/.test(checkpoint))
+    check("checkpoint readPath includes notebook_path", checkpoint.includes('"notebook_path"'))
+
+    const verbAt = activity.indexOf("fun toolVerbOf")
+    const verbFn = verbAt < 0 ? "" : activity.slice(verbAt, verbAt + 500)
+    check("Android toolVerbOf maps notebook_edit to edit", /"notebook_edit"\s*->\s*"edit"|"edit".*"notebook_edit"/.test(verbFn) || verbFn.includes('"notebook_edit"'), verbFn.slice(0, 200))
+    const bucketAt = activity.indexOf("private fun bucketOf")
+    const bucketFn = bucketAt < 0 ? "" : activity.slice(bucketAt, bucketAt + 350)
+    check("Android bucketOf lists notebook_edit under Edit", bucketFn.includes("notebook_edit"), bucketFn)
+    const touchAt = activity.indexOf("private fun touchedPathOf")
+    const touchFn = touchAt < 0 ? "" : activity.slice(touchAt, touchAt + 500)
+    check("Android touchedPathOf reads notebook_path", touchFn.includes("notebook_path"), touchFn.slice(0, 200))
+    const markAt = activity.indexOf("fun StepMark")
+    const markFn = markAt < 0 ? "" : activity.slice(markAt, markAt + 400)
+    check("Android StepMark maps notebook_edit to edit", markFn.includes("notebook_edit"), markFn.slice(0, 200))
+    check("RunSummaryTest covers notebook_edit", summaryTest.includes("notebook_edit") && summaryTest.includes("notebookEditIsAnEdit"))
   }
 
   section("Permission guide")

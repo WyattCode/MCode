@@ -8,7 +8,7 @@ const CHECKPOINT_NOTE = [
   "If something blocks the change, say what in one line instead.",
 ].join(" ")
 
-const EDIT_TOOLS = new Set(["edit", "write", "multiedit", "patch", "apply_patch"])
+const EDIT_TOOLS = new Set(["edit", "write", "multiedit", "patch", "apply_patch", "notebook_edit"])
 const FIX_INTENT = /\b(fix|change|replace|should be|instead of|the bug|is wrong|patch)\b/i
 
 function lastUserIndex(history: readonly Message[]): number {
@@ -66,7 +66,7 @@ function hasCompletedEdit(parts: readonly ToolPart[]): boolean {
 function readPath(part: ToolPart): string | undefined {
   const input = part.input as Record<string, unknown> | undefined
   if (!input) return undefined
-  for (const key of ["file_path", "filePath", "path"]) {
+  for (const key of ["file_path", "filePath", "path", "notebook_path"]) {
     const value = input[key]
     if (typeof value === "string" && value.trim()) return value.trim()
   }
