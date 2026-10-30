@@ -2145,6 +2145,27 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r108")
+  {
+    const root = process.cwd()
+    const main = await fs.readFile(
+      path.join(root, "android/app/src/main/java/com/mcode/remote/MainActivity.kt"),
+      "utf8",
+    )
+    const voiceAt = main.indexOf('put("type", "voice.transcribe")')
+    const voice = voiceAt >= 0 ? main.slice(Math.max(0, voiceAt - 120), voiceAt + 400) : ""
+    check("r108: voice.transcribe uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,120}voice\.transcribe/.test(voice))
+    check("r108: voice.transcribe does not use plain rpc", !/=\s*rpc\(\s*\n\s*JSONObject\(\)/.test(voice))
+    const provAt = main.indexOf("fun loadProviders()")
+    const prov = provAt >= 0 ? main.slice(provAt, provAt + 500) : ""
+    check("r108: provider.list uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,60}provider\.list/.test(prov))
+    check("r108: provider.list toasts on failure", prov.includes("没能加载模型"))
+    const qAt = main.indexOf("fun loadPendingQuestions()")
+    const q = qAt >= 0 ? main.slice(qAt, qAt + 700) : ""
+    check("r108: question.list uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,60}question\.list/.test(q))
+    check("r108: question.list toasts on failure", q.includes("没能加载待答问题"))
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }
