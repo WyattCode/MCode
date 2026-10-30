@@ -20,6 +20,8 @@ const KEEP = 20_000
  */
 export class BackgroundUsage {
   private entries?: Promise<BackgroundUse[]>
+  /** Set when the document could not be read: nothing is written over it for the rest of this run. */
+  private blocked = false
 
   constructor(private readonly storage: Storage) {}
 
@@ -27,7 +29,10 @@ export class BackgroundUsage {
     this.entries ??= this.storage
       .read<{ entries?: BackgroundUse[] }>(KEY)
       .then((document) => (Array.isArray(document?.entries) ? document.entries : []))
-      .catch(() => [])
+      .catch(() => {
+        this.blocked = true
+        return []
+      })
     return this.entries
   }
 
@@ -35,6 +40,6 @@ export class BackgroundUsage {
     const entries = await this.list()
     entries.push(entry)
     if (entries.length > KEEP) entries.splice(0, entries.length - KEEP)
-    await this.storage.write(KEY, { entries }).catch(() => undefined)
+    if (!this.blocked) await this.storage.write(KEY, { entries }).catch(() => undefined)
   }
 }

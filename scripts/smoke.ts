@@ -3097,6 +3097,7 @@ async function main() {
   section("Review polish r140")
   section("Review polish r141")
   section("Review polish r142")
+  section("Review polish r143")
   {
     const { readFileSync } = await import("node:fs")
     const { join } = await import("node:path")
@@ -3860,6 +3861,47 @@ async function main() {
     const plugins = readFileSync(join(root, "src/renderer/src/components/PluginsView.vue"), "utf8")
     check("PluginsView.toggle reports empty result", plugins.includes("if (!result) {") && plugins.includes("notifyFailure(t(\"mcp.title\"), t(\"common.requestFailed\"))"))
     check("PluginsView.toggle no bare if (result)", !plugins.includes("if (result) servers.value = result.servers"))
+    const layout = readFileSync(join(root, "src/server/storage-layout.ts"), "utf8")
+    const bg = readFileSync(
+      join(root, "src/server/session/background-usage.ts"),
+      "utf8",
+    )
+    const android = readFileSync(
+      join(root, "android/app/src/main/java/com/mcode/remote/MainActivity.kt"),
+      "utf8",
+    )
+    check(
+      "layout refuses to overwrite a damaged file",
+      layout.includes("read.unreadable") &&
+        layout.includes("not writing over it") &&
+        layout.includes("aside === undefined"),
+    )
+    check(
+      "background usage refuses to overwrite when blocked",
+      bg.includes("private blocked = false") &&
+        bg.includes("this.blocked = true") &&
+        bg.includes("if (!this.blocked) await this.storage.write"),
+    )
+    const toastCount = (android.match(/无法切换技能/g) ?? []).length
+    check("skill toggle surfaces failures", toastCount >= 4)
+    check(
+      "skill toggle only refreshes on success",
+      android.includes(".onSuccess { refreshPlugins++ }") &&
+        android.includes("if (config == null)"),
+    )
+    const toggleBodies = [...android.matchAll(/onToggleSkill = \{[\s\S]*?onClose =/g)].map((m) => m[0])
+    check(
+      "old unconditional refresh after config.set is gone from skill toggles",
+      toggleBodies.length >= 2 &&
+        toggleBodies.every(
+          (body) =>
+            body.includes("if (config == null)") &&
+            (body.match(/无法切换技能/g) ?? []).length >= 2 &&
+            body.includes(".onSuccess { refreshPlugins++ }") &&
+            body.includes(".onFailure") &&
+            !/runCatching \{[\s\S]*?config\.set[\s\S]*?\}\s*\n\s*refreshPlugins\+\+/.test(body),
+        ),
+    )
   }
 
   section("Permission guide")

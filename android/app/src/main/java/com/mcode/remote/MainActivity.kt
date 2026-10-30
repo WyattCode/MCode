@@ -3686,6 +3686,10 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         withContext(Dispatchers.Main) {
                             Toast.makeText(context, "没能更新技能", Toast.LENGTH_SHORT).show()
                         }
+                    val reply = runCatching { rpc(JSONObject().put("type", "config.get")) }.getOrNull()
+                    val config = reply?.optJSONObject("data")?.optJSONObject("config")
+                    if (config == null) {
+                        Toast.makeText(context, "无法切换技能", Toast.LENGTH_LONG).show()
                         return@launch
                     }
                     val off = config.optJSONArray("disabledSkills")?.let { arr ->
@@ -3703,6 +3707,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         withContext(Dispatchers.Main) {
                             Toast.makeText(context, "没能更新技能", Toast.LENGTH_SHORT).show()
                         }
+                    }.onSuccess { refreshPlugins++ }.onFailure {
+                        Toast.makeText(context, "无法切换技能", Toast.LENGTH_LONG).show()
                     }
                 }
             },
@@ -5214,6 +5220,10 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                             withContext(Dispatchers.Main) {
                                                 Toast.makeText(context, "没能更新技能", Toast.LENGTH_SHORT).show()
                                             }
+                                        val reply = runCatching { rpc(JSONObject().put("type", "config.get")) }.getOrNull()
+                                        val config = reply?.optJSONObject("data")?.optJSONObject("config")
+                                        if (config == null) {
+                                            Toast.makeText(context, "无法切换技能", Toast.LENGTH_LONG).show()
                                             return@launch
                                         }
                                         val off = config.optJSONArray("disabledSkills")?.let { arr ->
@@ -5228,6 +5238,9 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                             withContext(Dispatchers.Main) {
                                                 Toast.makeText(context, "没能更新技能", Toast.LENGTH_SHORT).show()
                                             }
+                                            rpc(JSONObject().put("type", "config.set").put("patch", JSONObject().put("disabledSkills", org.json.JSONArray(off))))
+                                        }.onSuccess { refreshPlugins++ }.onFailure {
+                                            Toast.makeText(context, "无法切换技能", Toast.LENGTH_LONG).show()
                                         }
                                     }
                                 },
