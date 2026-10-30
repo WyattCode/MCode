@@ -103,6 +103,12 @@ let phone: WebSocket
    * page has to replay what is parked, as the window does.
    */
   check("and replays the questions already parked", body.includes('type: "question.list"'), "question.list replay")
+  /*
+   * The model's thinking is skipped by the reply path, which is right - but it
+   * used to be skipped everywhere, so a phone had nowhere to read it. It gets a
+   * fold of its own now, closed until asked for.
+   */
+  check("and folds the model's thinking away", body.includes("reasonfold") && body.includes("思考过程"), "reason fold")
 
   /*
    * The page's script, run for real against stand-in elements. A card's own
@@ -114,25 +120,69 @@ let phone: WebSocket
   {
     const script = body.slice(body.indexOf("<script>") + 8, body.lastIndexOf("</script>"))
     const sent: any[] = []
+    /*
+     * A stand-in element that is honest about the few things the page asks of
+     * it: its tag, its classes, where a child sits among its siblings, and
+     * whether a fold is open. Without the tag and the classes a check on
+     * `DETAILS.reasonfold` would be asserting against a stub that answers
+     * nothing - which is the kind of check that passes while the page is broken.
+     */
     const stand = (): any => {
       const target: any = {
         children: [] as any[],
-        classList: { add() {}, remove() {}, contains: () => false },
         style: {},
+        dataset: {},
         value: "",
+        textContent: "",
+        // A fold is closed until the reader opens it; the page never sets this.
+        open: false,
         querySelectorAll: () => [],
-        appendChild(child: any) { this.children.push(child); return child },
+        appendChild(child: any) {
+          const at = this.children.indexOf(child)
+          if (at !== -1) this.children.splice(at, 1)
+          this.children.push(child)
+          return child
+        },
         append(...kids: any[]) { this.children.push(...kids) },
+        insertBefore(node: any, ref: any) {
+          // Real DOM insertBefore moves a node that is already in the tree;
+          // without this the same PRE can appear twice after settleOrder().
+          const existing = this.children.indexOf(node)
+          if (existing !== -1) this.children.splice(existing, 1)
+          const at = ref ? this.children.indexOf(ref) : -1
+          if (at === -1) this.children.push(node)
+          else this.children.splice(at, 0, node)
+          return node
+        },
         remove() { this.removed = true },
         addEventListener() {},
+      }
+      const classes = () => String(target.className || "").split(/\s+/).filter(Boolean)
+      target.classList = {
+        add(name: string) { const list = classes(); if (!list.includes(name)) list.push(name); target.className = list.join(" ") },
+        remove(name: string) { target.className = classes().filter((c: string) => c !== name).join(" ") },
+        contains(name: string) { return classes().includes(name) },
       }
       return new Proxy(target, { get: (t, key) => (key in t ? t[key] : typeof key === "string" ? () => undefined : undefined), set: (t, key, value) => ((t[key] = value), true) })
     }
     const byId: Record<string, any> = {}
     class Socket { constructor() {} send(text: string) { sent.push(JSON.parse(text)) } close() {} }
     const context: any = {
-      document: { createElement: () => stand(), // A card exists only once it has been added; the page's own elements are made on first ask.
-        getElementById: (id: string) => (/^(pc|qc)-/.test(id) ? byId.timeline?.children.find((child: any) => child.id === id) : (byId[id] ??= stand())), querySelector: () => stand(), querySelectorAll: () => [], addEventListener() {} },
+      document: {
+        // The tag is kept: a fold is a `<details>`, and a check that cannot tell
+        // it from a `<div>` is not checking anything.
+        createElement: (tag: string) => { const el = stand(); el.tagName = String(tag).toUpperCase(); el.className = ""; return el },
+        // A card exists only once it has been added; the page's own elements are
+        // made on first ask. `busy` is rebuilt by `markBusy` after a wipe, so it
+        // is looked up among the timeline's children like the cards are.
+        getElementById: (id: string) =>
+          /^(pc|qc)-/.test(id) || id === "busy"
+            ? (byId.timeline?.children ?? []).find((child: any) => child.id === id)
+            : (byId[id] ??= stand()),
+        querySelector: () => stand(),
+        querySelectorAll: () => [],
+        addEventListener() {},
+      },
       localStorage: { getItem: () => null, setItem() {} },
       location: { origin: "http://x", protocol: "http:", host: "x", hash: "", search: "" },
       WebSocket: Socket,
@@ -174,6 +224,85 @@ let phone: WebSocket
       let skipped: unknown = "no button"
       try { skip?.onclick(); skipped = sent.find((f) => f.request?.type === "question.reply" && f.request.requestID === "q-2") } catch (error) { skipped = error instanceof Error ? error.message : error }
       check("and skipping it sends empty answers", JSON.stringify((skipped as any)?.request?.answers) === "[[]]", skipped)
+
+      /*
+       * Reasoning: drawn, but not as the answer.
+       *
+       * The reply path skips reasoning parts on purpose - the model did not say
+       * its thinking to the reader - and the first version of that skip was a
+       * bare `return`, so the thinking was invisible everywhere. It gets a fold
+       * of its own now: closed by default, labelled plainly, and never mixed
+       * into the reply text.
+       */
+      vm.runInContext('state.current = "s1"', context)
+      context.upsertMessage("s1", {
+        id: "m1",
+        role: "assistant",
+        sessionID: "s1",
+        parts: [
+          { type: "reasoning", id: "r1", text: "先想一步" },
+          { type: "text", id: "t1", text: "正式回答" },
+        ],
+      })
+      const bubbleEl = byId.timeline.children.find((child: any) => String(child.className).includes("assistant"))
+      check("an assistant message is drawn under the timeline", Boolean(bubbleEl), byId.timeline.children.length)
+
+      const fold = bubbleEl?.children.find((child: any) => String(child.className).includes("reasonfold"))
+      const summary = fold?.children.find((child: any) => child.tagName === "SUMMARY")
+      const reasonBody = fold?.children.find((child: any) => child.tagName === "PRE")
+      check(
+        "reasoning is a collapsed fold, not the reply",
+        Boolean(fold) && fold.tagName === "DETAILS" && fold.open !== true && String(summary?.textContent ?? "").includes("思考过程"),
+        { tag: fold?.tagName, open: fold?.open, summary: summary?.textContent },
+      )
+
+      const replyPres = () => (bubbleEl?.children ?? []).filter((child: any) => child.tagName === "PRE" && child !== reasonBody)
+      const replyText = () => replyPres().map((child: any) => String(child.textContent ?? "")).join("\n")
+      check("the reply bubble holds only the reply", replyText() === "正式回答" && !replyText().includes("先想一步"), replyText())
+
+      // `at` is the length the part had before this fragment - four characters,
+      // not three; a wrong one trips the gap guard and nothing is appended.
+      context.appendDelta("s1", "m1", "r1", "再想", "先想一步".length)
+      check(
+        "a reasoning fragment grows the fold, not the reply",
+        String(reasonBody?.textContent ?? "").includes("先想一步再想") && replyText() === "正式回答",
+        { reason: reasonBody?.textContent, reply: replyText() },
+      )
+
+      context.appendDelta("s1", "m1", "t1", "！", "正式回答".length)
+      check(
+        "and a reply fragment grows the reply, not the fold",
+        replyText() === "正式回答！" && String(reasonBody?.textContent ?? "") === "先想一步再想",
+        { reason: reasonBody?.textContent, reply: replyText() },
+      )
+
+      /*
+       * The busy hint. `markBusy` was added in 续二 and only ever checked by
+       * hand; it is rebuilt rather than looked up because `select()` and a gap
+       * refill both empty the timeline, which takes it with them.
+       */
+      context.markBusy(true)
+      const busyOn = byId.timeline.children.find((child: any) => child.id === "busy")
+      check(
+        "markBusy(true) shows the busy hint",
+        Boolean(busyOn) && busyOn.style.display !== "none" && busyOn.textContent === "正在回答…",
+        { text: busyOn?.textContent, display: busyOn?.style?.display },
+      )
+
+      context.markBusy(false)
+      const busyOff = byId.timeline.children.find((child: any) => child.id === "busy")
+      check("markBusy(false) hides it", Boolean(busyOff) && busyOff.style.display === "none", busyOff?.style?.display)
+
+      // A conversation switch wipes the timeline; the hint has to come back.
+      byId.timeline.innerHTML = ""
+      byId.timeline.children.length = 0
+      context.markBusy(true)
+      const busyAgain = byId.timeline.children.find((child: any) => child.id === "busy")
+      check(
+        "the busy hint is rebuilt after the timeline is wiped",
+        Boolean(busyAgain) && busyAgain.style.display !== "none" && busyAgain.textContent === "正在回答…",
+        { found: Boolean(busyAgain), display: busyAgain?.style?.display },
+      )
     }
   }
 }

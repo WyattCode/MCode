@@ -39,6 +39,20 @@
   .msg pre { white-space: pre-wrap; font: inherit; }
   .toolrow { font-size: 12px; color: var(--muted); padding: 4px 12px; border-left: 2px solid var(--line); }
   .toolrow b { color: var(--fg); font-weight: 500; }
+  /*
+   * The model's thinking, folded away.
+   *
+   * The reply bubble holds only what the model said; the reasoning behind it
+   * gets its own block so a reader can open it, but it stays secondary -
+   * muted, smaller, and closed until asked for. Native <details> does the
+   * opening, so a phone needs no script to remember which folds were left open.
+   */
+  .reasonfold { margin: 4px 0; border-left: 2px solid var(--line); padding-left: 8px; }
+  .reasonfold > summary { font-size: 12px; color: var(--muted); cursor: pointer; list-style: none; user-select: none; }
+  .reasonfold > summary::-webkit-details-marker { display: none; }
+  .reasonfold > summary::before { content: "▸ "; }
+  .reasonfold[open] > summary::before { content: "▾ "; }
+  .reasonfold pre { font-size: 12px; color: var(--muted); white-space: pre-wrap; margin-top: 4px; }
   .pcard { border: 1px solid var(--warn); border-radius: 10px; padding: 10px 12px; background: #241f0e; }
   /*
    * A question is a different kind of stop from a permission: the turn needs a
@@ -467,6 +481,45 @@ function placeBlock(entry, partID, block) {
   entry.el.appendChild(block);
 }
 
+/**
+ * The model's thinking, as a fold of its own.
+ *
+ * The reply bubble holds only what the model said - `appendDelta` skips
+ * reasoning for exactly that reason - but on a phone there is nowhere else to
+ * read it, so it gets a block of its own: closed by default, muted, and ordered
+ * among the parts like any other block. Native `<details>` does the opening, so
+ * no script has to remember which folds were left open.
+ */
+function ensureReasonBlock(entry, partID, text) {
+  let fold = entry.blocks[partID];
+  if (!fold) {
+    fold = document.createElement("details");
+    fold.className = "reasonfold";
+    fold.dataset.part = partID;
+    const summary = document.createElement("summary");
+    summary.textContent = "思考过程";
+    const body = document.createElement("pre");
+    fold.appendChild(summary);
+    fold.appendChild(body);
+    // Kept on the node: the fold is only ever updated through this handle, and
+    // the stand-in DOM the check runs against has no real querySelector.
+    fold.reasonBody = body;
+    entry.blocks[partID] = fold;
+    placeBlock(entry, partID, fold);
+  }
+  const body = fold.reasonBody || fold.querySelector("pre");
+  if (body) body.textContent = text || "…";
+  entry.reasons[partID] = text || "";
+  // A fold is a body: the "…" placeholder a bare bubble was born with has done
+  // its job as soon as there is something to read.
+  if (entry.placeholder) {
+    entry.placeholder.remove();
+    entry.placeholder = null;
+  }
+  settleOrder(entry);
+  return fold;
+}
+
 function upsertMessage(sessionID, message) {
   if (sessionID !== state.current) return;
   const existing = messages[message.id];
@@ -523,7 +576,7 @@ function upsertMessage(sessionID, message) {
     if (p.type !== "text" || !p.id) continue;
     kept[p.id] = deltas[message.id + "|" + p.id] || "";
   }
-  const entry = { el, parts: {}, texts: kept, blocks: {}, partOrder: parts.filter((p) => p.id).map((p) => p.id) };
+  const entry = { el, parts: {}, texts: kept, reasons: {}, blocks: {}, partOrder: parts.filter((p) => p.id).map((p) => p.id) };
   messages[message.id] = entry;
   /*
    * Tool rows that arrived before this bubble did are claimed now.
@@ -540,6 +593,22 @@ function upsertMessage(sessionID, message) {
     }
     delete pendingToolRows[message.id];
     settleOrder(entry);
+  }
+  /*
+   * Thinking is drawn as its own fold, never as the reply. `renderText` skips
+   * it for the same reason the deltas do - the model did not say its thinking
+   * to the reader - but a phone has nowhere else to read it, so it gets a
+   * block that is closed until asked for.
+   */
+  if (role !== "user") {
+    for (const p of parts) {
+      if (p.type !== "reasoning" || !p.id) continue;
+      const text = deltas[message.id + "|" + p.id] || "";
+      // Nothing to read yet: the fold appears with the first character, not as
+      // an empty box under every message that thought.
+      if (!text.trim()) continue;
+      ensureReasonBlock(entry, p.id, text);
+    }
   }
   // Only a reply is built from parts. A user message has none - its words are in
   // `text`, already written into the bubble - and running this for it added a
@@ -589,6 +658,20 @@ function upsertPart(sessionID, messageID, part) {
       renderText(entry);
     }
   }
+  /*
+   * Reasoning is a snapshot too, and it grows the fold rather than the reply.
+   * The fold is created on the first non-empty text, so a part that is
+   * announced empty does not leave an empty box behind.
+   */
+  if (part.type === "reasoning" && typeof part.text === "string") {
+    const held = deltas[key] || "";
+    if (part.text.length >= held.length) deltas[key] = part.text;
+    const entry = messages[messageID];
+    if (entry) {
+      const text = deltas[key] || "";
+      if (text.trim() || entry.blocks[part.id]) ensureReasonBlock(entry, part.id, text);
+    }
+  }
   if (part.type === "tool") addToolRow(part, messageID);
 }
 
@@ -603,8 +686,9 @@ function upsertPart(sessionID, messageID, part) {
  * closes until the part ends - minutes, on a long answer. A length that does not
  * line up means fragments were missed, so the transcript is read again instead.
  *
- * Reasoning streams through this same event. Drawing it as the answer would put
- * the model's thinking on screen as if it had said it.
+ * Reasoning streams through this same event. It is not the answer, so it never
+ * goes into the reply bubble - it grows the fold above it instead, which stays
+ * closed until the reader opens it.
  *
  * The message may not exist yet - a delta can beat the `message.updated` that
  * creates its bubble - so the accumulator is kept here and `upsertMessage` folds
@@ -634,8 +718,18 @@ function appendDelta(sessionID, messageID, partID, text, at) {
     return;
   }
   deltas[key] = held + text;
-  if (partKinds[key] === "reasoning") return;
   const entry = messages[messageID];
+  if (partKinds[key] === "reasoning") {
+    /*
+     * Thinking is drawn, but not as the answer: it grows the fold above the
+     * reply, which stays closed until the reader opens it. Writing it into
+     * `texts` would put the model's reasoning in the reply bubble - which is
+     * what the early return here used to prevent, at the cost of hiding it
+     * everywhere.
+     */
+    if (entry) ensureReasonBlock(entry, partID || "__reason", deltas[key]);
+    return;
+  }
   if (!entry) return;
   entry.texts[part] = deltas[key];
   renderText(entry);
