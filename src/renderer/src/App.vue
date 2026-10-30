@@ -1722,19 +1722,29 @@ const PROJECT_ACTIONS: Record<string, (directory: string) => void | Promise<void
       notifyFailure(t("toast.projectPathTaken", { name: projectName(next, app.config?.projectNames) }))
       return
     }
-    for (const session of app.sessions.filter((entry) => entry.directory === directory)) await app.move(session.id, next)
+    // Refuse before move: without config the name/icon/pin rewrite cannot run, and a silent
+    // early return used to leave sessions already moved on the new path.
     const config = app.config
-    if (!config) return
+    if (!config) {
+      notifyFailure(t("common.requestFailed"))
+      return
+    }
+    for (const session of app.sessions.filter((entry) => entry.directory === directory)) await app.move(session.id, next)
     const swap = (list: string[] | undefined) => (list ?? []).map((entry) => (entry === directory ? next : entry))
-    await app.patchConfig({
-      projectNames: rekey(config.projectNames, directory, next),
-      projectIcons: rekey(config.projectIcons, directory, next),
-      projectColors: rekey(config.projectColors, directory, next),
-      pinnedProjects: swap(config.pinnedProjects),
-      projects: swap(config.projects),
-      projectOrder: swap(config.projectOrder),
-      closedProjects: swap(config.closedProjects),
-    })
+    try {
+      await app.patchConfig({
+        projectNames: rekey(config.projectNames, directory, next),
+        projectIcons: rekey(config.projectIcons, directory, next),
+        projectColors: rekey(config.projectColors, directory, next),
+        pinnedProjects: swap(config.pinnedProjects),
+        projects: swap(config.projects),
+        projectOrder: swap(config.projectOrder),
+        closedProjects: swap(config.closedProjects),
+      })
+    } catch (err) {
+      notifyFailure(t("common.requestFailed"), reasonOf(err))
+      return
+    }
     notify(t("toast.projectPathChanged", { name: projectName(next, app.config?.projectNames) }), { level: "success" })
   },
   /* Asked first, as MiMo asks: the project leaves the list, its conversations stay. */

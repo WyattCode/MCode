@@ -221,6 +221,13 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 续五十三：会话长按压缩/撤销/归档失败提示；更改项目路径与文件树列举失败提示（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- Android：会话长按 sheet 的压缩/撤销/归档改 `rpcOrThrow`，失败 Toast，成功才关 sheet。
+- 桌面：更改项目文件夹位置时无 config 先拒绝并 toast（避免半迁移）；RpFiles `listDir` 失败 toast，保留原列表。
+- 验证：smoke「Review polish r120」；未合并。
+
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
 Pad 9 Pro Max（`M367FC`）接上后，第一次把「平板发指令 → 主机跑模型 → 回复回画到平板」整条链路走通。
