@@ -3071,6 +3071,24 @@ async function main() {
     const remAt = main.indexOf("onGoalRemove = {")
     const rem = remAt >= 0 ? main.slice(remAt, remAt + 900) : ""
     check("r118: goalRemove fail-closed", rem.includes("无法清除目标") && rem.includes("rpcOrThrow"))
+  section("Review polish r119")
+  {
+    const root = process.cwd()
+    const preview = await fs.readFile(path.join(root, "src/renderer/src/components/ImagePreview.vue"), "utf8")
+    const revAt = preview.indexOf("async function reveal()")
+    const revAt2 = revAt >= 0 ? revAt : preview.indexOf("function reveal()")
+    const rev = revAt2 >= 0 ? preview.slice(revAt2, revAt2 + 800) : ""
+    check("r119: ImagePreview reveal fails closed", rev.includes("!result.ok") && rev.includes("officeCard.revealFailed") && !rev.includes(".catch(() => undefined)"))
+
+    const composer = await fs.readFile(path.join(root, "src/renderer/src/components/Composer.vue"), "utf8")
+    const attAt = composer.indexOf("async function attachPaths")
+    const att = attAt >= 0 ? composer.slice(attAt, attAt + 900) : ""
+    check("r119: attachPaths IPC toast", att.includes("notifyFailure") && att.includes("common.requestFailed") && !att.includes(".catch(() => [])"))
+
+    const settings = await fs.readFile(path.join(root, "src/renderer/src/components/SettingsDialog.vue"), "utf8")
+    const scanAt = settings.indexOf("async function startMcpImport")
+    const scan = scanAt >= 0 ? settings.slice(scanAt, scanAt + 900) : ""
+    check("r119: mcp.importScan fail-closed", scan.includes("if (!result)") && scan.includes("set.mcp.importFailed") && scan.includes("mcpView.value = \"import\""))
   }
 
   section("Permission guide")

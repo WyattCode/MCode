@@ -757,7 +757,14 @@ async function onDrop(event: DragEvent) {
 async function attachPaths(paths: readonly string[]) {
   // Same guard as take(): the paths belong to the draft they were dropped on.
   const originKey = draftKey.value
-  const found = await window.mcode.describeFiles([...paths]).catch(() => [])
+  let found: Awaited<ReturnType<typeof window.mcode.describeFiles>>
+  try {
+    found = await window.mcode.describeFiles([...paths])
+  } catch {
+    if (!composerMounted || draftKey.value !== originKey) return
+    notifyFailure(t("common.requestFailed"))
+    return
+  }
   if (!composerMounted || draftKey.value !== originKey) return
   if (!found.length) return
   const root = projectRoot.value
