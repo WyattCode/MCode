@@ -223,7 +223,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ### 续七十四：工作树加入/新建分支空结果/侧栏拖拽排序失败可见（2026-10-30）
 
-- PR: （打开后填入；未合并）
+- PR: https://github.com/WyattCode/MCode/pull/172 （未合并）
 - Windows：`HomeHero.useWorktree` 对 `addProject` 加 try/catch，失败 `notifyFailure(common.requestFailed)` 并清掉 `added`、不 `choose`；`BranchPicker.create` 空结果 toast `home.branchCreateFailed`；`Sidebar.setDown` 拖拽排序对 `patchConfig` 加 try/catch（patchConfig 已 toast）。
 - 验证：slice smoke「Review polish r141」；未合并。
 
