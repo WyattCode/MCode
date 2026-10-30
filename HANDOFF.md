@@ -221,6 +221,14 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 续六十八：显示服务器失败回滚、提交卡空 client 不抹状态、Android 模型切换成功后才关选择器（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/XXX
+- `SettingsDialog.chooseDisplayServer`：乐观更新后若 `setDisplayServer` 抛错，回滚到 previous pref，并 `notifyFailure(common.requestFailed)`；成功 toast 仅在 await 之后（对齐 #160 的 hwAccel 回滚，本切片补显示服务器）。
+- `InfoCommitCard.loadState`：`git.commitState` 在空 client 返回 undefined 时不再 `state.value = next` 抹掉已有提交/推送 UI；保留原状态，`finally` 仍清 loading（#146 只修了 push/commit null，未触及 loadState）。
+- Android 模型选择器：`modelPicker = false` 挪进 `try`、pill 更新之后；RPC 失败保留选择器并 toast，避免「关了却没切成」。
+- 验证：slice smoke「Review polish r135」+ mutate；typecheck 按既有路径。
+
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
 Pad 9 Pro Max（`M367FC`）接上后，第一次把「平板发指令 → 主机跑模型 → 回复回画到平板」整条链路走通。

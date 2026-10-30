@@ -2145,6 +2145,52 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r135")
+  {
+    const root = process.cwd()
+    const { readFile } = await import("node:fs/promises")
+    const settings = await readFile(`${root}/src/renderer/src/components/SettingsDialog.vue`, "utf8")
+    const dsAt = settings.indexOf("async function chooseDisplayServer")
+    const dsEnd = settings.indexOf("const hardwareAcceleration", dsAt)
+    const ds = (dsAt >= 0 && dsEnd > dsAt ? settings.slice(dsAt, dsEnd) : "").replace(/\r\n/g, "\n")
+    check("r135: chooseDisplayServer captures previous pref", ds.includes("const previous = displayServer.value.pref"))
+    check(
+      "r135: chooseDisplayServer reverts + notifyFailure on catch",
+      ds.includes("pref: previous") && ds.includes('notifyFailure(t("common.requestFailed")'),
+    )
+    check(
+      "r135: chooseDisplayServer success toast only after await",
+      ds.includes("return") && ds.lastIndexOf('notify(t("set.displayServerSaved"))') > ds.indexOf("await window.mcode.setDisplayServer"),
+    )
+    check("r135: chooseDisplayServer no empty catch", !ds.includes("} catch {"))
+
+    const commit = await readFile(`${root}/src/renderer/src/components/InfoCommitCard.vue`, "utf8")
+    const lsAt = commit.indexOf("async function loadState")
+    const lsEnd = commit.indexOf("function blankState", lsAt)
+    const ls = lsAt >= 0 && lsEnd > lsAt ? commit.slice(lsAt, lsEnd) : ""
+    check("r135: loadState keeps prior when next is missing", ls.includes("if (!next) return"))
+    check(
+      "r135: loadState still assigns only when directory matches",
+      ls.includes("if (props.directory === directory) state.value = next"),
+    )
+
+    const android = await readFile(`${root}/android/app/src/main/java/com/mcode/remote/MainActivity.kt`, "utf8")
+    const mpAt = android.indexOf('rpc(JSONObject().put("type", "session.model")')
+    const mpEnd = android.indexOf(".padding(vertical = 11.dp)", mpAt)
+    const mp = mpAt >= 0 && mpEnd > mpAt ? android.slice(mpAt, mpEnd) : ""
+    check(
+      "r135: Android modelPicker closes inside try after pill update",
+      mp.includes("sessions[at] = sessions[at].copy(model = modelId)") &&
+        mp.includes("modelPicker = false") &&
+        mp.lastIndexOf("modelPicker = false") > mp.indexOf("sessions[at] = sessions[at].copy(model = modelId)") &&
+        mp.lastIndexOf("modelPicker = false") < mp.indexOf("} catch"),
+    )
+    check(
+      "r135: Android modelPicker not closed outside launch",
+      !/\}\s*\}\s*modelPicker = false/.test(mp.replace(/\r\n/g, "\n")),
+    )
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }
