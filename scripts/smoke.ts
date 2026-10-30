@@ -474,6 +474,7 @@ import { SEARCH, SKILL_FILE_SAMPLE, SkillSearchTool, SkillTool, searchSkills, se
 import { stepTitle as skillStepTitle, toolVerb as skillToolVerb } from "../src/renderer/src/lib/tool-meta"
 import { readFileSync } from "node:fs"
 import { mayJoinSteering } from "../src/server/session/steer-join"
+import { readFileSync as r85ReadFileSync } from "node:fs"
 
 let passed = 0
 let failed = 0
@@ -2201,6 +2202,34 @@ async function main() {
 
     const capsule = await fs.readFile(new URL("../android/app/src/main/java/com/mcode/remote/MainActivity.kt", import.meta.url), "utf8")
     check("Android send locks until the prompt has left", capsule.includes("var sending by remember { mutableStateOf(false) }") && capsule.includes("enabled = enabled && !transcribing && !sending"))
+  section("Review polish r85")
+  {
+    // Source scrape: both fixes are guards that only show up in the code.
+    const r85Root = (() => {
+      let dir = process.cwd()
+      for (let i = 0; i < 4; i++) {
+        try {
+          r85ReadFileSync(dir + "/scripts/smoke.ts", "utf8")
+          return dir
+        } catch {}
+        dir = dir.replace(/[\\/][^\\/]+$/, "")
+      }
+      return process.cwd()
+    })()
+    const r85Read = (rel: string) => r85ReadFileSync(r85Root + "/" + rel, "utf8").replace(/\r\n/g, "\n")
+
+    const composer = r85Read("src/renderer/src/components/Composer.vue")
+    const pasteAt = composer.indexOf("async function onPaste")
+    const pasteEnd = pasteAt < 0 ? -1 : composer.indexOf("\n}\n", pasteAt)
+    const paste = pasteAt < 0 ? "" : composer.slice(pasteAt, pasteEnd < 0 ? undefined : pasteEnd)
+    const refusals = (paste.match(/draftKey\.value !== originKey/g) ?? []).length
+    check("composer paste keeps its draft", paste.includes("const originKey = draftKey.value") && refusals >= 2)
+    check("composer paste guards the image read", /saveClipboardImage[\s\S]{0,240}draftKey\.value !== originKey/.test(paste))
+    check("composer paste guards the text write", /savePastedText[\s\S]{0,240}draftKey\.value !== originKey/.test(paste))
+
+    const android = r85Read("android/app/src/main/java/com/mcode/remote/MainActivity.kt")
+    check("android attachments follow the conversation", android.includes("attachmentStash") && android.includes("attachmentStash.remove"))
+    check("android select restores the stash", /attachmentStash\.remove\(id\)\?\.forEach/.test(android))
   }
 
   section("Permission guide")

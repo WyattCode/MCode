@@ -1630,6 +1630,12 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     /** Pending attachments: {"path","mime","data"} ready for session.prompt. */
     val attachments = remember { mutableStateListOf<JSONObject>() }
     /*
+     * Drafts are per-session but `attachments` is one list, so switching from
+     * A to B used to leave A's files on B, to be sent with B's prompt. The
+     * stash parks each conversation's pending files under its own id.
+     */
+    val attachmentStash = remember { mutableStateMapOf<String, List<JSONObject>>() }
+    /*
      * The desktop's row is 添加照片和文件 and its picker takes any file: a
      * text one travels as its text, everything else as base64 - by the
      * extension table in `shared/attachment-kind.ts`, which is the table the
@@ -2525,7 +2531,16 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     }
 
     fun select(id: String?) {
+        // The pending files belong to the conversation they were picked in:
+        // park them under the old id before the pane moves to the new one.
+        val prev = currentSession
+        if (prev != null && prev != id) {
+            attachmentStash[prev] = attachments.map { JSONObject(it.toString()) }
+            attachments.clear()
+        }
         currentSession = id
+        // ...and bring back whatever the new conversation had waiting.
+        if (id != null) attachmentStash.remove(id)?.forEach { attachments.add(it) }
         if (id != null) {
             unseen.remove(id)
             sessions.find { it.id == id }?.let { seenUpdated[id] = it.updated }
@@ -2727,6 +2742,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         pendingPerms.remove(gone)
                         pendingQuestions.remove(gone)
                         seenUpdated.remove(gone)
+                        attachmentStash.remove(gone)
+                        attachments.clear()
                         currentSession = null
                         items.clear()
                         messageIndex.clear()
@@ -3780,6 +3797,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 // first reply part to come back.
                 setRunning(sid, true)
                 attachments.clear()
+                // The files went out with the prompt; nothing left to restore.
+                attachmentStash.remove(sid)
                 // A sent message is no longer a draft; without this the words
                 // came back in the box on the next visit.
                 drafts.remove(sid)

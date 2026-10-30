@@ -555,14 +555,19 @@ async function onPaste(event: ClipboardEvent) {
    * in MiMo's order: the clipboard's own formats, the types on the event, and
    * a paste that carries no plain text at all.
    */
+  // The draft this paste belonged to: switching conversations while the
+  // clipboard read is in flight must not drop the paste into the other one.
+  const originKey = draftKey.value
   const types = [...(event.clipboardData?.types ?? [])].map((type) => type.toLowerCase())
   const looksLikeImage =
     (await window.mcode.clipboardHasImage().catch(() => false)) ||
     types.some((type) => type.startsWith("image/") || type.includes("bitmap")) ||
     (!types.includes("text/plain") && types.includes("files"))
+  if (!composerMounted || draftKey.value !== originKey) return
   if (looksLikeImage) {
     event.preventDefault()
     const saved = await window.mcode.saveClipboardImage().catch(() => ({ ok: false as const, error: "" }))
+    if (!composerMounted || draftKey.value !== originKey) return
     if (!saved.ok) {
       // MiMo's IMAGE_UNREADABLE: the clipboard said it held a picture and the bitmap could not be read.
       notifyFailure(t("error.imageUnreadable"), "")
@@ -598,6 +603,7 @@ async function onPaste(event: ClipboardEvent) {
    * afterwards. Only if that write fails does it stay inside the message.
    */
   const written = await window.mcode.savePastedText(pasted).catch(() => ({ ok: false as const, error: "" }))
+  if (!composerMounted || draftKey.value !== originKey) return
   if (written.ok) {
     attachments.value = [...attachments.value, { path: written.path, mime: "text/plain", data: "", byPath: true }]
     notify(t("composer.pasteAttached"))
