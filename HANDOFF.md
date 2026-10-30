@@ -423,6 +423,12 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - 桌面：`setAgent(to?)` 与 chooseAgent / cycleAgent 一次捕获 target；侧栏会话不改默认 agent。
 - Android：会话设置里的「追求目标」失败时回滚开关并 Toast（与输入条一致）。
 - 验证：smoke「Review polish r89」；未合并。
+### 续二十三：Effort 键盘目标捕获、设置页 Agent/权限/Effort 失败提示（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/121 （未合并）
+- 桌面：`cycleEffort` / `stepEffort` 一次捕获 `target` 传给 `setEffort`.
+- Android：会话设置 Agent / 权限 / Effort 成功才改本地行，失败 Toast；权限不再在失败后也改 pill。
+- 验证：smoke「Review polish r90」；未合并。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
