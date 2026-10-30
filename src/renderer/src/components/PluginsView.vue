@@ -157,8 +157,17 @@ const busy = ref("")
 async function toggle(name: string) {
   busy.value = name
   try {
-    const result = await app.client?.request({ type: "mcp.toggle", name })
-    if (result) servers.value = result.servers
+    const client = app.client
+    if (!client) {
+      notifyFailure(t("mcp.title"), t("common.requestFailed"))
+      return
+    }
+    const result = await client.request({ type: "mcp.toggle", name })
+    if (!result) {
+      notifyFailure(t("mcp.title"), t("common.requestFailed"))
+      return
+    }
+    servers.value = result.servers
   } catch (err) {
     notifyFailure(t("mcp.title"), err instanceof Error ? err.message : String(err))
   } finally {

@@ -2696,6 +2696,7 @@ async function confirmFull() {
   const held = pendingFullFor.value
   pendingFullFor.value = undefined
   await applyAccess("full", held)
+  if (await applyAccess("full")) confirmingFull.value = false
 }
 
 /*
@@ -2711,21 +2712,27 @@ async function applyAccess(next: Access, to?: string | null) {
   const id = to === undefined ? sessionID.value : (to ?? undefined)
   const forSession = Boolean(id) && !props.fresh && !props.side
   if (forSession && id) {
+async function applyAccess(next: Access): Promise<boolean> {
+  const id = sessionID.value
+  if (accessHere.value && id) {
     try {
       await app.setAccess(id, next)
       app.announceAccess(next)
+      return true
     } catch (err) {
       notifyFailure(t("composer.access.failed"), err instanceof Error ? err.message : String(err))
+      return false
     }
-    return
   }
   const patch = app.config ? accessPatch(app.config, next) : undefined
-  if (!patch) return
+  if (!patch) return false
   try {
     await app.patchConfig(patch, { quiet: true })
     app.announceAccess(next)
+    return true
   } catch (err) {
     notifyFailure(t("composer.access.failed"), err instanceof Error ? err.message : String(err))
+    return false
   }
 }
 

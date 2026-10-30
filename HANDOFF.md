@@ -645,6 +645,11 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - PR: https://github.com/WyattCode/MCode/pull/160 （未合并）
 - Windows Settings：`finishMcpImport` / `authorizeMcp` 在 `client` 为空时不再假成功 toast；`toggleHardwareAcceleration` 失败回滚开关并 `notifyFailure`。
 - 验证：smoke「Review polish r129」；未合并。
+### 续六十三：清除浏览数据确认 fail-closed；插件开关空 client toast；完全访问确认失败保留对话框（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/161 （未合并）
+- Windows：`clearBrowsing` 成功后才关确认框；`PluginsView.toggle` 空 client / 空结果 `notifyFailure`；`confirmFull` 仅在 `applyAccess` 成功后关闭。
+- 验证：smoke「Review polish r130」；未合并。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
