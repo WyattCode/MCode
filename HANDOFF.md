@@ -221,6 +221,12 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 续六十四：编辑卡撤销确认 fail-closed；移出项目 / 标记无法继续空 client toast（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- Windows：`EditedFilesCard.revert` 成功后才关确认框；`row.moveOut` / `row.reviewRestricted` 空 client `notifyFailure`。
+- 验证：smoke「Review polish r131」；未合并。
+
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
 Pad 9 Pro Max（`M367FC`）接上后，第一次把「平板发指令 → 主机跑模型 → 回复回画到平板」整条链路走通。

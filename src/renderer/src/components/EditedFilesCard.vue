@@ -87,8 +87,11 @@ function baseName(file: string) {
 }
 
 async function revert() {
-  confirming.value = false
-  if (!props.sessionId) return
+  if (!props.sessionId) {
+    confirming.value = false
+    return
+  }
+  if (reverting.value) return
   reverting.value = true
   try {
     const result = await app.revertTurn(props.sessionId, props.messageIds)
@@ -106,6 +109,7 @@ async function revert() {
     ]
       .filter(Boolean)
       .join(t("stream.revertExtraSep"))
+    confirming.value = false
     notify(extra ? t("stream.revertedWithExtra", { n: done, extra }) : t("stream.revertedCard", { n: done }))
   } catch (err) {
     notifyFailure(t("stream.revertFailed"), err instanceof Error ? err.message : String(err))
@@ -284,7 +288,7 @@ async function pickMenu(key: string) {
         {{ t("stream.confirmRevert", { n: files.length }) }}
       </div>
       <div class="fc-confirm-actions">
-        <button type="button" class="fc-confirm-btn allow" data-fc-confirm-yes @click="revert">{{ t("stream.confirmRevertYes") }}</button>
+        <button type="button" class="fc-confirm-btn allow" data-fc-confirm-yes :disabled="reverting" @click="revert">{{ t("stream.confirmRevertYes") }}</button>
         <button type="button" class="fc-confirm-btn" data-fc-confirm-no @click="confirming = false">{{ t("common.cancel") }}</button>
       </div>
     </div>

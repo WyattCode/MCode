@@ -1504,8 +1504,13 @@ const ROW_ACTIONS: Record<string, (sessionID: string, header: boolean) => void |
   },
   /* Out of its project, into a folder of its own; the side column follows the session update. */
   "row.moveOut": async (sessionID) => {
+    const client = app.client
+    if (!client) {
+      notifyFailure(t("menu.moveOut"), t("common.requestFailed"))
+      return
+    }
     try {
-      await app.client?.request({ type: "session.moveOut", sessionID })
+      await client.request({ type: "session.moveOut", sessionID })
     } catch (failure) {
       notifyFailure(t("menu.moveOut"), reasonOf(failure))
     }
@@ -1557,8 +1562,13 @@ const ROW_ACTIONS: Record<string, (sessionID: string, header: boolean) => void |
   "row.reviewRestricted": async (sessionID) => {
     const target = app.sessions.find((entry) => entry.id === sessionID)
     if (!target) return
+    const client = app.client
+    if (!client) {
+      notifyFailure(t("menu.restrictConversation"), t("common.requestFailed"))
+      return
+    }
     try {
-      await app.client?.request({ type: "session.reviewRestricted", sessionID, restricted: !target.reviewRestricted })
+      await client.request({ type: "session.reviewRestricted", sessionID, restricted: !target.reviewRestricted })
       notify(t(target.reviewRestricted ? "menu.allowContinue" : "menu.restrictConversation"))
     } catch (failure) {
       notifyFailure(t("menu.restrictConversation"), reasonOf(failure))

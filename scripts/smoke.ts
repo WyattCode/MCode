@@ -2145,6 +2145,49 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r131")
+  {
+    const edited = await fs.readFile(path.join(process.cwd(), "src/renderer/src/components/EditedFilesCard.vue"), "utf8")
+    const revAt = edited.indexOf("async function revert")
+    const rev = revAt >= 0 ? edited.slice(revAt, revAt + 1600) : ""
+    const doneAt = rev.indexOf("const done = result.restored")
+    const confirmAt = rev.indexOf("confirming.value = false", doneAt >= 0 ? doneAt : 0)
+    const notifyAt = rev.indexOf("stream.revertedCard")
+    check(
+      "r131: EditedFilesCard.revert confirm after success",
+      rev.includes("if (!props.sessionId) {") &&
+        rev.includes("if (reverting.value) return") &&
+        doneAt >= 0 &&
+        confirmAt > doneAt &&
+        notifyAt > confirmAt,
+    )
+    const yesAt = edited.indexOf("data-fc-confirm-yes")
+    const yes = yesAt >= 0 ? edited.slice(yesAt, yesAt + 120) : ""
+    check("r131: EditedFilesCard confirm-yes disabled while reverting", yes.includes(':disabled="reverting"'))
+    const appSrc = await fs.readFile(path.join(process.cwd(), "src/renderer/src/App.vue"), "utf8")
+    const moveAt = appSrc.indexOf('"row.moveOut": async')
+    const move = moveAt >= 0 ? appSrc.slice(moveAt, moveAt + 500) : ""
+    check(
+      "r131: row.moveOut null-client fail-closed",
+      move.includes("const client = app.client") &&
+        move.includes("if (!client)") &&
+        move.includes('t("menu.moveOut")') &&
+        move.includes("common.requestFailed") &&
+        move.includes('type: "session.moveOut"') &&
+        !move.includes("app.client?.request"),
+    )
+    const rrAt = appSrc.indexOf('"row.reviewRestricted": async')
+    const rr = rrAt >= 0 ? appSrc.slice(rrAt, rrAt + 700) : ""
+    check(
+      "r131: row.reviewRestricted null-client fail-closed",
+      rr.includes("const client = app.client") &&
+        rr.includes("if (!client)") &&
+        rr.includes("common.requestFailed") &&
+        rr.includes('type: "session.reviewRestricted"') &&
+        !rr.includes("app.client?.request"),
+    )
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }
