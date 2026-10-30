@@ -2458,6 +2458,7 @@ async function main() {
   section("Review polish r103")
   section("Review polish r104")
   section("Review polish r105")
+  section("Review polish r106")
   {
     const root = process.cwd()
     const main = await fs.readFile(
@@ -2840,6 +2841,20 @@ async function main() {
     const usage = usageAt >= 0 ? main.slice(Math.max(0, usageAt - 200), usageAt + 500) : ""
     check("r105: usage.summary uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}usage\.summary/.test(usage))
     check("r105: usage.summary toasts on failure", usage.includes("没能加载用量"))
+    const artAt = main.indexOf("fun openArtifact")
+    const art = artAt >= 0 ? main.slice(artAt, artAt + 5600) : ""
+    check("r106: openArtifact uses rpcOrThrow", /rpcOrThrow\(ask/.test(art))
+    check("r106: openArtifact toasts 打不开这个文件", art.includes("打不开这个文件"))
+    check("r106: openArtifact toasts unsupported kinds", art.includes("这类文件还不能在这里预览"))
+    check("r106: openArtifact toasts tooBig", art.includes("文件太大，无法预览"))
+    const plugAt = main.indexOf("pluginsFailed = mcp")
+    const plug = plugAt >= 0 ? main.slice(plugAt, plugAt + 450) : ""
+    check("r106: pluginsFailed when either list fails", plug.includes("mcp == null || sk == null"))
+    check("r106: plugins toasts on failure", plug.includes("没能加载插件"))
+    const brAt = main.indexOf('put("type", "git.branches")')
+    const br = brAt >= 0 ? main.slice(Math.max(0, brAt - 120), brAt + 550) : ""
+    check("r106: git.branches uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}git\.branches/.test(br))
+    check("r106: git.branches toasts on failure", br.includes("没能加载分支"))
   }
 
   section("Permission guide")

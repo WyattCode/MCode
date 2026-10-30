@@ -3182,9 +3182,19 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             // this reader has no disk on the far side of the gateway, so it asks.
             // A text or picture preview ignores the flag.
             ask.put("withBytes", true)
-            val r = runCatching { rpc(ask, 60_000) }.getOrNull()
-            val payload = r?.optJSONObject("data")
-            if (payload?.optBoolean("video") == true) {
+            val r = runCatching { rpcOrThrow(ask, 60_000) }
+                .onFailure {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, "打不开这个文件", Toast.LENGTH_SHORT).show()
+                    }
+                }
+                .getOrNull() ?: return@launch
+            val payload = r.optJSONObject("data")
+            if (payload == null) {
+                Toast.makeText(context, "打不开这个文件", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            if (payload.optBoolean("video") == true) {
                 val name = rel.substringAfterLast('/').substringAfterLast('\\')
                 val b64 = payload.optString("data")
                 if (b64.isBlank()) {
@@ -3220,8 +3230,18 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 }
                 return@launch
             }
-            val body = payload?.optString("content").orEmpty()
+            if (payload.optBoolean("tooBig")) {
+                Toast.makeText(context, "文件太大，无法预览", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val kind = payload.optString("kind")
+            if (kind == "image" || kind == "audio" || kind == "binary") {
+                Toast.makeText(context, "这类文件还不能在这里预览", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val body = payload.optString("content").orEmpty()
             if (body.isNotBlank()) filePreview = rel.substringAfterLast('/').substringAfterLast('\\') to body
+            else Toast.makeText(context, "打不开这个文件", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -3291,7 +3311,12 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         sk?.optJSONObject("data")?.optJSONArray("skills")?.let { arr ->
             for (i in 0 until arr.length()) arr.optJSONObject(i)?.let { pluginSkills.add(it) }
         }
-        pluginsFailed = mcp == null && sk == null
+        pluginsFailed = mcp == null || sk == null
+        if (pluginsFailed) {
+            withContext(Dispatchers.Main) {
+                Toast.makeText(context, "没能加载插件", Toast.LENGTH_SHORT).show()
+            }
+        }
         pluginsLoading = false
     }
 
@@ -5794,16 +5819,19 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             // The same answer the panel uses, kept where the transcript can reach it.
             gitRepo = data.optBoolean("repo")
             branches.clear()
-            runCatching { rpc(JSONObject().put("type", "git.branches").put("directory", root)) }
-                .getOrNull()
-                ?.optJSONObject("data")
-                ?.optJSONArray("branches")
-                ?.let { arr ->
+            runCatching {
+                val br = rpcOrThrow(JSONObject().put("type", "git.branches").put("directory", root))
+                br.optJSONObject("data")?.optJSONArray("branches")?.let { arr ->
                     for (i in 0 until arr.length()) {
                         val b = arr.optString(i)
                         if (b.isNotBlank()) branches.add(b)
                     }
                 }
+            }.onFailure {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "没能加载分支", Toast.LENGTH_SHORT).show()
+                }
+            }
             data.optJSONArray("changed")?.let { arr ->
                 for (i in 0 until arr.length()) {
                     val f = arr.optString(i)
