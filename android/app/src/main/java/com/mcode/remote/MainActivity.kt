@@ -1620,6 +1620,12 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * last session id already uses.
      */
     val drafts = remember { mutableStateMapOf<String, String>() }
+    /*
+     * A second tap on the goal's resend button while the first is still out
+     * would send the prompt twice: the flag is held until both round trips
+     * are done.
+     */
+    val goalResending = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
     val draftStore = context.getSharedPreferences("mcode-remote-drafts", android.content.Context.MODE_PRIVATE)
     LaunchedEffect(Unit) {
         for ((key, value) in draftStore.all) {
@@ -2744,9 +2750,15 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         seenUpdated.remove(gone)
                         attachmentStash.remove(gone)
                         attachments.clear()
+                        // The conversation vanished from the list: its draft and
+                        // stored copy go with it, and the files picked for it
+                        // must not follow the reader into the next one.
+                        drafts.remove(gone)
+                        draftStore.edit().remove("draft.$gone").apply()
                         currentSession = null
                         items.clear()
                         messageIndex.clear()
+                        attachments.clear()
                         loadingThread = false
                         selectSeq++
                     }
@@ -2828,6 +2840,10 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     "session.deleted" -> {
                         val gone = event.optString("sessionID")
                         sessions.removeAll { it.id == gone }
+                        // The draft belongs to the conversation: left behind it
+                        // would outlive the conversation in prefs for good.
+                        drafts.remove(gone)
+                        draftStore.edit().remove("draft.$gone").apply()
                         // A row that is gone cannot be unread, and the set is
                         // held for the life of the screen: without this every
                         // deleted conversation's id stayed in it for good.
@@ -2842,6 +2858,9 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             currentSession = null
                             items.clear()
                             messageIndex.clear()
+                            // Files picked for the conversation that is gone
+                            // must not follow the reader into the next one.
+                            attachments.clear()
                             // The read this conversation had under way will
                             // never land; it must not leave the spinner up.
                             loadingThread = false
@@ -3731,15 +3750,23 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 val condition = currentRow?.goal?.condition
                 val sessionID = currentSession
                 if (!condition.isNullOrBlank() && sessionID != null) {
-                    scope.launch {
-                        runCatching {
-                            rpc(JSONObject().put("type", "session.goal").put("sessionID", sessionID).put("condition", condition))
-                            rpc(JSONObject().put("type", "session.prompt").put("sessionID", sessionID).put("text", condition))
-                            // The reader may have left this conversation while the
-                            // two round trips were out; the row it names is still
-                            // the one that started running, so the id is taken
-                            // before the calls rather than re-read after them.
-                            withContext(Dispatchers.Main) { setRunning(sessionID, true) }
+                    // A second tap while the first is still out would send the
+                    // prompt twice; the flag is cleared when the pair is done.
+                    if (goalResending.compareAndSet(false, true)) {
+                        scope.launch {
+                            try {
+                                runCatching {
+                                    rpc(JSONObject().put("type", "session.goal").put("sessionID", sessionID).put("condition", condition))
+                                    rpc(JSONObject().put("type", "session.prompt").put("sessionID", sessionID).put("text", condition))
+                                    // The reader may have left this conversation while the
+                                    // two round trips were out; the row it names is still
+                                    // the one that started running, so the id is taken
+                                    // before the calls rather than re-read after them.
+                                    withContext(Dispatchers.Main) { setRunning(sessionID, true) }
+                                }
+                            } finally {
+                                goalResending.set(false)
+                            }
                         }
                     }
                 }

@@ -387,6 +387,23 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 **回归**：smoke「Review polish r85」源码 scrape + mutate-fail（去掉 draft 拒写 / 去掉 select restore）。
 
 未做：#102–#115 路径、ContextRing 过满空环（故意）、permission 键盘陷阱（#113）、新 CSS token、REFERENCE_ENGLISH。
+### 续十九：拖放提及跟草稿、Android 删除清附件/草稿、目标重发防双击（2026-10-30）
+
+复核主线（避开未合并的 #102–#116）时确认三处：
+
+1. **Composer `onDrop`**：文本文件转 @mention 会 `await directoriesOf` 再 `addDroppedMentions`，没有 `take`/`attachPaths` 那套 `draftKey` 护栏——切换会话后提及会写进另一份草稿。
+2. **Android `session.deleted` / list `gone`**：开着的会话消失时不清 `attachments`，下一会话继承待发文件；草稿也不从 `draftStore` 删，prefs 里永久残留。
+3. **`onGoalResend`**：无在途锁，连点会打出两次 `session.prompt`。
+
+**修法**（`fix/review-polish-r86`，未合并）：
+
+- onDrop：`originKey` + directoriesOf 后拒写。
+- deleted/gone：`drafts`/`draftStore` 删 `draft.$gone`；开着时 `attachments.clear()`。
+- `goalResending` AtomicBoolean 包住 goal+prompt。
+
+**回归**：smoke「Review polish r86」+ mutate-fail。
+
+未做：#102–#116 路径、ContextRing 过满空环、permission 键盘（#113）、新 CSS token、REFERENCE_ENGLISH。
 
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
