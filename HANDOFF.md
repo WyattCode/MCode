@@ -221,6 +221,12 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 续五十八：删除/归档/恢复与移出项目失败提示（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- 桌面：会话删除（单条/批量/设置页归档删除）、归档与撤销归档、项目批量归档、设置页恢复、移出项目：RPC 失败补 `common.requestFailed`（撤销归档用 `toast.archiveUndoFailed`）；成功 toast 只在实际成功后发出，批量按成功条数计数。
+- 验证：smoke「Review polish r125」；未合并。
+
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
 Pad 9 Pro Max（`M367FC`）接上后，第一次把「平板发指令 → 主机跑模型 → 回复回画到平板」整条链路走通。

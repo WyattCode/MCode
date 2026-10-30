@@ -2145,6 +2145,44 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r125")
+  {
+    const root = process.cwd()
+    const appVue = (await fs.readFile(path.join(root, "src/renderer/src/App.vue"), "utf8")).replace(/\r\n/g, "\n")
+    const delAt = appVue.indexOf("async function confirmDeleteSession")
+    const del = delAt >= 0 ? appVue.slice(delAt, delAt + 600) : ""
+    check("r125: confirmDeleteSession try/catch", del.includes("try {") && del.includes("await app.remove") && del.includes("notifyFailure") && del.includes("common.requestFailed"))
+    const manyAt = appVue.indexOf("async function confirmDeleteMany")
+    const many = manyAt >= 0 ? appVue.slice(manyAt, manyAt + 900) : ""
+    check("r125: confirmDeleteMany counts removed", many.includes("let removed") && many.includes("notifyFailure") && many.includes("toast.convosDeleted"))
+    const archAt = appVue.indexOf("async function archiveSessions")
+    const arch = archAt >= 0 ? appVue.slice(archAt, archAt + 1200) : ""
+    check("r125: archiveSessions try/catch + archived list", arch.includes("const archived") && arch.includes("notifyFailure") && arch.includes("undoArchive(archived)"))
+    const undoAt = appVue.indexOf("async function undoArchive")
+    const undo = undoAt >= 0 ? appVue.slice(undoAt, undoAt + 600) : ""
+    check("r125: undoArchive try/catch", undo.includes("try {") && undo.includes("toast.archiveUndoFailed"))
+    const closeAt = appVue.indexOf("async function closeProjects")
+    const close = closeAt >= 0 ? appVue.slice(closeAt, closeAt + 400) : ""
+    check("r125: closeProjects try/catch", close.includes("try {") && close.includes("removeProjects") && close.includes("notifyFailure"))
+    const batchAt = appVue.indexOf("let archived = 0")
+    const batch = batchAt >= 0 ? appVue.slice(batchAt, batchAt + 900) : ""
+    check("r125: runProjectBatch archive try/catch", batch.includes("notifyFailure") && batch.includes("toast.projectsArchivedN"))
+
+    const settings = (await fs.readFile(path.join(root, "src/renderer/src/components/SettingsDialog.vue"), "utf8")).replace(/\r\n/g, "\n")
+    const oneAt = settings.indexOf("async function restoreOne")
+    const one = oneAt >= 0 ? settings.slice(oneAt, oneAt + 450) : ""
+    check("r125: restoreOne try/catch", one.includes("try {") && one.includes("notifyFailure") && one.includes("toast.convoRestored"))
+    const pickAt = settings.indexOf("async function restorePicked")
+    const pick = pickAt >= 0 ? settings.slice(pickAt, pickAt + 800) : ""
+    check("r125: restorePicked counts restored", pick.includes("let restored") && pick.includes("notifyFailure"))
+    const remAt = settings.indexOf("async function confirmRemove")
+    const rem = remAt >= 0 ? settings.slice(remAt, remAt + 900) : ""
+    check("r125: confirmRemove counts removed", rem.includes("let removed") && rem.includes("notifyFailure"))
+    const rpAt = settings.indexOf("async function removeProject")
+    const rp = rpAt >= 0 ? settings.slice(rpAt, rpAt + 450) : ""
+    check("r125: removeProject try/catch", rp.includes("try {") && rp.includes("removeProjects") && rp.includes("notifyFailure"))
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }

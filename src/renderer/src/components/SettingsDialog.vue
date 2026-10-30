@@ -684,7 +684,12 @@ async function removeProject() {
   const directory = removingProject.value
   removingProject.value = undefined
   if (!directory) return
-  await app.removeProjects([directory])
+  try {
+    await app.removeProjects([directory])
+  } catch (err) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    return
+  }
   void loadTrees()
 }
 
@@ -1389,16 +1394,35 @@ function toggleAllPicked() {
 
 /* MiMo confirms a restore with one toast, and a batch with one counted toast rather than one each. */
 async function restoreOne(sessionID: string) {
-  await app.archive(sessionID, false)
+  try {
+    await app.archive(sessionID, false)
+  } catch (err) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    return
+  }
   notify(t("toast.convoRestored"), { level: "success" })
 }
 
 async function restorePicked() {
   const ids = [...pickedLive.value]
-  for (const sessionID of ids) await app.archive(sessionID, false)
+  let restored = 0
+  let failed = false
+  let err: unknown
+  for (const sessionID of ids) {
+    try {
+      await app.archive(sessionID, false)
+      restored++
+    } catch (e) {
+      failed = true
+      err = e
+    }
+  }
   stopSelecting()
   // A batch is always counted, even a batch of one, as MiMo's unarchiveMany says it.
-  if (ids.length) notify(t("toast.convosRestored", { n: ids.length }), { level: "success" })
+  if (failed) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+  }
+  if (restored) notify(t("toast.convosRestored", { n: restored }), { level: "success" })
 }
 
 /** What the delete dialog is about: one named conversation, or the selection. */
@@ -1408,11 +1432,25 @@ async function confirmRemove() {
   const target = confirmingDelete.value
   confirmingDelete.value = undefined
   if (!target) return
-  for (const sessionID of target.ids) await app.remove(sessionID)
+  let removed = 0
+  let failed = false
+  let err: unknown
+  for (const sessionID of target.ids) {
+    try {
+      await app.remove(sessionID)
+      removed++
+    } catch (e) {
+      failed = true
+      err = e
+    }
+  }
   if (target.title === undefined) stopSelecting()
   // MiMo's delete notices are success-level, the same from here as from the side column.
-  if (target.ids.length === 1) notify(t("toast.convoDeleted"), { level: "success" })
-  else if (target.ids.length) notify(t("toast.convosDeleted", { n: target.ids.length }), { level: "success" })
+  if (failed) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+  }
+  if (removed === 1) notify(t("toast.convoDeleted"), { level: "success" })
+  else if (removed) notify(t("toast.convosDeleted", { n: removed }), { level: "success" })
 }
 
 // Nothing left to manage ends the selection, as the toggle disappears with the list.

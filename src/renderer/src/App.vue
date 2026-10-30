@@ -648,10 +648,24 @@ async function runBatch(action: "archive" | "delete" | "cancel" | "all" | "none"
 async function confirmDeleteMany() {
   const targets = deletingMany.value ?? []
   deletingMany.value = undefined
-  for (const sessionID of targets) await app.remove(sessionID)
+  let removed = 0
+  let failed = false
+  let err: unknown
+  for (const sessionID of targets) {
+    try {
+      await app.remove(sessionID)
+      removed++
+    } catch (e) {
+      failed = true
+      err = e
+    }
+  }
   selecting.value = undefined
   // MiMo's removeMany: one notice for the batch.
-  if (targets.length) notify(t("toast.convosDeleted", { n: targets.length }), { level: "success" })
+  if (failed) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+  }
+  if (removed) notify(t("toast.convosDeleted", { n: removed }), { level: "success" })
 }
 
 /*
@@ -664,11 +678,26 @@ async function archiveSessions(ids: string[]) {
     notify(t("toast.noConvosToArchive"))
     return
   }
-  for (const sessionID of ids) await app.archive(sessionID, true)
-  notify(ids.length === 1 ? t("toast.convoArchived") : t("toast.archivedNConvos", { count: ids.length }), {
+  const archived: string[] = []
+  let failed = false
+  let err: unknown
+  for (const sessionID of ids) {
+    try {
+      await app.archive(sessionID, true)
+      archived.push(sessionID)
+    } catch (e) {
+      failed = true
+      err = e
+    }
+  }
+  if (failed) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+  }
+  if (!archived.length) return
+  notify(archived.length === 1 ? t("toast.convoArchived") : t("toast.archivedNConvos", { count: archived.length }), {
     level: "success",
     links: [
-      { label: t("toast.archiveUndo"), run: () => void undoArchive(ids) },
+      { label: t("toast.archiveUndo"), run: () => void undoArchive(archived) },
       { label: t("toast.viewArchived"), run: () => openSettings("archive") },
     ],
   })
@@ -681,7 +710,11 @@ async function undoArchive(ids: readonly string[]) {
     notifyFailure(t("toast.archiveUndoFailed"))
     return
   }
-  for (const sessionID of still) await app.archive(sessionID, false)
+  try {
+    for (const sessionID of still) await app.archive(sessionID, false)
+  } catch {
+    notifyFailure(t("toast.archiveUndoFailed"))
+  }
 }
 
 /**
@@ -1745,7 +1778,11 @@ const PROJECT_ACTIONS: Record<string, (directory: string) => void | Promise<void
 
 /* Takes projects off the project list; adding the folder again brings each back. */
 async function closeProjects(directories: string[]) {
-  await app.removeProjects(directories)
+  try {
+    await app.removeProjects(directories)
+  } catch (err) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+  }
 }
 
 const projectMenuItems = computed<MenuItem[]>(() => {
@@ -1865,7 +1902,12 @@ async function confirmDeleteSession() {
   const target = deletingSession.value
   deletingSession.value = undefined
   if (!target) return
-  await app.remove(target)
+  try {
+    await app.remove(target)
+  } catch (err) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    return
+  }
   notify(t("toast.convoDeleted"), { level: "success" })
 }
 
@@ -1890,12 +1932,24 @@ async function runProjectBatch(action: "archive" | "remove" | "exit" | "all" | "
   const chosen = selectingProjects.value ?? []
   if (!chosen.length) return
   if (action === "archive") {
+    let archived = 0
+    let failed = false
+    let err: unknown
     for (const directory of chosen) {
-      for (const session of projectSessions(directory)) await app.archive(session.id, true)
+      try {
+        for (const session of projectSessions(directory)) await app.archive(session.id, true)
+        archived++
+      } catch (e) {
+        failed = true
+        err = e
+      }
     }
     selectingProjects.value = undefined
     // MiMo's batch project archive is silent per project and says the count once, with no links.
-    notify(t("toast.projectsArchivedN", { count: chosen.length }), { level: "success" })
+    if (failed) {
+      notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    }
+    if (archived) notify(t("toast.projectsArchivedN", { count: archived }), { level: "success" })
     return
   }
   removingProjects.value = { directories: [...chosen], batch: true }
