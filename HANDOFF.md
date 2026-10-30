@@ -462,6 +462,12 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - questions.acceptEdits：捕获 currentID 再 setAccess，避免 await 中途切会话改到别的对话。
 - Android：toolVerbOf/TOOL_LABELS/StepMark 认 speak/memory/contacts/actor/invalid（修「已读取」误标，#124 notebook_edit 同系）。
 - 验证：smoke「Review polish r95」；未合并。
+### 续二十九：模型/Smart 目标捕获、胶囊权限与清除目标失败提示（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/127 （未合并）
+- 桌面：`chooseModel` / `chooseSmart` 一次捕获 `target`；effort 在 await 前读出，避免切会话写错强度。
+- Android：输入条权限芯片成功才改本地行并失败 Toast；清除目标成功才关 goalMode，失败 Toast。
+- 验证：smoke「Review polish r96」；未合并。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 

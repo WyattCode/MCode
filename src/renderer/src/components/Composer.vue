@@ -3067,6 +3067,9 @@ async function chooseAgent(next: (typeof AGENTS)[number]) {
 
 async function chooseModel(provider: string, model: string) {
   menu.value = undefined
+
+  // One conversation for the model write, the effort snap, and the toast — a
+  // switch mid-flight cannot retarget any of them.
   const target = sessionID.value
   const before = app.modelPick(target)
   const chosen = findModel(app.providers, { provider, model })
@@ -3088,6 +3091,10 @@ async function chooseModel(provider: string, model: string) {
     const hereEffort = session.value?.id === target ? session.value?.effort : undefined
     const effort = clampEffort(variants, hereEffort ?? app.config?.effort, chosen?.defaultEffort)
     if (effort && effort !== (hereEffort ?? app.config?.effort)) await app.setEffort(effort, target)
+    const priorEffort = session.value?.effort ?? app.config?.effort
+    await app.setModel({ provider, model }, target)
+    const effort = clampEffort(variants, priorEffort, chosen?.defaultEffort)
+    if (effort && effort !== priorEffort) await app.setEffort(effort, target)
   }
   app.announceModel(before, { provider, model })
 }
@@ -3095,6 +3102,9 @@ async function chooseModel(provider: string, model: string) {
 /* Smart: the model is picked from the conversation's first message. */
 async function chooseSmart() {
   menu.value = undefined
+
+  // One target for the write and the toast, so a switch mid-flight cannot
+  // retarget Smart onto a different conversation.
   const target = sessionID.value
   const before = app.modelPick(target)
   if (!target) await app.patchConfig({ smart: true })
