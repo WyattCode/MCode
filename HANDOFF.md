@@ -223,7 +223,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ### 续五十九：添加项目失败可见；编辑重发 prompt Toast（2026-10-30）
 
-- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- PR: https://github.com/WyattCode/MCode/pull/157 （未合并）
 - Windows：`HomeHero.existing` / `createBlank(source)`、`SettingsDialog.addProject`、`App.addAndBrowse` / `newSessionIn` 在 `addProject` 失败时 `notifyFailure`，成功才 take/startIn。
 - Android：编辑重发在 revert 成功后的 `session.prompt` 改 `rpcOrThrow`，失败 Toast「发送失败」。
 - 验证：smoke「Review polish r126」；未合并。
