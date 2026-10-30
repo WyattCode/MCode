@@ -2145,6 +2145,27 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r122")
+  {
+    const r122Root = process.cwd()
+    const drawer = await fs.readFile(path.join(r122Root, "src/renderer/src/components/TerminalDrawer.vue"), "utf8")
+    const listAt = drawer.indexOf('type: "shell.list"')
+    const listSrc = listAt >= 0 ? drawer.slice(Math.max(0, listAt - 120), listAt + 450) : ""
+    check("r122: TerminalDrawer shell.list try/catch", listSrc.includes("try {") && listSrc.includes("shell.list") && listSrc.includes("notifyFailure") && listSrc.includes("common.requestFailed"))
+    check("r122: TerminalDrawer shell.list no silent catch", !listSrc.includes(".catch(() => undefined)"))
+    check("r122: TerminalDrawer imports notifyFailure", drawer.includes("notifyFailure") && /import \{[\s\S]*notifyFailure[\s\S]*\} from ["']\.\.\/lib\/toast["']/.test(drawer))
+
+    const android = await fs.readFile(path.join(r122Root, "android/app/src/main/java/com/mcode/remote/MainActivity.kt"), "utf8")
+    const resendAt = android.indexOf("onGoalResend = {")
+    const resend = resendAt >= 0 ? android.slice(resendAt, resendAt + 1600) : ""
+    check("r122: Android onGoalResend rpcOrThrow", resend.includes("rpcOrThrow") && resend.includes("session.goal") && resend.includes("session.prompt"))
+    check("r122: Android onGoalResend failure Toast", resend.includes("onFailure") && resend.includes("无法重新发送目标"))
+
+    const openAt = android.indexOf('put("type", "shell.open")')
+    const openSrc = openAt >= 0 ? android.slice(Math.max(0, openAt - 200), openAt + 1600) : ""
+    check("r122: Android shell.open rpcOrThrow+Toast", openSrc.includes("rpcOrThrow") && openSrc.includes("无法打开终端") && openSrc.includes("无法读取终端内容"))
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }
