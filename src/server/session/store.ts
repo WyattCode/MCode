@@ -542,18 +542,21 @@ export class SessionStore {
    */
   async addUsage(sessionID: string, usage: Usage): Promise<void> {
     await this.exclusive(this.infoKey(sessionID), () =>
-      this.writeInfo(sessionID, (session) => ({
-        ...session,
-        updated: Date.now(),
-        usage: {
-          input: session.usage.input + usage.input,
-          output: session.usage.output + usage.output,
-          reasoning: session.usage.reasoning + usage.reasoning,
-          cacheRead: session.usage.cacheRead + usage.cacheRead,
-          cacheWrite: session.usage.cacheWrite + usage.cacheWrite,
-          cost: session.usage.cost + usage.cost,
-        },
-      })),
+      this.writeInfo(sessionID, (session) => {
+        const prior = session.usage ?? emptyUsage()
+        return {
+          ...session,
+          updated: Date.now(),
+          usage: {
+            input: prior.input + usage.input,
+            output: prior.output + usage.output,
+            reasoning: prior.reasoning + usage.reasoning,
+            cacheRead: prior.cacheRead + usage.cacheRead,
+            cacheWrite: prior.cacheWrite + usage.cacheWrite,
+            cost: prior.cost + usage.cost,
+          },
+        }
+      }),
     )
   }
 

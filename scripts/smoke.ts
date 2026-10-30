@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs"
 /**
  * End-to-end smoke test for the backend, driven over the real WebSocket.
  *
@@ -2400,6 +2401,15 @@ async function main() {
         else if (src[i] === "}") {
           depth--
           if (depth === 0) return src.slice(at, i + 1)
+  section("Review polish r94")
+  {
+    const readRepo = (rel: string): string => {
+      const roots = [process.cwd(), path.join(process.cwd(), ".."), path.join(process.cwd(), "../..")]
+      for (const root of roots) {
+        try {
+          return readFileSync(path.join(root, rel), "utf8")
+        } catch {
+          // try the next candidate root
         }
       }
       return ""
@@ -2608,6 +2618,34 @@ async function main() {
     const markFn = markAt < 0 ? "" : activity.slice(markAt, markAt + 400)
     check("Android StepMark maps notebook_edit to edit", markFn.includes("notebook_edit"), markFn.slice(0, 200))
     check("RunSummaryTest covers notebook_edit", summaryTest.includes("notebook_edit") && summaryTest.includes("notebookEditIsAnEdit"))
+    const sliceFn = (source: string, marker: string, size: number): string => {
+      const at = source.indexOf(marker)
+      return at < 0 ? "" : source.slice(at, at + size)
+    }
+
+    const stream = readRepo("src/renderer/src/components/MessageStream.vue")
+    check("r94: MessageStream.vue readable", stream.length > 0)
+    const sendEditBody = sliceFn(stream, "async function sendEdit", 900)
+    const retryBody = sliceFn(stream, "async function retry", 900)
+    check("r94: sendEdit found", sendEditBody.length > 0)
+    check("r94: retry found", retryBody.length > 0)
+    check("r94: sendEdit pins sessionID", /app\.send\(text, message\.attachments \?\? \[\], sessionID,/.test(sendEditBody))
+    check("r94: sendEdit drops undefined target", !/app\.send\(text, message\.attachments \?\? \[\], undefined,/.test(sendEditBody))
+    check("r94: retry pins sessionID", /app\.send\(message\.text \?\? "", message\.attachments \?\? \[\], sessionID,/.test(retryBody))
+    check("r94: retry drops side ternary", !retryBody.includes("props.side ? sessionID : undefined"))
+
+    const provider = readRepo("src/renderer/src/components/CustomProviderForm.vue")
+    check("r94: CustomProviderForm.vue readable", provider.length > 0)
+    const targetAt = provider.indexOf("const target = app.currentID")
+    const addAt = provider.indexOf("await app.addCustomProvider(entry)")
+    check("r94: provider captures target before save", targetAt >= 0 && addAt > targetAt)
+    check("r94: provider pins setModel target", provider.includes("await app.setModel(model, target)"))
+
+    const store = readRepo("src/server/session/store.ts")
+    check("r94: store.ts readable", store.length > 0)
+    const addUsageAt = store.indexOf("async addUsage(")
+    const guardAt = addUsageAt < 0 ? -1 : store.indexOf("session.usage ?? emptyUsage()", addUsageAt)
+    check("r94: addUsage guards missing usage", addUsageAt >= 0 && guardAt > addUsageAt)
   }
 
   section("Permission guide")

@@ -1365,7 +1365,7 @@ async function sendEdit(turn: Turn) {
     await app.truncate(sessionID, turn.id)
     editingAsked.value = undefined
     // As MiMo: the messages are already gone, so a send that is refused keeps the words as a draft.
-    if (!(await app.send(text, message.attachments ?? [], undefined, message.annotations ?? []))) {
+    if (!(await app.send(text, message.attachments ?? [], sessionID, message.annotations ?? []))) {
       restoreDraft({ ...message, text })
     }
   } catch (failure) {
@@ -1491,7 +1491,7 @@ async function retry(turn: Turn) {
   app.markReplacing(sessionID, true)
   try {
     await app.truncate(sessionID, turn.id)
-    const sent = await app.send(message.text ?? "", message.attachments ?? [], props.side ? sessionID : undefined, message.annotations ?? [])
+    const sent = await app.send(message.text ?? "", message.attachments ?? [], sessionID, message.annotations ?? [])
     if (!sent && !props.side) restoreDraft(message)
   } catch (failure) {
     notifyFailure(t("common.requestFailed"), failure instanceof Error ? failure.message : String(failure))

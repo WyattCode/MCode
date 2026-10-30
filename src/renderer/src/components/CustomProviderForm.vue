@@ -503,13 +503,14 @@ async function submit(): Promise<boolean> {
     models: form.value.models.map(modelOf),
     protocol: form.value.protocol,
   }
+  const target = app.currentID
   try {
     if (editing) await app.updateCustomProvider(entry)
     else await app.addCustomProvider(entry)
     pristine.value = JSON.stringify(form.value)
     if (props.standalone) {
       const model = { provider: id, model: entry.models[0].id }
-      if (app.currentID) await app.setModel(model)
+      if (target) await app.setModel(model, target)
       else await app.patchConfig({ model, smart: false })
     }
     if (editing) notice.success(t("model.changesSaved"))
