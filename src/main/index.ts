@@ -1404,7 +1404,9 @@ app.whenReady().then(async () => {
     if (!updater) return { ok: false, reason: "unknown", hint: "electron-updater did not load" }
     const target = updater.readyVersion()
     if (!target) return { ok: false, reason: updater.state().phase === "downloading" ? "staging" : "no-ready" }
-    updateTransactions.begin(pkg.version, target)
+    if (!updateTransactions.begin(pkg.version, target)) {
+      return { ok: false, reason: "unknown", hint: "update-transaction.json could not be written" }
+    }
     /*
      * MiMo's installing notice: shown before the app goes, and given up to 1.5 s
      * to be delivered so it is on screen as the window disappears. Worded in the

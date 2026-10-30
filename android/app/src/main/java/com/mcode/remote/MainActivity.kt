@@ -3035,7 +3035,15 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 return@launch
             }
             val body = payload?.optString("content").orEmpty()
-            if (body.isNotBlank()) filePreview = rel.substringAfterLast('/').substringAfterLast('\\') to body
+            if (body.isNotBlank()) {
+                filePreview = rel.substringAfterLast('/').substringAfterLast('\\') to body
+            } else {
+                Toast.makeText(
+                    context,
+                    payload?.optString("error").orEmpty().ifBlank { "打不开这个文件" },
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
         }
     }
 
