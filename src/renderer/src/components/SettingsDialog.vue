@@ -717,8 +717,13 @@ async function saveEnv() {
     notify(t("set.envSavedNameTaken", { name }))
     return
   }
-  await app.patchConfig({ projectNames: { ...(app.config?.projectNames ?? {}), [directory]: name } })
-  notify(t("set.envSaved"))
+  try {
+    await app.patchConfig({ projectNames: { ...(app.config?.projectNames ?? {}), [directory]: name } })
+    notify(t("set.envSaved"))
+  } catch {
+    // patchConfig already toasts prefSaveFailed; leave the typed name for retry.
+    return
+  }
 }
 
 interface TreeRow {
@@ -1484,13 +1489,23 @@ async function toggleFullAccess() {
 async function pickProjectRoot() {
   const [directory] = await pickDirectory(t("set.pickDir"))
   if (!directory) return
-  await app.patchConfig({ projectRoot: directory })
-  notify(t("set.projectRootSet"))
+  try {
+    await app.patchConfig({ projectRoot: directory })
+    notify(t("set.projectRootSet"))
+  } catch {
+    // patchConfig already toasts prefSaveFailed.
+    return
+  }
 }
 
 async function resetProjectRoot() {
-  await app.patchConfig({ projectRoot: "" })
-  notify(t("set.projectRootReset"))
+  try {
+    await app.patchConfig({ projectRoot: "" })
+    notify(t("set.projectRootReset"))
+  } catch {
+    // patchConfig already toasts prefSaveFailed.
+    return
+  }
 }
 
 const CHIME_LABEL: Record<Chime, string> = {

@@ -994,8 +994,12 @@ async function backToSource(sourceID: string) {
     notifyFailure(t("stream.sourceNotFound"))
     return
   }
-  await app.open(sourceID)
-  notify(t("stream.backToSource"))
+  try {
+    await app.open(sourceID)
+    notify(t("stream.backToSource"))
+  } catch (err) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+  }
 }
 
 /** True while an edit or retry is deleting and resending, so a second press cannot race the first. */

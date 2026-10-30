@@ -2145,6 +2145,57 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r139")
+  {
+    const { readFileSync } = await import("node:fs")
+    const { join } = await import("node:path")
+    const root = process.cwd()
+    const settings = readFileSync(join(root, "src/renderer/src/components/SettingsDialog.vue"), "utf8").replace(/\r\n/g, "\n")
+    const envAt = settings.indexOf("async function saveEnv")
+    const envEnd = settings.indexOf("interface TreeRow", envAt)
+    const env = envAt >= 0 && envEnd > envAt ? settings.slice(envAt, envEnd) : ""
+    check(
+      "r139: saveEnv success-only toast",
+      (() => {
+        const tryAt = env.indexOf("try {")
+        const awaitAt = env.indexOf("await app.patchConfig", tryAt)
+        const toastAt = env.indexOf('notify(t("set.envSaved"))', awaitAt)
+        return tryAt >= 0 && env.includes("catch {") && awaitAt > tryAt && toastAt > awaitAt
+      })(),
+    )
+    const pickAt = settings.indexOf("async function pickProjectRoot")
+    const pickEnd = settings.indexOf("const CHIME_LABEL", pickAt)
+    const pick = pickAt >= 0 && pickEnd > pickAt ? settings.slice(pickAt, pickEnd) : ""
+    check(
+      "r139: pickProjectRoot try/catch",
+      pick.includes("async function pickProjectRoot") &&
+        pick.includes("try {") &&
+        pick.includes('notify(t("set.projectRootSet"))') &&
+        pick.indexOf("await app.patchConfig({ projectRoot: directory })") < pick.indexOf('notify(t("set.projectRootSet"))'),
+    )
+    check(
+      "r139: resetProjectRoot try/catch",
+      pick.includes("async function resetProjectRoot") &&
+        pick.includes('notify(t("set.projectRootReset"))') &&
+        pick.indexOf('await app.patchConfig({ projectRoot: "" })') < pick.indexOf('notify(t("set.projectRootReset"))') &&
+        pick.includes("catch {"),
+    )
+
+    const stream = readFileSync(join(root, "src/renderer/src/components/MessageStream.vue"), "utf8").replace(/\r\n/g, "\n")
+    const backAt = stream.indexOf("async function backToSource")
+    const backEnd = stream.indexOf("const resending = ref", backAt)
+    const back = backAt >= 0 && backEnd > backAt ? stream.slice(backAt, backEnd) : ""
+    check(
+      "r139: backToSource try/catch + notifyFailure",
+      back.includes("try {") &&
+        back.includes("await app.open(sourceID)") &&
+        back.includes('notify(t("stream.backToSource"))') &&
+        back.includes("notifyFailure") &&
+        back.includes("common.requestFailed") &&
+        back.indexOf("await app.open(sourceID)") < back.indexOf('notify(t("stream.backToSource"))'),
+    )
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }
