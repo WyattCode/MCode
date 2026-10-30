@@ -2507,6 +2507,7 @@ const accessChoices = computed(() =>
 
 /* Set while the question before full access is on screen. */
 const confirmingFull = ref(false)
+const pendingFullFor = ref<string | null | undefined>(undefined)
 
 /* The row the keyboard stands on in the access menu, which takes the same keys as the model menu. */
 const accessHot = ref<Access>()
@@ -2651,6 +2652,7 @@ async function chooseAccess(next: Access) {
   if (!app.config?.permissions || next === access.value) return
   // Skipping every question is asked about once, the way MiMo asks.
   if (next === "full") {
+    pendingFullFor.value = sessionID.value ?? null
     confirmingFull.value = true
     return
   }
@@ -2659,17 +2661,24 @@ async function chooseAccess(next: Access) {
 
 async function confirmFull() {
   confirmingFull.value = false
-  await applyAccess("full")
+  const held = pendingFullFor.value
+  pendingFullFor.value = undefined
+  await applyAccess("full", held)
 }
 
 /*
  * In a conversation the level is saved with that conversation alone. On the
  * home screen it is the default, written into the config; that map arithmetic
  * is shared with the settings switch, which drops full access the same way.
+ *
+ * `to` is the conversation the dialog was opened on: the sheet can outlive a
+ * switch, and answering it must land on the session the user was looking at,
+ * not on whatever is current when they press 确认.
  */
-async function applyAccess(next: Access) {
-  const id = sessionID.value
-  if (accessHere.value && id) {
+async function applyAccess(next: Access, to?: string | null) {
+  const id = to === undefined ? sessionID.value : (to ?? undefined)
+  const forSession = Boolean(id) && !props.fresh && !props.side
+  if (forSession && id) {
     try {
       await app.setAccess(id, next)
       app.announceAccess(next)
@@ -4018,7 +4027,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 
     <Teleport to="body">
       <!-- DL19: MiMo's own full-access confirm. -->
-      <FullAccessDialog v-if="confirmingFull" @confirm="confirmFull" @close="confirmingFull = false" />
+      <FullAccessDialog v-if="confirmingFull" @confirm="confirmFull" @close="pendingFullFor = undefined; confirmingFull = false" />
     </Teleport>
   </div>
 </template>

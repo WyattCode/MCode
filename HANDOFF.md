@@ -429,6 +429,12 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - 桌面：`cycleEffort` / `stepEffort` 一次捕获 `target` 传给 `setEffort`.
 - Android：会话设置 Agent / 权限 / Effort 成功才改本地行，失败 Toast；权限不再在失败后也改 pill。
 - 验证：smoke「Review polish r90」；未合并。
+### 续二十四：会话表双击、完整权限确认目标、顶栏撤销失败提示（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/122 （未合并）
+- Android：会话长按表 压缩/撤销/归档 先清 sheetTarget 再 request；顶栏撤销/重做 rpcOrThrow + Toast。
+- 桌面：完整权限确认用 pendingFullFor 锁定打开时的会话（含首页 null）。
+- 验证：smoke「Review polish r91」；未合并。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 

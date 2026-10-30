@@ -5091,14 +5091,18 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                      */
                                     MenuRow(label = "撤销上一回合的改动", onClick = {
                                             headerMenu = false
-                                            currentSession?.let { sid ->
-                                                request(JSONObject().put("type", "session.undo").put("sessionID", sid))
+                                            val sid = currentSession ?: return@MenuRow
+                                            scope.launch {
+                                                runCatching { rpcOrThrow(JSONObject().put("type", "session.undo").put("sessionID", sid)) }
+                                                    .onFailure { Toast.makeText(context, "撤销失败：${it.message?.take(40) ?: ""}", Toast.LENGTH_LONG).show() }
                                             }
                                         })
                                     MenuRow(label = "重做撤销", onClick = {
                                             headerMenu = false
-                                            currentSession?.let { sid ->
-                                                request(JSONObject().put("type", "session.redo").put("sessionID", sid))
+                                            val sid = currentSession ?: return@MenuRow
+                                            scope.launch {
+                                                runCatching { rpcOrThrow(JSONObject().put("type", "session.redo").put("sessionID", sid)) }
+                                                    .onFailure { Toast.makeText(context, "重做失败：${it.message?.take(40) ?: ""}", Toast.LENGTH_LONG).show() }
                                             }
                                         })
                                     MenuRow(label = if (runningOnly) "显示全部会话" else "只看运行中", onClick = { headerMenu = false; runningOnly = !runningOnly })
@@ -5972,21 +5976,27 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     Text("重命名", fontSize = 15.sp, color = LocalText.current)
                 }
                 Row(Modifier.fillMaxWidth().clickable {
-                    request(JSONObject().put("type", "session.compact").put("sessionID", row.id)); sheetTarget = null
+                    val sid = row.id
+                    sheetTarget = null
+                    request(JSONObject().put("type", "session.compact").put("sessionID", sid))
                 }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Outlined.Checklist, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(14.dp))
                     Text("压缩对话", fontSize = 15.sp, color = LocalText.current)
                 }
                 Row(Modifier.fillMaxWidth().clickable {
-                    request(JSONObject().put("type", "session.undo").put("sessionID", row.id)); sheetTarget = null
+                    val sid = row.id
+                    sheetTarget = null
+                    request(JSONObject().put("type", "session.undo").put("sessionID", sid))
                 }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(14.dp))
                     Text("撤销上一步", fontSize = 15.sp, color = LocalText.current)
                 }
                 Row(Modifier.fillMaxWidth().clickable {
-                    request(JSONObject().put("type", "session.archive").put("sessionID", row.id).put("archived", true)); sheetTarget = null
+                    val sid = row.id
+                    sheetTarget = null
+                    request(JSONObject().put("type", "session.archive").put("sessionID", sid).put("archived", true))
                 }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Outlined.Folder, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(14.dp))

@@ -2434,6 +2434,82 @@ async function main() {
     const effort = effortAt >= 0 ? sheet.slice(effortAt, effortAt + 700) : ""
     check("r90: settings effort updates the row", /copy\(effort/.test(effort))
     check("r90: settings effort toasts on failure", effort.includes("没能切换 Effort"))
+  section("Review polish r91")
+  {
+    const skipDirs = new Set(["node_modules", ".git", "build", "dist", "out", ".gradle", ".idea"])
+    const list = (dir: string) => {
+      try {
+        return fs.readdirSync(dir, { withFileTypes: true })
+      } catch {
+        return []
+      }
+    }
+    const walk = (dir: string, name: string, depth: number): string | undefined => {
+      if (depth > 8) return undefined
+      const entries = list(dir)
+      for (const entry of entries) {
+        if (entry.isFile() && entry.name === name) return path.join(dir, entry.name)
+      }
+      for (const entry of entries) {
+        if (!entry.isDirectory() || skipDirs.has(entry.name)) continue
+        const hit = walk(path.join(dir, entry.name), name, depth + 1)
+        if (hit) return hit
+      }
+      return undefined
+    }
+    const findFile = (name: string): string | undefined => {
+      const roots = [process.cwd(), path.dirname(process.argv[1] ?? "")]
+      for (const root of roots) {
+        if (!root) continue
+        const hit = walk(root, name, 0)
+        if (hit) return hit
+      }
+      return undefined
+    }
+    const clickWindow = (text: string, label: string): string => {
+      const at = text.indexOf(label)
+      if (at < 0) return ""
+      const start = text.lastIndexOf("clickable", at)
+      return start < 0 ? "" : text.slice(start, at)
+    }
+    const after = (text: string, label: string, size = 600): string => {
+      const at = text.indexOf(label)
+      return at < 0 ? "" : text.slice(at, at + size)
+    }
+    const ordered = (text: string, first: string, second: string): boolean => {
+      const a = text.indexOf(first)
+      const b = text.indexOf(second)
+      return a >= 0 && b >= 0 && a < b
+    }
+
+    const mainPath = findFile("MainActivity.kt")
+    check("r91: MainActivity.kt found", Boolean(mainPath), mainPath ?? "")
+    const main = mainPath ? fs.readFileSync(mainPath, "utf8") : ""
+    const sheetRows: Array<[string, string]> = [
+      ["压缩对话", "session.compact"],
+      ["撤销上一步", "session.undo"],
+      ['Text("归档"', "session.archive"],
+    ]
+    for (const [label, type] of sheetRows) {
+      const win = clickWindow(main, label)
+      const name = label.includes("归档") ? "归档" : label
+      check(`r91: sheet ${name} clears sheetTarget first`, ordered(win, "sheetTarget = null", type), win.slice(-200))
+      check(`r91: sheet ${name} captures sid`, win.includes("val sid = row.id"))
+    }
+    const undoRow = after(main, "撤销上一回合的改动")
+    check("r91: header undo uses rpcOrThrow", undoRow.includes("rpcOrThrow"))
+    check("r91: header undo toasts 撤销失败", undoRow.includes("撤销失败"))
+    const redoRow = after(main, "重做撤销")
+    check("r91: header redo uses rpcOrThrow", redoRow.includes("rpcOrThrow"))
+    check("r91: header redo toasts 重做失败", redoRow.includes("重做失败"))
+
+    const composerPath = findFile("Composer.vue")
+    check("r91: Composer.vue found", Boolean(composerPath), composerPath ?? "")
+    const composer = composerPath ? fs.readFileSync(composerPath, "utf8") : ""
+    check("r91: composer tracks pendingFullFor", composer.includes("pendingFullFor"))
+    check("r91: composer confirms held session", composer.includes('applyAccess("full", held)'))
+    check("r91: composer applyAccess takes target", composer.includes("applyAccess(next: Access, to?: string | null)"))
+    check("r91: composer close clears pendingFullFor", /@close="[^"]*pendingFullFor[^"]*"/.test(composer))
   }
 
   section("Permission guide")
