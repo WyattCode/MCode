@@ -3772,16 +3772,15 @@ async function cycleAgent(by: 1 | -1) {
   const next = AGENT_NAMES[(at + by + AGENT_NAMES.length) % AGENT_NAMES.length]
   if (!next) return
   const before = app.modeOf(target)
-  await app.setAgent(next, target)
-  app.announceMode(before, target)
-  const before = app.modeOf(app.currentID)
   try {
-    await app.setAgent(next)
+    await app.setAgent(next, target)
   } catch (err) {
     notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
     return
   }
-  app.announceMode(before, app.currentID)
+  // Announced only once the write landed: a failed switch has no new mode to
+  // announce, and announcing the old one would read as if nothing was tried.
+  app.announceMode(before, target)
 }
 
 /**

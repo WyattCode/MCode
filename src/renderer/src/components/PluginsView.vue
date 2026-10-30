@@ -163,7 +163,6 @@ async function toggle(name: string) {
       return
     }
     const result = await client.request({ type: "mcp.toggle", name })
-    const result = await app.client?.request({ type: "mcp.toggle", name })
     if (!result) {
       notifyFailure(t("mcp.title"), t("common.requestFailed"))
       return

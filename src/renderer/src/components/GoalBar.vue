@@ -140,14 +140,12 @@ async function rerun() {
   try {
     await app.setGoal(props.sessionID, condition)
     await app.send(condition, [], props.sessionID)
-  } finally {
-    rerunning.value = false
-  if (!condition || restricted.value) return
-  try {
-    await app.setGoal(props.sessionID, condition)
-    await app.send(condition, [], props.sessionID)
   } catch (err) {
     notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+  } finally {
+    // Always cleared: a throw here would otherwise leave the button dead for
+    // the rest of the conversation.
+    rerunning.value = false
   }
 }
 

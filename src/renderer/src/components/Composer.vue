@@ -1191,16 +1191,13 @@ const goalMode = computed(() => (sessionID.value ? (session.value?.goalMode ?? f
 
 /* A switch rather than a command, because it stays on; the menu stays open, as MiMo's does. */
 async function toggleGoalMode() {
-  const next = !goalMode.value
-  await app.setGoalMode(next, sessionID.value)
   // Capture both before the await: a switch mid-flight must not retarget
   // the write, and the toast must name the value that was asked for — not
   // whatever the newly opened conversation happens to show.
   const target = sessionID.value
   const next = !goalMode.value
-  await app.setGoalMode(next, target)
   try {
-    await app.setGoalMode(next, sessionID.value)
+    await app.setGoalMode(next, target)
   } catch (err) {
     notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
     return
@@ -2710,13 +2707,14 @@ async function confirmFull() {
  * switch, and answering it must land on the session the user was looking at,
  * not on whatever is current when they press 确认.
  */
-async function applyAccess(next: Access, to?: string | null) {
+async function applyAccess(next: Access, to?: string | null): Promise<boolean> {
+  // `to` is the conversation the dialog was opened on: the sheet can outlive a
+  // switch, and answering it must land on the session the user was looking at,
+  // not on whatever is current when they press 确认. Omitting it means "the one
+  // on screen now".
   const id = to === undefined ? sessionID.value : (to ?? undefined)
   const forSession = Boolean(id) && !props.fresh && !props.side
   if (forSession && id) {
-async function applyAccess(next: Access): Promise<boolean> {
-  const id = sessionID.value
-  if (accessHere.value && id) {
     try {
       await app.setAccess(id, next)
       app.announceAccess(next)
@@ -2793,18 +2791,12 @@ async function chooseModelEffort(provider: string, model: string, level: Effort)
   // cannot retarget the model or the effort onto a different session.
   const target = sessionID.value
   const before = app.modelPick(target)
-  if (!target) {
-    await app.patchConfig({ model: { provider, model }, smart: false, effort: level })
-  } else {
-    await app.setModel({ provider, model }, target)
-    await app.setEffort(level, target)
-  const before = app.modelPick(sessionID.value)
   try {
-    if (!sessionID.value) {
+    if (!target) {
       await app.patchConfig({ model: { provider, model }, smart: false, effort: level }, { quiet: true })
     } else {
-      await app.setModel({ provider, model }, sessionID.value)
-      await app.setEffort(level, sessionID.value)
+      await app.setModel({ provider, model }, target)
+      await app.setEffort(level, target)
     }
   } catch (err) {
     notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
@@ -3146,29 +3138,27 @@ async function chooseModel(provider: string, model: string) {
    * else its first), so the level is written whenever the one in force is not
    * on offer.
    */
-  if (!target) {
-    const effort = clampEffort(variants, app.config?.effort, chosen?.defaultEffort)
-    await app.patchConfig({ model: { provider, model }, smart: false, ...(effort && effort !== app.config?.effort ? { effort } : {}) })
-  } else {
-    await app.setModel({ provider, model }, target)
-    const hereEffort = session.value?.id === target ? session.value?.effort : undefined
-    const effort = clampEffort(variants, hereEffort ?? app.config?.effort, chosen?.defaultEffort)
-    if (effort && effort !== (hereEffort ?? app.config?.effort)) await app.setEffort(effort, target)
-    const priorEffort = session.value?.effort ?? app.config?.effort
-    await app.setModel({ provider, model }, target)
-    const effort = clampEffort(variants, priorEffort, chosen?.defaultEffort)
-    if (effort && effort !== priorEffort) await app.setEffort(effort, target)
+  /*
+   * On the home screen there is no session to set it on, so the choice is the
+   * app's default - which the next task created from here will start with, and
+   * which every session already falls back to.
+   *
+   * MiMo snaps the level to one the new model takes (the same one, else medium,
+   * else its first), so the level is written whenever the one in force is not
+   * on offer.
+   */
   try {
-    if (!sessionID.value) {
+    if (!target) {
       const effort = clampEffort(variants, app.config?.effort, chosen?.defaultEffort)
       await app.patchConfig(
         { model: { provider, model }, smart: false, ...(effort && effort !== app.config?.effort ? { effort } : {}) },
         { quiet: true },
       )
     } else {
-      await app.setModel({ provider, model }, sessionID.value)
-      const effort = clampEffort(variants, session.value?.effort ?? app.config?.effort, chosen?.defaultEffort)
-      if (effort && effort !== session.value?.effort) await app.setEffort(effort, sessionID.value)
+      await app.setModel({ provider, model }, target)
+      const hereEffort = session.value?.id === target ? session.value?.effort : undefined
+      const effort = clampEffort(variants, hereEffort ?? app.config?.effort, chosen?.defaultEffort)
+      if (effort && effort !== (hereEffort ?? app.config?.effort)) await app.setEffort(effort, target)
     }
   } catch (err) {
     notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
@@ -3185,12 +3175,9 @@ async function chooseSmart() {
   // retarget Smart onto a different conversation.
   const target = sessionID.value
   const before = app.modelPick(target)
-  if (!target) await app.patchConfig({ smart: true })
-  else await app.setSmart(target)
-  const before = app.modelPick(sessionID.value)
   try {
-    if (!sessionID.value) await app.patchConfig({ smart: true }, { quiet: true })
-    else await app.setSmart(sessionID.value)
+    if (!target) await app.patchConfig({ smart: true }, { quiet: true })
+    else await app.setSmart(target)
   } catch (err) {
     notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
     return
