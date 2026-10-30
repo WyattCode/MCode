@@ -2145,6 +2145,27 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r109")
+  {
+    const root = process.cwd()
+    const main = await fs.readFile(
+      path.join(root, "android/app/src/main/java/com/mcode/remote/MainActivity.kt"),
+      "utf8",
+    )
+    const listAt = main.indexOf("atListDir = {")
+    const list = listAt >= 0 ? main.slice(listAt, listAt + 900) : ""
+    check("r109: atListDir uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}file\.listDir/.test(list))
+    check("r109: atListDir toasts on failure", list.includes("没能列出文件"))
+    const searchAt = main.indexOf("atSearch = {")
+    const search = searchAt >= 0 ? main.slice(searchAt, searchAt + 900) : ""
+    check("r109: atSearch uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,100}file\.search/.test(search))
+    check("r109: atSearch toasts on failure", search.includes("没能搜索文件"))
+    const attachAt = main.indexOf('put("type", "shell.attach")')
+    const attach = attachAt >= 0 ? main.slice(Math.max(0, attachAt - 160), attachAt + 550) : ""
+    check("r109: shell.attach uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}shell\.attach/.test(attach))
+    check("r109: shell.attach toasts on failure", attach.includes("没能连接终端"))
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }

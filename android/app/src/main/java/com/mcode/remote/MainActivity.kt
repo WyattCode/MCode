@@ -3552,27 +3552,39 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             onModel = { loadProviders(); modelPicker = true },
             directory = sessions.find { it.id == currentSession }?.directory.orEmpty(),
             atListDir = { dir ->
-                val r = runCatching { rpc(JSONObject().put("type", "file.listDir").put("directory", dir).put("sub", "")) }.getOrNull()
-                val arr = r?.optJSONObject("data")?.optJSONArray("entries")
-                val list = mutableListOf<Pair<String, Boolean>>()
-                if (arr != null) for (i in 0 until arr.length()) {
-                    val e = arr.optJSONObject(i) ?: continue
-                    list.add(e.optString("name") to (e.optString("type") == "dir"))
+                try {
+                    val r = rpcOrThrow(JSONObject().put("type", "file.listDir").put("directory", dir).put("sub", ""))
+                    val arr = r.optJSONObject("data")?.optJSONArray("entries")
+                    val list = mutableListOf<Pair<String, Boolean>>()
+                    if (arr != null) for (i in 0 until arr.length()) {
+                        val e = arr.optJSONObject(i) ?: continue
+                        list.add(e.optString("name") to (e.optString("type") == "dir"))
+                    }
+                    list.sortedWith(compareByDescending<Pair<String, Boolean>> { it.second }.thenBy { it.first }).take(8)
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, "没能列出文件", Toast.LENGTH_SHORT).show()
+                    }
+                    emptyList()
                 }
-                list.sortedWith(compareByDescending<Pair<String, Boolean>> { it.second }.thenBy { it.first }).take(8)
             },
             atSearch = { dir, query ->
-                val r = runCatching {
-                    rpc(JSONObject().put("type", "file.search").put("directory", dir).put("query", query).put("limit", 8))
-                }.getOrNull()
-                val arr = r?.optJSONObject("data")?.optJSONArray("entries")
-                val list = mutableListOf<Pair<String, String>>()
-                if (arr != null) for (i in 0 until arr.length()) {
-                    val e = arr.optJSONObject(i) ?: continue
-                    val rel = e.optString("rel")
-                    if (rel.isNotBlank()) list.add(e.optString("name") to rel)
+                try {
+                    val r = rpcOrThrow(JSONObject().put("type", "file.search").put("directory", dir).put("query", query).put("limit", 8))
+                    val arr = r.optJSONObject("data")?.optJSONArray("entries")
+                    val list = mutableListOf<Pair<String, String>>()
+                    if (arr != null) for (i in 0 until arr.length()) {
+                        val e = arr.optJSONObject(i) ?: continue
+                        val relPath = e.optString("rel")
+                        if (relPath.isNotBlank()) list.add(e.optString("name") to relPath)
+                    }
+                    list
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, "没能搜索文件", Toast.LENGTH_SHORT).show()
+                    }
+                    emptyList()
                 }
-                list
             },
             access0 = accessOf(sessions.find { it.id == currentSession }, appConfig),
             fullAllowed = appConfig?.optBoolean("allowFullAccess") != false || accessOf(sessions.find { it.id == currentSession }, appConfig) == "full",
@@ -5214,9 +5226,15 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     val id = opened.optJSONObject("data")?.optString("shellID").orEmpty()
                     if (id.isBlank()) return@LaunchedEffect
                     terminalId = id
-                    val attached = runCatching { rpc(JSONObject().put("type", "shell.attach").put("shellID", id)) }.getOrNull()
-                    val seen = attached?.optJSONObject("data")?.optString("data").orEmpty()
-                    if (seen.isNotBlank()) terminalText = seen.takeLast(8000)
+                    runCatching {
+                        val attached = rpcOrThrow(JSONObject().put("type", "shell.attach").put("shellID", id))
+                        val seen = attached.optJSONObject("data")?.optString("data").orEmpty()
+                        if (seen.isNotBlank()) terminalText = seen.takeLast(8000)
+                    }.onFailure {
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(context, "没能连接终端", Toast.LENGTH_SHORT).show()
+                        }
+                    }
                 }
                 Box(
                     Modifier
