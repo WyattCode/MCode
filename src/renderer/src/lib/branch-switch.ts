@@ -35,7 +35,7 @@ export async function switchBranch(
   } catch (err) {
     return { kind: "failed", branch, error: err instanceof Error ? err.message : String(err) }
   }
-  if (!result) return { kind: "unchanged" }
+  if (!result) return { kind: "failed", branch, error: t("common.requestFailed") }
   if (result.ok) {
     useApp().branchesChanged()
     return { kind: "switched", branch: result.branch ?? branch, conflicts: Boolean(result.conflicts) }

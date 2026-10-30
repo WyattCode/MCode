@@ -112,7 +112,10 @@ async function create() {
   busy.value = true
   try {
     const result = await app.client?.request({ type: "git.checkout", directory, branch, create: true })
-    if (!result) return
+    if (!result) {
+      notifyFailure(t("home.branchCreateFailed", { error: t("common.requestFailed") }))
+      return
+    }
     if (result.ok) {
       // MiMo leaves the menu up and redraws it with the new branch ticked; only the field goes.
       creating.value = false

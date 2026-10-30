@@ -2911,6 +2911,7 @@ async function main() {
   section("Review polish r111")
   section("Review polish r112")
   section("Review polish r113")
+  section("Review polish r114")
   {
     const { readFileSync } = await import("node:fs")
     const main = readFileSync(
@@ -2961,6 +2962,27 @@ async function main() {
     const commit = commitAt >= 0 ? main.slice(Math.max(0, commitAt - 200), commitAt + 700) : ""
     check("r113: git.commit uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,160}git\.commit"/.test(commit))
     check("r113: git.commit keeps data.ok gate", commit.includes('optBoolean("ok")'))
+    const officeAt = main.indexOf('JSONObject().put("type", "office.render")')
+    const office = officeAt >= 0 ? main.slice(Math.max(0, officeAt - 120), officeAt + 900) : ""
+    check("r114: office.render uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,160}office\.render/.test(office))
+    check("r114: office.render toasts on failure", office.includes("打不开这个文档"))
+    check("r114: office.render no plain rpc(", !/\brpc\(\s*\n?\s*JSONObject\(\)\.put\("type", "office\.render"\)/.test(office))
+    const revAt = main.indexOf('JSONObject().put("type", "session.revertTurn")')
+    const rev = revAt >= 0 ? main.slice(Math.max(0, revAt - 80), revAt + 700) : ""
+    check("r114: revertTurn uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,160}session\.revertTurn/.test(rev))
+    check("r114: revertTurn no lastError toast", !rev.includes("lastError"))
+    check("r114: revertTurn toasts on failure", rev.includes("撤销失败"))
+
+    const branchSwitch = readFileSync(process.cwd() + "/src/renderer/src/lib/branch-switch.ts", "utf8")
+    check(
+      "r114: branch-switch null result is failed not unchanged",
+      /if \(!result\) return \{ kind: "failed"/.test(branchSwitch) &&
+        !/if \(!result\) return \{ kind: "unchanged"/.test(branchSwitch),
+    )
+    const picker = readFileSync(process.cwd() + "/src/renderer/src/components/BranchPicker.vue", "utf8")
+    const createAt = picker.indexOf('type: "git.checkout", directory, branch, create: true')
+    const create = createAt >= 0 ? picker.slice(createAt, createAt + 350) : ""
+    check("r114: BranchPicker create toasts when result missing", create.includes("notifyFailure") && create.includes("branchCreateFailed"))
   }
 
   section("Permission guide")

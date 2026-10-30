@@ -3207,18 +3207,23 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             if (officeExt in setOf("docx", "xlsx", "pptx")) {
                 val name = rel.substringAfterLast('/').substringAfterLast('\\')
                 val reply = runCatching {
-                    rpc(
+                    rpcOrThrow(
                         JSONObject().put("type", "office.render").put("root", root).put("rel", rel),
                         60_000,
                     )
+                }.onFailure {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, "打不开这个文档", Toast.LENGTH_LONG).show()
+                    }
                 }.getOrNull()?.optJSONObject("data")
-                val html = reply?.optString("html").orEmpty()
+                if (reply == null) return@launch
+                val html = reply.optString("html").orEmpty()
                 if (html.isNotBlank()) {
-                    officePreview = Triple(name, reply?.optString("kind").orEmpty().ifBlank { officeExt }, html)
+                    officePreview = Triple(name, reply.optString("kind").orEmpty().ifBlank { officeExt }, html)
                 } else {
                     Toast.makeText(
                         context,
-                        reply?.optString("error").orEmpty().ifBlank { "打不开这个文档" },
+                        reply.optString("error").ifBlank { "打不开这个文档" },
                         Toast.LENGTH_LONG,
                     ).show()
                 }
@@ -3306,11 +3311,17 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         val sid = currentSession ?: return
         scope.launch {
             val reply = runCatching {
-                rpc(JSONObject().put("type", "session.revertTurn").put("sessionID", sid).put("messageIDs", org.json.JSONArray(messageIDs)), 120_000)
+                rpcOrThrow(JSONObject().put("type", "session.revertTurn").put("sessionID", sid).put("messageIDs", org.json.JSONArray(messageIDs)), 120_000)
+            }.onFailure { err ->
+                if (err is kotlinx.coroutines.CancellationException) throw err
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, err.message?.take(80)?.ifBlank { null } ?: "撤销失败", Toast.LENGTH_LONG).show()
+                }
             }.getOrNull()
             val data = reply?.optJSONObject("data")
             if (data == null) {
-                Toast.makeText(context, lastError ?: "撤销失败", Toast.LENGTH_LONG).show()
+                // rpcOrThrow already toasted onFailure; a bare null data is the soft empty case.
+                if (reply != null) Toast.makeText(context, "撤销失败", Toast.LENGTH_LONG).show()
                 return@launch
             }
             val restored = data.optInt("restored")
