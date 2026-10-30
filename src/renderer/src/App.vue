@@ -415,7 +415,12 @@ function beginRename(sessionID: string) {
 async function submitSessionRename(title: string) {
   const target = renamingSession.value
   renamingSession.value = undefined
-  if (target && title !== target.title) await app.rename(target.id, title)
+  if (!target || title === target.title) return
+  try {
+    await app.rename(target.id, title)
+  } catch (err) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+  }
 }
 
 /* MiMo's project rename: another project already under that name is refused, and the new name is said. */

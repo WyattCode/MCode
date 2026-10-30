@@ -709,6 +709,13 @@ async function onDrop(event: DragEvent) {
     // The reader may have left this draft while the directories were read.
     if (!composerMounted || draftKey.value !== originKey) return
     addDroppedMentions(inside.map((entry) => ({ rel: entry.rel, file: !folders.has(entry.absolute) })))
+    try {
+      const folders = new Set(await window.mcode.directoriesOf(inside.map((entry) => entry.absolute)))
+      addDroppedMentions(inside.map((entry) => ({ rel: entry.rel, file: !folders.has(entry.absolute) })))
+    } catch (err) {
+      // Never guess "file" on IPC failure — that mis-mentions folders.
+      notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    }
   }
   if (attach.length) await take(attach)
 

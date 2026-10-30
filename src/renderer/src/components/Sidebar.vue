@@ -10,7 +10,7 @@ import { subagentsAtWork } from "../lib/subagent-chip"
 import { sidePreview } from "../lib/side-preview"
 import { useApp } from "../stores/app"
 import { dateIn, language, sessionTitle, t, tn } from "../lib/i18n"
-import { notify } from "../lib/toast"
+import { notify, notifyFailure } from "../lib/toast"
 import { RAIL_WIDTH } from "../lib/right-tools"
 import { shownChord } from "../lib/keys"
 import type { MenuItem } from "../lib/menu"
@@ -496,7 +496,12 @@ async function folderDrop(event: DragEvent) {
     const local = decodeURIComponent(line.slice("file:".length).replace(/^\/\/\/?(?=[a-zA-Z]:)/, "").replace(/^\/\//, "/"))
     paths.push(/^\/[a-zA-Z]:/.test(local) ? local.slice(1) : local)
   }
-  emit("dropFolders", await window.mcode.directoriesOf([...new Set(paths)]))
+  try {
+    emit("dropFolders", await window.mcode.directoriesOf([...new Set(paths)]))
+  } catch (err) {
+    // Do not emit [] — that trips side.dropNotDir ("not a folder") for an IPC failure.
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+  }
 }
 
 /* MiMo saves each section's fold - 置顶, Projects, Recent - and starts every one open. */

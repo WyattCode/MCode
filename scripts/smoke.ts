@@ -3129,6 +3129,31 @@ async function main() {
     const list = listAt >= 0 ? files.slice(listAt, listAt + 900) : ""
     check("r120: listDir notifyFailure", list.includes("notifyFailure") && list.includes("common.requestFailed"))
     check("r120: listDir no empty catch", !list.includes(".catch(() => [] as DirEntry[])"))
+  section("Review polish r121")
+  {
+    const root = process.cwd()
+    const composer = await fs.readFile(path.join(root, "src/renderer/src/components/Composer.vue"), "utf8")
+    const dropAt = composer.indexOf("if (inside.length)")
+    const drop = dropAt >= 0 ? composer.slice(dropAt, dropAt + 700) : ""
+    check("r121: Composer directoriesOf try/catch", drop.includes("try {") && drop.includes("directoriesOf(inside.map") && drop.includes("notifyFailure") && drop.includes("common.requestFailed"))
+    check("r121: Composer directoriesOf no empty catch", !drop.includes(".catch(() => [] as string[])"))
+
+    const sidebar = await fs.readFile(path.join(root, "src/renderer/src/components/Sidebar.vue"), "utf8")
+    const foldAt = sidebar.indexOf("async function folderDrop")
+    const fold = foldAt >= 0 ? sidebar.slice(foldAt, foldAt + 1400) : ""
+    check("r121: Sidebar folderDrop try/catch", fold.includes("try {") && fold.includes("directoriesOf") && fold.includes("notifyFailure") && fold.includes("common.requestFailed"))
+    check("r121: Sidebar imports notifyFailure", sidebar.includes("notifyFailure") && /import \{[\s\S]*notifyFailure[\s\S]*\} from ["']\.\.\/lib\/toast["']/.test(sidebar))
+
+    const header = await fs.readFile(path.join(root, "src/renderer/src/components/SessionHeader.vue"), "utf8")
+    const finAt = header.indexOf("async function finishEdit")
+    const fin = finAt >= 0 ? header.slice(finAt, finAt + 1200) : ""
+    check("r121: SessionHeader finishEdit awaits rename", fin.includes("await app.rename") && fin.includes("notifyFailure") && fin.includes("el.textContent = previous"))
+    check("r121: SessionHeader imports notifyFailure", header.includes("notifyFailure") && /import \{[\s\S]*notifyFailure[\s\S]*\} from ["']\.\.\/lib\/toast["']/.test(header))
+
+    const appVue = await fs.readFile(path.join(root, "src/renderer/src/App.vue"), "utf8")
+    const renAt = appVue.indexOf("async function submitSessionRename")
+    const ren = renAt >= 0 ? appVue.slice(renAt, renAt + 500) : ""
+    check("r121: submitSessionRename try/catch", ren.includes("try {") && ren.includes("await app.rename") && ren.includes("notifyFailure") && ren.includes("common.requestFailed"))
   }
 
   section("Permission guide")

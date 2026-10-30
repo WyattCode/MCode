@@ -595,6 +595,11 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - Android：会话长按 sheet 的压缩/撤销/归档改 `rpcOrThrow`，失败 Toast，成功才关 sheet。
 - 桌面：更改项目文件夹位置时无 config 先拒绝并 toast（避免半迁移）；RpFiles `listDir` 失败 toast，保留原列表。
 - 验证：smoke「Review polish r120」；未合并。
+### 续五十四：拖入路径分类 / 侧栏项目拖入 / 会话重命名失败提示（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/152 （未合并）
+- 桌面：Composer 拖入 `directoriesOf` IPC 失败不再把文件夹误标成文件 @mention，改为 `common.requestFailed`；侧栏拖项目同样 toast 且不 emit 空列表；会话标题就地重命名与对话框重命名失败 toast，就地失败恢复旧标题。
+- 验证：smoke「Review polish r121」；未合并。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
