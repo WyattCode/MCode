@@ -2909,6 +2909,7 @@ async function main() {
     check("r110: session.get uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}session\.get/.test(get))
     check("r110: session.get toasts on failure", get.includes("没能打开对话"))
   section("Review polish r111")
+  section("Review polish r112")
   {
     const { readFileSync } = await import("node:fs")
     const main = readFileSync(
@@ -2927,6 +2928,24 @@ async function main() {
     const redo = redoAt >= 0 ? main.slice(redoAt, redoAt + 1100) : ""
     check("r111: header session.redo uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,120}session\.redo/.test(redo))
     check("r111: header session.redo toasts on failure", redo.includes("没能重做"))
+    const qAt = main.indexOf('JSONObject().put("type", "session.queue.remove")')
+    const q = qAt >= 0 ? main.slice(Math.max(0, qAt - 400), qAt + 900) : ""
+    check("r112: queue.remove uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,160}session\.queue\.remove/.test(q))
+    check("r112: queue.remove only drops chip onSuccess", q.includes("onSuccess") && q.includes("queuedPrompts.removeAll"))
+    check("r112: queue.remove toasts on failure", q.includes("没能撤回排队"))
+    check("r112: queue.remove no fire-and-forget request()", !/request\(JSONObject\(\)\.put\("type", "session\.queue\.remove"\)/.test(q))
+    const qsAt = main.indexOf('JSONObject().put("type", "session.queue.send")')
+    const qs = qsAt >= 0 ? main.slice(Math.max(0, qsAt - 200), qsAt + 700) : ""
+    check("r112: queue.send uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,160}session\.queue\.send/.test(qs))
+    check("r112: queue.send toasts on failure", qs.includes("没能发送排队"))
+    const stopAt = main.indexOf("val stopHere: (String) -> Unit")
+    const stop = stopAt >= 0 ? main.slice(stopAt, stopAt + 1100) : ""
+    check("r112: header stopHere uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,120}session\.abort/.test(stop))
+    check("r112: header stopHere toasts on failure", stop.includes("没能停止"))
+    check("r112: header stopHere no fire-and-forget request()", !/request\(JSONObject\(\)\.put\("type", "session\.abort"\)/.test(stop))
+    const createAt = main.indexOf('JSONObject().put("type", "session.create")')
+    const create = createAt >= 0 ? main.slice(createAt, createAt + 500) : ""
+    check("r112: session.create uses rpcOrThrow", create.includes("rpcOrThrow(ask)"))
   }
 
   section("Permission guide")
