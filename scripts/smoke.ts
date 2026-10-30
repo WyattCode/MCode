@@ -2145,6 +2145,24 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r147")
+  {
+    const { readFileSync } = await import("node:fs")
+    const { join } = await import("node:path")
+    const root = process.cwd()
+    const ws = readFileSync(join(root, "src/main/window-state.ts"), "utf8")
+    check("window-state blocks writes after an unreadable file", ws.includes("windowStateBlocked"))
+    check("window-state save refuses while blocked", /if \(windowStateBlocked\)/.test(ws))
+    check("window-state quarantines a corrupt file", ws.includes("quarantineSync") || ws.includes(".corrupt-"))
+    const ci = readFileSync(join(root, "src/main/composer-input.ts"), "utf8")
+    check("composer-input blocks writes after a failed read", ci.includes("blocked"))
+    check("composer-input write returns false while blocked", /if \(blocked\)[\s\S]{0,200}return false/.test(ci))
+    const drafts = readFileSync(join(root, "src/renderer/src/lib/composer-drafts.ts"), "utf8")
+    check("drafts never write after a failed load", drafts.includes("return loadFailed ? undefined : file"))
+    const main = readFileSync(join(root, "src/main/index.ts"), "utf8")
+    check("login-item blocks writes after a failed read", main.includes("loginItemBlocked"))
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }

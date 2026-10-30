@@ -20,12 +20,21 @@ const MAX_BYTES = 16 * 1024 * 1024
 
 export function registerComposerInput(ipc: IpcMain, userData: string): void {
   const file = path.join(userData, "storage", COMPOSER_INPUT_FILE)
+  /** Set when the file exists but could not be read; nothing may be written over it. */
+  let blocked: string | undefined
 
   // Read synchronously, once, before the window's first composer is drawn.
   ipc.on("mcode:composer-input-load", (event) => {
     try {
       event.returnValue = { ok: true, text: fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "" }
-    } catch {
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        event.returnValue = { ok: true, text: "" }
+        return
+      }
+      blocked =
+        "composer-input.json could not be read, so nothing is saved over it until it is fixed or removed."
+      console.warn("[composer-input] could not be read:", err instanceof Error ? err.message : err)
       event.returnValue = { ok: false }
     }
   })
@@ -43,6 +52,10 @@ export function registerComposerInput(ipc: IpcMain, userData: string): void {
    * without, 12 ms with) - nothing next to closing a window.
    */
   const write = (text: unknown, durable: boolean): boolean => {
+    if (blocked) {
+      console.warn("[composer-input] not saving:", blocked)
+      return false
+    }
     if (typeof text !== "string" || !text.startsWith("{") || Buffer.byteLength(text, "utf8") > MAX_BYTES) return false
     try {
       writeAtomicSync(file, text, undefined, durable)

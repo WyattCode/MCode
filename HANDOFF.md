@@ -221,6 +221,14 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 续八十：window.json / composer-input / login-item 损坏拒覆写（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/178 （未合并）
+- Windows：`window.json` unreadable/quarantine-fail 设 windowStateBlocked 拒 saveWindowState；corrupt 先 quarantine。
+- Windows：`composer-input.json` 读失败设 blocked 拒 save/flush；渲染层 loadFailed 后一律不写（不再仅空草稿）。
+- Windows：`login-item.json` unreadable 拒写（开发构建）。
+- 验证：slice smoke「Review polish r147」；未合并。
+
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
 Pad 9 Pro Max（`M367FC`）接上后，第一次把「平板发指令 → 主机跑模型 → 回复回画到平板」整条链路走通。

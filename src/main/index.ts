@@ -272,15 +272,25 @@ if (!bootPrefs.hardwareAcceleration) app.disableHardwareAcceleration()
 
 /* 开机自启 without an OS entry to ask (a development build): the choice alone, in a file of its own. */
 const loginItemFile = path.join(app.getPath("userData"), LOGIN_ITEM_FILE)
+/** Set when login-item.json could not be read; nothing may be written over it. */
+let loginItemBlocked: string | undefined
 const loginItemStore: LoginItemStore = {
   read: () => {
     try {
       return parseLoginItem(readFileSync(loginItemFile, "utf8"))
-    } catch {
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return false
+      loginItemBlocked =
+        "login-item.json could not be read, so nothing is saved over it until it is fixed or removed."
+      console.warn("[login-item] could not be read:", err instanceof Error ? err.message : err)
       return false
     }
   },
   write: (enabled) => {
+    if (loginItemBlocked) {
+      console.warn("[login-item] not saving:", loginItemBlocked)
+      return
+    }
     try {
       writeAtomicSync(loginItemFile, JSON.stringify({ openAtLogin: enabled }))
     } catch (err) {

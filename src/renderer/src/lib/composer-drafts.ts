@@ -1,6 +1,6 @@
 import { ref } from "vue"
 import type { Annotation } from "@shared/protocol"
-import { draftFileOf, emptyDraftFile, isEmptyDraftFile, readDraftFile, withLegacyHome, type DraftFile, type SavedDraft } from "./draft-file"
+import { draftFileOf, emptyDraftFile, readDraftFile, withLegacyHome, type DraftFile, type SavedDraft } from "./draft-file"
 
 export type { SavedDraft }
 
@@ -87,7 +87,7 @@ export function bindDraftSources(next: DraftSources): void {
 
 function snapshot(): DraftFile | undefined {
   const file = draftFileOf(drafts, sources.annotations(), sources.current())
-  return loadFailed && isEmptyDraftFile(file) ? undefined : file
+  return loadFailed ? undefined : file
 }
 
 /* The older home key goes only once the file holding its words is safely written. */
