@@ -2727,11 +2727,16 @@ const effortLabel = computed(() => {
 async function chooseModelEffort(provider: string, model: string, level: Effort) {
   menu.value = undefined
   const before = app.modelPick(sessionID.value)
-  if (!sessionID.value) {
-    await app.patchConfig({ model: { provider, model }, smart: false, effort: level })
-  } else {
-    await app.setModel({ provider, model }, sessionID.value)
-    await app.setEffort(level, sessionID.value)
+  try {
+    if (!sessionID.value) {
+      await app.patchConfig({ model: { provider, model }, smart: false, effort: level }, { quiet: true })
+    } else {
+      await app.setModel({ provider, model }, sessionID.value)
+      await app.setEffort(level, sessionID.value)
+    }
+  } catch (err) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    return
   }
   app.announceModel(before, { provider, model })
 }
@@ -3035,8 +3040,13 @@ async function chooseAgent(next: (typeof AGENTS)[number]) {
   const before = app.modeOf(sessionID.value)
   // No session on the home screen, so the choice is the app's default - which
   // is what the task this box creates will start as.
-  if (!sessionID.value) await app.patchConfig({ agent: next })
-  else await app.setAgent(next)
+  try {
+    if (!sessionID.value) await app.patchConfig({ agent: next }, { quiet: true })
+    else await app.setAgent(next)
+  } catch (err) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    return
+  }
   app.announceMode(before, sessionID.value)
 }
 
@@ -3054,13 +3064,21 @@ async function chooseModel(provider: string, model: string) {
    * else its first), so the level is written whenever the one in force is not
    * on offer.
    */
-  if (!sessionID.value) {
-    const effort = clampEffort(variants, app.config?.effort, chosen?.defaultEffort)
-    await app.patchConfig({ model: { provider, model }, smart: false, ...(effort && effort !== app.config?.effort ? { effort } : {}) })
-  } else {
-    await app.setModel({ provider, model }, sessionID.value)
-    const effort = clampEffort(variants, session.value?.effort ?? app.config?.effort, chosen?.defaultEffort)
-    if (effort && effort !== session.value?.effort) await app.setEffort(effort, sessionID.value)
+  try {
+    if (!sessionID.value) {
+      const effort = clampEffort(variants, app.config?.effort, chosen?.defaultEffort)
+      await app.patchConfig(
+        { model: { provider, model }, smart: false, ...(effort && effort !== app.config?.effort ? { effort } : {}) },
+        { quiet: true },
+      )
+    } else {
+      await app.setModel({ provider, model }, sessionID.value)
+      const effort = clampEffort(variants, session.value?.effort ?? app.config?.effort, chosen?.defaultEffort)
+      if (effort && effort !== session.value?.effort) await app.setEffort(effort, sessionID.value)
+    }
+  } catch (err) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    return
   }
   app.announceModel(before, { provider, model })
 }
@@ -3069,8 +3087,13 @@ async function chooseModel(provider: string, model: string) {
 async function chooseSmart() {
   menu.value = undefined
   const before = app.modelPick(sessionID.value)
-  if (!sessionID.value) await app.patchConfig({ smart: true })
-  else await app.setSmart(sessionID.value)
+  try {
+    if (!sessionID.value) await app.patchConfig({ smart: true }, { quiet: true })
+    else await app.setSmart(sessionID.value)
+  } catch (err) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    return
+  }
   app.announceModel(before, "smart")
 }
 

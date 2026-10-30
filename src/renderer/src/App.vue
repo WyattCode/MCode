@@ -1827,7 +1827,13 @@ async function runSessionMenu(key: string) {
   if (key.startsWith("move:")) {
     const directory = key.slice("move:".length)
     const moving = app.sessions.find((entry) => entry.id === target)
-    if (moving && projectOf(moving) !== directory) await app.move(target, directory)
+    if (moving && projectOf(moving) !== directory) {
+      try {
+        await app.move(target, directory)
+      } catch (err) {
+        notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+      }
+    }
     return
   }
   const own = ROW_ACTIONS[key]
@@ -1932,8 +1938,13 @@ async function createNamedProject(title: string, source?: string) {
     await app.patchConfig({ projectNames: { ...(app.config?.projectNames ?? {}), [source]: title } })
   }
   if (moving) {
-    await app.addProject(directory, { silent: true })
-    await app.move(moving, directory)
+    try {
+      await app.addProject(directory, { silent: true })
+      await app.move(moving, directory)
+    } catch (err) {
+      notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+      return
+    }
     if (app.currentID !== moving) await app.open(moving)
     view.value = "session"
     return
@@ -3648,7 +3659,12 @@ async function cycleAgent(by: 1 | -1) {
   const next = AGENT_NAMES[(at + by + AGENT_NAMES.length) % AGENT_NAMES.length]
   if (!next) return
   const before = app.modeOf(app.currentID)
-  await app.setAgent(next)
+  try {
+    await app.setAgent(next)
+  } catch (err) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    return
+  }
   app.announceMode(before, app.currentID)
 }
 
@@ -3665,7 +3681,12 @@ async function cycleEffort() {
    */
   const variants = findModel(app.providers, app.shownModel(app.current?.model) ?? app.config?.model)?.variants ?? []
   const next = cycleVariant(variants, app.current?.effort ?? app.config?.effort)
-  if (next) await app.setEffort(next)
+  if (!next) return
+  try {
+    await app.setEffort(next)
+  } catch (err) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+  }
 }
 
 /** MiMo's decrease and increase rows: one step along this model's efforts, stopping at either end. */
@@ -3675,7 +3696,12 @@ async function stepEffort(by: 1 | -1) {
   const current = app.current?.effort ?? app.config?.effort
   const at = current ? variants.indexOf(current) : -1
   const next = at === -1 ? variants[0] : variants[at + by]
-  if (next && next !== current) await app.setEffort(next)
+  if (!next || next === current) return
+  try {
+    await app.setEffort(next)
+  } catch (err) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+  }
 }
 
 let offMenu: (() => void) | undefined

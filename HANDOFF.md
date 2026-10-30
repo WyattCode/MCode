@@ -221,6 +221,12 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 续五十七：Composer/快捷键 Agent·模型·Effort 与会话移动失败提示（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- 桌面：Composer `chooseAgent`/`chooseModel`/`chooseSmart`/`chooseModelEffort` 与 App `cycleAgent`/`cycleEffort`/`stepEffort` 失败 `notifyFailure(common.requestFailed)`，成功才 announce；行菜单 `move:` 与 `createNamedProject` 的 `app.move` 失败同样 toast。
+- 验证：smoke「Review polish r124」；未合并。
+
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
 Pad 9 Pro Max（`M367FC`）接上后，第一次把「平板发指令 → 主机跑模型 → 回复回画到平板」整条链路走通。
