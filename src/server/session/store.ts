@@ -447,10 +447,22 @@ export class SessionStore {
     return result
   }
 
+  /**
+   * Conversations that have been deleted, for the rest of the run.
+   *
+   * A delete removes the folder, and a write already in flight for that
+   * conversation - a usage figure landing as the turn ends, a title arriving
+   * from the background - then recreates it, so the conversation comes back
+   * with one document in it. The tombstone is what a write checks before it
+   * touches the disk. Ids are never reused, so nothing ever clears it.
+   */
+  private readonly deleted = new Set<string>()
+
   /** One change to a conversation's record, read and written without anything in between. */
   private async writeInfo(sessionID: string, change: (session: SessionInfo) => SessionInfo): Promise<SessionInfo> {
     const session = await this.require(sessionID)
     const next = change(session)
+    if (this.deleted.has(sessionID)) throw new Error(`Session ${sessionID} was deleted`)
     await this.storage.write(this.infoKey(sessionID), next)
     this.patchList(sessionID, next)
     this.bus.publish({ type: "session.updated", session: next })
@@ -724,8 +736,24 @@ export class SessionStore {
     })
   }
 
+  /**
+   * Removes a conversation and everything it kept.
+   *
+   * The record's own write is waited out first: a usage figure or a title
+   * landing as the delete runs would otherwise be queued behind the folder's
+   * removal and recreate it. The tombstone then stops anything that starts
+   * afterwards, and the queue in `Storage.removeDirectory` stops anything that
+   * was already ahead of it.
+   */
   async delete(sessionID: string): Promise<void> {
+    // Tombstone first so a writeInfo that has not yet checked will refuse;
+    // then wait out anything already inside exclusive, which may still land
+    // a write - removeDirectory drains that save and takes the folder with it.
+    this.deleted.add(sessionID)
+    await (this.updating.get(this.infoKey(sessionID)) ?? Promise.resolve())
     await this.storage.removeDirectory(`session/${sessionID}`)
+    this.updating.delete(this.infoKey(sessionID))
+    this.historyBlocked.delete(sessionID)
     this.patchList(sessionID, undefined)
     this.unreadableIDs.delete(sessionID)
     this.changed({ type: "session.removed", sessionID })
