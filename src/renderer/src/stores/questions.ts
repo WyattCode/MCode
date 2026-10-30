@@ -64,7 +64,12 @@ export const useQuestions = defineStore("questions", () => {
     if (sending.value.has(requestID)) return
     sending.value = new Set(sending.value).add(requestID)
     try {
-      await app.client?.request({ type: "question.reply", requestID, answers })
+      const client = app.client
+      if (!client) {
+        notifyFailure(t("error.questionReplyFailed"), t("common.requestFailed"))
+        return
+      }
+      await client.request({ type: "question.reply", requestID, answers })
     } catch (failure) {
       // The question stays up - the turn is still parked on it - and the reader
       // is told to try again, as MiMo's QUESTION_REPLY_FAILED does.
@@ -206,7 +211,13 @@ export const useQuestions = defineStore("questions", () => {
   function allowOnce(requestID: string): void {
     if (autoAnswered.has(requestID)) return
     autoAnswered.add(requestID)
-    void app.client?.request({ type: "permission.respond", requestID, response: "once" }).catch((failure: unknown) => {
+    const client = app.client
+    if (!client) {
+      autoAnswered.delete(requestID)
+      notifyFailure(t("error.autoPermissionFailed"), t("common.requestFailed"))
+      return
+    }
+    void client.request({ type: "permission.respond", requestID, response: "once" }).catch((failure: unknown) => {
       // Rolled back so the next pass asks again, and said out loud: the card is
       // still waiting and nothing on screen would otherwise have changed.
       autoAnswered.delete(requestID)
