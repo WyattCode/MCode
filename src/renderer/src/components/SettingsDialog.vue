@@ -242,9 +242,9 @@ async function switchAgents(enabled: boolean) {
 }
 
 async function removeAgents() {
-  confirmingAgentsDelete.value = false
   try {
     agents.value = await app.client?.request({ type: "agents.delete" })
+    confirmingAgentsDelete.value = false
   } catch (err) {
     notifyFailure(t("set.agents.deleteFailed") + reasonText(err))
   }
@@ -820,8 +820,12 @@ function toggleVoiceSend() {
 }
 
 async function enableVoiceSend() {
-  confirmingVoiceSend.value = false
-  await app.patchConfig({ voiceSend: true })
+  try {
+    await app.patchConfig({ voiceSend: true })
+    confirmingVoiceSend.value = false
+  } catch {
+    // patchConfig already toasts; keep the confirm dialog open.
+  }
 }
 
 const voiceModelOptions = computed(() => [

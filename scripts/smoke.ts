@@ -2145,6 +2145,41 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r128")
+  {
+    const settings = read("src/renderer/src/components/SettingsDialog.vue")
+    const voiceAt = settings.indexOf("async function enableVoiceSend")
+    const voice = voiceAt >= 0 ? settings.slice(voiceAt, voiceAt + 350) : ""
+    check(
+      "enableVoiceSend fail-closed",
+      voice.includes("try {") &&
+        voice.includes("await app.patchConfig({ voiceSend: true })") &&
+        voice.includes("confirmingVoiceSend.value = false") &&
+        voice.indexOf("await app.patchConfig({ voiceSend: true })") < voice.indexOf("confirmingVoiceSend.value = false"),
+    )
+    const agentsAt = settings.indexOf("async function removeAgents")
+    const agents = agentsAt >= 0 ? settings.slice(agentsAt, agentsAt + 400) : ""
+    check(
+      "removeAgents clear-after-success",
+      agents.includes("try {") &&
+        agents.includes('type: "agents.delete"') &&
+        agents.includes("confirmingAgentsDelete.value = false") &&
+        agents.indexOf('type: "agents.delete"') < agents.indexOf("confirmingAgentsDelete.value = false") &&
+        agents.includes("set.agents.deleteFailed"),
+    )
+    const dialog = read("src/renderer/src/components/ProjectDialog.vue")
+    const saveAt = dialog.indexOf("async function save")
+    const save = saveAt >= 0 ? dialog.slice(saveAt, saveAt + 700) : ""
+    check(
+      "ProjectDialog.save try/catch",
+      save.includes("try {") &&
+        save.includes("await app.patchConfig") &&
+        save.includes('emit("close")') &&
+        save.indexOf("await app.patchConfig") < save.indexOf('emit("close")') &&
+        save.indexOf("try {") < save.indexOf("await app.patchConfig"),
+    )
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }

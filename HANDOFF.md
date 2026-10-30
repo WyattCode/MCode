@@ -221,6 +221,13 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 续六十一：语音发送/删除 Agents 确认 fail-closed；项目外观保存失败不关对话框（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- Windows Settings：`enableVoiceSend` 对齐 `setWatermarkRemoval`，成功才关确认框；`removeAgents` 成功才清 `confirmingAgentsDelete`。
+- Windows ProjectDialog：`save` 的 `patchConfig` 失败保留对话框（try/catch，已有失败 toast）。
+- 验证：smoke「Review polish r128」；未合并。
+
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
 Pad 9 Pro Max（`M367FC`）接上后，第一次把「平板发指令 → 主机跑模型 → 回复回画到平板」整条链路走通。
