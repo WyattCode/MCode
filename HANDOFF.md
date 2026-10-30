@@ -561,6 +561,11 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - Android：`office.render` / `session.revertTurn` 改 `rpcOrThrow`，失败 Toast「打不开这个文档」/「撤销失败」（不再依赖易竞态的 lastError）。
 - Windows：`branch-switch` 在 client 无应答时记为 failed；`BranchPicker` 新建分支空结果 Toast，不再静默 return。
 - 验证：smoke「Review polish r114」；未合并。
+### 续四十八：提交卡空结果与主页 worktree/空白项目失败可见（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/146 （未合并）
+- Windows：`InfoCommitCard` 在 `git.push` / `git.commit` 无应答时写入 error，不再静默 return；`HomeHero.useWorktree` 加入项目失败 Toast 且不 choose；`createBlank` 无应答 Toast「创建失败」。
+- 验证：smoke「Review polish r115」；未合并。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 

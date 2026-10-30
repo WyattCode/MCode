@@ -138,7 +138,10 @@ async function runPush(which: Action): Promise<void> {
   phase.value = "push"
   try {
     const result = await app.client?.request({ type: "git.push", directory: props.directory })
-    if (!result) return
+    if (!result) {
+      error.value = t("info.pushError.generic")
+      return
+    }
     if (result.ok) done.value = t("info.pushDone")
     else error.value = pushError(result)
   } catch (err) {
@@ -182,7 +185,10 @@ async function commit(andPush: boolean) {
     } catch (err) {
       result = { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
-    if (!result) return
+    if (!result) {
+      error.value = t("info.commitError.generic")
+      return
+    }
     if (!result.ok) {
       error.value = commitError(result)
       return

@@ -2983,6 +2983,23 @@ async function main() {
     const createAt = picker.indexOf('type: "git.checkout", directory, branch, create: true')
     const create = createAt >= 0 ? picker.slice(createAt, createAt + 350) : ""
     check("r114: BranchPicker create toasts when result missing", create.includes("notifyFailure") && create.includes("branchCreateFailed"))
+  section("Review polish r115")
+  {
+    const commitCard = read("src/renderer/src/components/InfoCommitCard.vue")
+    const pushAt = commitCard.indexOf('type: "git.push"')
+    const push = pushAt >= 0 ? commitCard.slice(pushAt, pushAt + 280) : ""
+    check("InfoCommitCard push null sets error", push.includes('error.value = t("info.pushError.generic")') && !/if \(!result\) return\n\s*if \(result\.ok\)/.test(push))
+    const commitAt = commitCard.indexOf('type: "git.commit"')
+    const commit = commitAt >= 0 ? commitCard.slice(commitAt, commitAt + 900) : ""
+    check("InfoCommitCard commit null sets error", commit.includes('error.value = t("info.commitError.generic")') && !/if \(!result\) return\n\s*if \(!result\.ok\)/.test(commit))
+    const home = read("src/renderer/src/components/HomeHero.vue")
+    const wtAt = home.indexOf("async function useWorktree")
+    const wtEnd = wtAt >= 0 ? home.indexOf("\n}", wtAt) : -1
+    const wt = wtAt >= 0 && wtEnd > wtAt ? home.slice(wtAt, wtEnd) : ""
+    check("HomeHero useWorktree fail-closed", wt.includes("notifyFailure") && !wt.includes(".catch(() => {})"))
+    const blankAt = home.indexOf('type: "project.createBlank"')
+    const blank = blankAt >= 0 ? home.slice(blankAt, blankAt + 320) : ""
+    check("HomeHero createBlank null toasts", blank.includes("home.blankFailed") && blank.includes("common.requestFailed"))
   }
 
   section("Permission guide")
