@@ -1903,9 +1903,19 @@ private fun CodeBox(
     var codeLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
     val codeSlice = codeSelection(sharedSelection, lineIndex, lineStart, code.length)
     val reportAnchor = rememberAnchorReporter(sharedSelection, lineIndex, codeSlice, codeLayout)
-    val head = if (dark) Color(0xFF262626) else Color(0xFFF0EFEC)
-    val body = if (dark) Color(0xFF2E2E2E) else Color(0xFFF3F3F0)
-    val ink = if (dark) Color(0xFFB8B8B8) else Color(0xFF6B6862)
+    /*
+     * The three plates, from `RemoteChrome`.
+     *
+     * Light is the measured set off `REF-codeblock.png`. Dark was calibrated as
+     * a set this round: the head keeps the role `CreamPill` has in light, which
+     * is `DarkPill` #313131; the body sits one step above it, the same 240 -> 243
+     * step the light pair has; and the label ink is `DarkMuted` #97958E, which
+     * is readable on the head. It drew #262626 / #2E2E2E / #B8B8B8, three values
+     * that appear nowhere else in the theme.
+     */
+    val head = RemoteChrome.c(if (dark) RemoteChrome.CodeHeadDark else RemoteChrome.CodeHeadLight)
+    val body = RemoteChrome.c(if (dark) RemoteChrome.CodeBodyDark else RemoteChrome.CodeBodyLight)
+    val ink = RemoteChrome.c(if (dark) RemoteChrome.CodeInkDark else RemoteChrome.CodeInkLight)
     Column(
         modifier
             .fillMaxWidth()
@@ -1991,7 +2001,15 @@ private fun CodeBox(
                 Column(
                     Modifier
                         .fillMaxWidth()
-                        .background(if (dark) Color(0xFF1F1F1F) else Color(0xFFFFFEFD), RoundedCornerShape(22.4.dp))
+                        /*
+                         * The elevated card, not #1F1F1F: a value that appears
+                         * nowhere else in the theme and read as a slightly dirty
+                         * page rather than as a plate lifted over one.
+                         */
+                        .background(
+                            RemoteChrome.c(if (dark) RemoteChrome.CodeExpandDark else RemoteChrome.CodeExpandLight),
+                            RoundedCornerShape(22.4.dp),
+                        )
                         .padding(16.dp),
                 ) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {

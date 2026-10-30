@@ -5240,7 +5240,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         ModalBottomSheet(
             onDismissRequest = { showTerminal = false },
             sheetState = termSheet,
-            containerColor = MaterialTheme.colorScheme.background,
+            containerColor = if (LocalBg.current == DarkBg) RemoteChrome.c(RemoteChrome.SheetDark) else MaterialTheme.colorScheme.background,
         ) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -5364,7 +5364,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             }
             fileEntries.addAll(list.sortedWith(compareByDescending<Pair<String, Boolean>> { it.second }.thenBy { it.first }))
         }
-        ModalBottomSheet(onDismissRequest = { showFiles = false }, containerColor = MaterialTheme.colorScheme.background) {
+        ModalBottomSheet(onDismissRequest = { showFiles = false }, containerColor = if (LocalBg.current == DarkBg) RemoteChrome.c(RemoteChrome.SheetDark) else MaterialTheme.colorScheme.background) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (fileStack.size > 1) {
@@ -5501,10 +5501,11 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
          * list and a commit card under it, and half a screen cut the card off.
          */
         val changesSheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        val changesDark = LocalBg.current == DarkBg
         ModalBottomSheet(
             onDismissRequest = { showChanges = false },
             sheetState = changesSheet,
-            containerColor = MaterialTheme.colorScheme.background,
+            containerColor = if (changesDark) RemoteChrome.c(RemoteChrome.SheetDark) else MaterialTheme.colorScheme.background,
         ) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -5665,37 +5666,28 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     /*
      * The patch itself, in its own sheet for the same reason the file preview
      * is: a bottom sheet measures once, and content added later is clipped.
-     * Added lines are green and removed red, as the desktop colours them.
+     * Colours come from `DiffLines` (same ink + wash), not desktop green/red type.
      */
     changePatch?.let { (file, patch) ->
-        ModalBottomSheet(onDismissRequest = { changePatch = null }, containerColor = MaterialTheme.colorScheme.background) {
+        val dark = LocalBg.current == DarkBg
+        ModalBottomSheet(
+            onDismissRequest = { changePatch = null },
+            containerColor = if (dark) RemoteChrome.c(RemoteChrome.SheetDark) else MaterialTheme.colorScheme.background,
+        ) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 25.dp)) {
                 Text(file, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = LocalText.current, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.height(10.dp))
-                LazyColumn(
-                    Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 520.dp)
-                        .background(LocalPill.current, RoundedCornerShape(10.dp))
-                        .padding(10.dp),
-                ) {
-                    val lines = patch.lineSequence().take(400).toList()
-                    items(lines.size) { i ->
-                        val line = lines[i]
-                        val tint = when {
-                            line.startsWith("+") && !line.startsWith("+++") -> Color(0xFF2E7D32)
-                            line.startsWith("-") && !line.startsWith("---") -> Color(0xFFC62828)
-                            else -> LocalText.current
-                        }
-                        Text(
-                            line.ifEmpty { " " },
-                            fontSize = 10.5.sp,
-                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                            color = tint,
-                            softWrap = true,
-                        )
-                    }
-                }
+                /*
+                 * The same renderer the diff sheet uses.
+                 *
+                 * This painted `+` lines in Material green (#2E7D32) and `-`
+                 * lines in Material red (#C62828) - two saturated blocks of
+                 * type that contradicted the diff sheet, which prints both
+                 * sides in one ink and tells them apart with a wash and a rule.
+                 * `DiffLines` is that renderer, so this sheet now reads like the
+                 * sheet it belongs to rather than like a second, older design.
+                 */
+                DiffLines(patch, maxLines = 400, boxed = false)
             }
         }
     }
@@ -5732,7 +5724,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         var keyDraft by remember { mutableStateOf("") }
         var keyFor by remember { mutableStateOf("") }
         var busyKey by remember { mutableStateOf(false) }
-        ModalBottomSheet(onDismissRequest = { showProviders = false; keyFor = "" }, containerColor = MaterialTheme.colorScheme.background) {
+        ModalBottomSheet(onDismissRequest = { showProviders = false; keyFor = "" }, containerColor = if (LocalBg.current == DarkBg) RemoteChrome.c(RemoteChrome.SheetDark) else MaterialTheme.colorScheme.background) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
                 Text("模型服务", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
                 Text(
@@ -5888,7 +5880,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * is the trap this avoids.
      */
     sheetTarget?.let { row ->
-        ModalBottomSheet(onDismissRequest = { sheetTarget = null }, containerColor = MaterialTheme.colorScheme.background) {
+        ModalBottomSheet(onDismissRequest = { sheetTarget = null }, containerColor = if (LocalBg.current == DarkBg) RemoteChrome.c(RemoteChrome.SheetDark) else MaterialTheme.colorScheme.background) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 32.dp)) {
                 Text(row.title, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = LocalText.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.height(10.dp))
@@ -5954,7 +5946,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * to and including it.
      */
     messageTarget?.let { msg ->
-        ModalBottomSheet(onDismissRequest = { messageTarget = null }, containerColor = MaterialTheme.colorScheme.background) {
+        ModalBottomSheet(onDismissRequest = { messageTarget = null }, containerColor = if (LocalBg.current == DarkBg) RemoteChrome.c(RemoteChrome.SheetDark) else MaterialTheme.colorScheme.background) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 32.dp)) {
                 Text(msg.text.take(80), fontSize = 13.sp, color = LocalMuted.current, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.height(10.dp))
@@ -6211,7 +6203,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         ModalBottomSheet(
             onDismissRequest = { modelPicker = false },
             sheetState = settingsSheet,
-            containerColor = MaterialTheme.colorScheme.background,
+            containerColor = if (LocalBg.current == DarkBg) RemoteChrome.c(RemoteChrome.SheetDark) else MaterialTheme.colorScheme.background,
         ) {
             Column(
                 Modifier
@@ -9791,8 +9783,8 @@ private fun DiffLines(
              * last 1 landed 1. Measured after: (24,39,31), exact.
              */
             val wash = when (line.side) {
-                1 -> if (dark) Color(0xFF14271E) else Color(0xFFEDF4E3)
-                2 -> if (dark) Color(0xFF24191D) else Color(0xFFF7ECEC)
+                1 -> RemoteChrome.c(if (dark) RemoteChrome.DiffAddWashDark else RemoteChrome.DiffAddWashLight)
+                2 -> RemoteChrome.c(if (dark) RemoteChrome.DiffDelWashDark else RemoteChrome.DiffDelWashLight)
                 else -> Color.Transparent
             }
             val bar = when (line.side) {
@@ -9800,9 +9792,19 @@ private fun DiffLines(
                 2 -> Color(0xFFA73D39)
                 else -> Color.Transparent
             }
+            /*
+             * The changed lines' own ink, dark: (93,99,111) = #5D636F, sampled
+             * off the reference's dark diff sheet (`DK-b.png`).
+             *
+             * This carried #B9BDC6, which was a guess and read a full step
+             * brighter than the code around it - the wash and the edge bar
+             * already say which side a line is on, so the type does not have to
+             * shout as well. Light stays #383A41, which was measured.
+             */
             val codeInk = when {
                 !isPatch -> LocalMuted.current.copy(alpha = 0.8f)
-                line.side == 1 || line.side == 2 -> if (dark) Color(0xFFB9BDC6) else Color(0xFF383A41)
+                line.side == 1 || line.side == 2 ->
+                    RemoteChrome.c(if (dark) RemoteChrome.DiffCodeInkDark else RemoteChrome.DiffCodeInkLight)
                 line.text.startsWith("@@") -> LocalMuted.current
                 else -> LocalMuted.current.copy(alpha = 0.8f)
             }
@@ -14265,10 +14267,22 @@ private fun StepBody(item: Item.Msg) {
 @Composable
 private fun SummarySheet(title: String, item: ToolRun, onClose: () -> Unit) {
     val dark = LocalBg.current == DarkBg
-    val ink = if (dark) Color(0xFFF9F9F7) else Color(0xFF131313)
+    val ink = RemoteChrome.c(if (dark) RemoteChrome.SheetTitleDark else RemoteChrome.SheetTitleLight)
     ModalBottomSheet(
         onDismissRequest = onClose,
-        containerColor = MaterialTheme.colorScheme.background,
+        /*
+         * Elevated over the page, not the page itself.
+         *
+         * `MaterialTheme.colorScheme.background` is #151515 in dark, which is
+         * exactly the page behind the sheet - so the sheet had no edge at all
+         * and read as a hole rather than as a plate. Sampled off the reference's
+         * own dark summary sheet (`MY-sheetsum-dark.png`): the page is
+         * (14,14,14) and the sheet's container (21,21,21), while its diff
+         * sheet's plate is (32,32,31). Our page is already #151515, so the
+         * sheet takes the diff plate's #20201F - the same value `DarkSurface`
+         * and `LocalCard` use, so a sheet and a card are one plate.
+         */
+        containerColor = if (dark) RemoteChrome.c(RemoteChrome.SheetDark) else MaterialTheme.colorScheme.background,
         /* The sheet draws its own grabber, so the stock one would double it. */
         dragHandle = {},
     ) {
@@ -14280,7 +14294,7 @@ private fun SummarySheet(title: String, item: ToolRun, onClose: () -> Unit) {
                     .width(34.dp)
                     .height(4.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(if (dark) Color(0xFF3A3A38) else Color(0xFFD8D8D6)),
+                    .background(RemoteChrome.c(if (dark) RemoteChrome.SheetGrabberDark else RemoteChrome.SheetGrabberLight)),
             )
             Spacer(Modifier.height(16.dp))
             Row(
@@ -14330,7 +14344,7 @@ private fun SummarySheet(title: String, item: ToolRun, onClose: () -> Unit) {
              * it here, from the first mark's centre down to the last row's
              * bottom, cannot break.
              */
-            val linkTint = if (dark) Color(0xFF3A3A38) else Color(0xFFD8D8D6)
+            val linkTint = RemoteChrome.c(if (dark) RemoteChrome.SheetLinkDark else RemoteChrome.SheetLinkLight)
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -14538,9 +14552,17 @@ fun ToolRow(
                  * colour still wins, so a failure and a call in flight read at
                  * a glance down the left of the list.
                  */
+                /*
+                 * `ToolMark` is a light-theme value - (56,56,53), read off the
+                 * reference's light rows - and on a #151515 page or a #20201F
+                 * sheet it all but vanishes. Dark gets its own mark, (154,154,150),
+                 * the same warm grey family as `DarkToolWhat`.
+                 */
                 StepMark(
                     item.name,
-                    if (failed || busy) rowTint else ToolMark,
+                    if (failed || busy) rowTint
+                    else if (LocalBg.current == DarkBg) RemoteChrome.c(RemoteChrome.DarkToolMark)
+                    else ToolMark,
                     Modifier.size(15.6.dp),
                 )
             }
@@ -15029,7 +15051,7 @@ fun PdfViewer(name: String, file: java.io.File, onClose: () -> Unit) {
 
     ModalBottomSheet(
         onDismissRequest = onClose,
-        containerColor = MaterialTheme.colorScheme.background,
+        containerColor = if (LocalBg.current == DarkBg) RemoteChrome.c(RemoteChrome.SheetDark) else MaterialTheme.colorScheme.background,
     ) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -15122,7 +15144,7 @@ fun PdfPage(renderer: android.graphics.pdf.PdfRenderer?, index: Int) {
 fun OfficeViewer(name: String, kind: String, html: String, onClose: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val dark = LocalBg.current == DarkBg
-    ModalBottomSheet(onDismissRequest = onClose, containerColor = MaterialTheme.colorScheme.background) {
+    ModalBottomSheet(onDismissRequest = onClose, containerColor = if (LocalBg.current == DarkBg) RemoteChrome.c(RemoteChrome.SheetDark) else MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 20.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -15368,9 +15390,10 @@ private fun PreviewSheet(name: String, body: String, onClose: () -> Unit) {
      * inside and the band stopped short of both edges.
      */
     val isPatch = body.contains("\n@@ ") || body.startsWith("diff --git") || body.contains("\n--- a/")
+    val dark = LocalBg.current == DarkBg
     ModalBottomSheet(
         onDismissRequest = onClose,
-        containerColor = MaterialTheme.colorScheme.background,
+        containerColor = if (dark) RemoteChrome.c(RemoteChrome.SheetDark) else MaterialTheme.colorScheme.background,
         /*
          * A patch gets the phone's own grabber, so the sheet's has to go: it was
          * drawing a second one 22 dp down and pushing the title to 64 instead of
@@ -15569,10 +15592,11 @@ private fun DiffSheet(
     branch: String? = null,
 ) {
     val dark = LocalBg.current == DarkBg
-    val ink = if (dark) Color(0xFFF9F9F7) else Color(0xFF131313)
+    val ink = RemoteChrome.c(if (dark) RemoteChrome.SheetTitleDark else RemoteChrome.SheetTitleLight)
     val muted = if (dark) DarkMuted else Color(0xFF7B7974)
     val hair = if (dark) Color(0xFF2E2E2E) else Color(0xFFECECEA)
-    val rowBg = if (dark) Color(0xFF1B1B1A) else Color(0xFFFDFDFB)
+    /* File rows: a hair above the elevated sheet plate in dark (#20201F → #262625). */
+    val rowBg = if (dark) Color(0xFF262625) else Color(0xFFFDFDFB)
     val addInk = if (dark) Color(0xFF6FB055) else Color(0xFF296118)
     val delInk = if (dark) Color(0xFFC4685F) else Color(0xFF832E2B)
     val files = remember(patch) { countDiff(patch) }
@@ -15590,7 +15614,7 @@ private fun DiffSheet(
                 .width(34.dp)
                 .height(4.dp)
                 .clip(RoundedCornerShape(2.dp))
-                .background(if (dark) Color(0xFF3A3A38) else Color(0xFFD8D8D6)),
+                .background(RemoteChrome.c(if (dark) RemoteChrome.SheetGrabberDark else RemoteChrome.SheetGrabberLight)),
         )
         Spacer(Modifier.height(7.6.dp))
         /*
