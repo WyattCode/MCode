@@ -2,7 +2,7 @@ import { computed, ref, watch } from "vue"
 import { defineStore } from "pinia"
 import type { QuestionAnswer, QuestionRequest } from "@shared/protocol"
 import { useApp } from "./app"
-import { composerAnswers, confirmQueue, freshGuide, guideShown, type GuideState } from "../lib/confirm-queue"
+import { composerAnswers, composerTarget, confirmQueue, freshGuide, guideShown, type GuideState } from "../lib/confirm-queue"
 import { sessionAccess } from "@shared/access"
 import { t } from "../lib/i18n"
 import { notifyFailure } from "../lib/toast"
@@ -88,13 +88,13 @@ export const useQuestions = defineStore("questions", () => {
   }
 
   /**
-   * Plain text sent from the composer while a question waits answers its first
-   * question (MiMo's `hx`). True when it was taken as an answer.
+   * Plain text from the composer answers the first question only when that
+   * question is what the dock is showing (MiMo's `hx`). A leading permission
+   * keeps the text as a normal send. True when it was taken as an answer.
    */
   function answerFromComposer(sessionID: string, text: string): boolean {
-    const waiting = [...pending.value.values()]
-      .filter((request) => app.rootOf(request.sessionID) === sessionID)
-      .sort((a, b) => a.time - b.time)[0]
+    if (sessionID !== app.currentID) return false
+    const waiting = composerTarget(queue.value)
     if (!waiting || sending.value.has(waiting.id)) return false
     const answers = composerAnswers(text, waiting.questions.length)
     if (!answers) return false

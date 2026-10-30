@@ -312,6 +312,18 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 **回归**：`scripts/smoke-storage.ts` Round 80 三条；用 `writeText` 忙等占住队列槽，裸 `fs.rm` 变异时第一条必红（复活 `{"v":2,"held":true}`），修好后 storageChecks 70/0。
 
 未做：ConfirmDock/Android 本轮未挖到可上主线的 P0/P1（驾驶舱权限卡已在 #110）。
+### 续十四：停靠栏头是权限时，输入框纯文本不应答背后的提问（2026-10-30）
+
+复核 ConfirmDock / Composer（避开未合并的 #102–#111）时确认：`answerFromComposer` 只按会话里最旧的**提问**排序作答，而停靠栏 `confirmQueue` 把权限与提问按时间排成一列。权限卡在前、提问在后时，输入框回车会清掉草稿并回答**看不见的**那道题（MiMo 的 hx 只应在停靠栏头就是提问时生效）。
+
+**修法**（`fix/review-polish-r81`，未合并）：
+1. `confirm-queue.ts` 增加 `composerTarget(queue)`：仅当 `queue[0].kind === "question"` 时返回该请求。
+2. `questions.ts` 的 `answerFromComposer` 改走同一条 `queue`（并要求 `sessionID === currentID`）；头是权限时返回 false，文本按普通发送留下。
+3. Android `respondPerm` / `respondPermReason` / `answerQuestion` 加 `respondingIds` 在途集合，双击不会连发两次 RPC（对齐桌面 `sending` / `responding`）。
+
+**回归**：`scripts/smoke.ts` Question dock 三条（权限领先时 target 为空；提问领先时 id 对上；空队列无 target）。把 `composerTarget` 改回「找最旧提问」时第一条必红。本机跑 smoke 至 Question dock 全绿；Round 14 包装段因 box 缺 Electron 二进制中断（与本改无关）。
+
+未做：中途压缩圆环估算（#109）、驾驶舱权限卡 ack（#110）、storage remove 队列（#111）、新 CSS token、REFERENCE_ENGLISH 翻译。
 
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
