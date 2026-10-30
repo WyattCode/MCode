@@ -5390,6 +5390,17 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                             scope.launch {
                                                 runCatching { rpcOrThrow(JSONObject().put("type", "session.redo").put("sessionID", sid)) }
                                                     .onFailure { Toast.makeText(context, "重做失败：${it.message?.take(40) ?: ""}", Toast.LENGTH_LONG).show() }
+                                            currentSession?.let { sid ->
+                                                scope.launch {
+                                                    try {
+                                                        rpcOrThrow(JSONObject().put("type", "session.redo").put("sessionID", sid))
+                                                    } catch (e: Exception) {
+                                                        if (e is kotlinx.coroutines.CancellationException) throw e
+                                                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                                            Toast.makeText(context, "没能重做", Toast.LENGTH_SHORT).show()
+                                                        }
+                                                    }
+                                                }
                                             }
                                         })
                                     MenuRow(label = if (runningOnly) "显示全部会话" else "只看运行中", onClick = { headerMenu = false; runningOnly = !runningOnly })
@@ -6456,7 +6467,12 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     if (sid != null && mid.isNotBlank()) {
                         scope.launch {
                             try {
-                                val reply = rpc(
+                                /*
+                                 * Plain rpc treated ok:false as success, so a refused
+                                 * fork left newID blank and the sheet closed with no
+                                 * toast — looking like a dead control.
+                                 */
+                                val reply = rpcOrThrow(
                                     JSONObject().put("type", "session.fork")
                                         .put("sessionID", sid)
                                         .put("messageID", mid)
@@ -6466,9 +6482,12 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 if (newID.isNotBlank()) {
                                     select(newID)
                                     Toast.makeText(context, "已从此处创建分支", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    Toast.makeText(context, "没能创建分支", Toast.LENGTH_SHORT).show()
                                 }
                             } catch (e: Exception) {
-                                Toast.makeText(context, "分支失败：${e.message?.take(40) ?: ""}", Toast.LENGTH_LONG).show()
+                                if (e is kotlinx.coroutines.CancellationException) throw e
+                                Toast.makeText(context, "没能创建分支", Toast.LENGTH_SHORT).show()
                             }
                         }
                     }
@@ -6523,8 +6542,13 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     editTarget = null
                     if (sid != null && text.isNotBlank()) {
                         scope.launch {
+                            /*
+                             * rpcOrThrow: plain rpc let ok:false look like a cut, so
+                             * 编辑并重发 could select() and re-prompt after a refused
+                             * revert. Fail closed before touching the thread.
+                             */
                             val cut = runCatching {
-                                rpc(
+                                rpcOrThrow(
                                     JSONObject().put("type", "session.revert")
                                         .put("sessionID", sid)
                                         .put("messageID", msg.id)

@@ -540,6 +540,11 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - PR: https://github.com/WyattCode/MCode/pull/141 （未合并）
 - Android：`session.list` 在 ok:false/缺 data 时不再先 `sessions.clear()`，Toast「没能加载会话」；连上后 `config.get` 改 `rpcOrThrow`，成功才清并回填 projects，失败 Toast「没能加载设置」；`select` 的 `session.get` 改 `rpcOrThrow`，失败 Toast「没能打开对话」。
 - 验证：smoke「Review polish r110」；未合并。
+### 续四十四：从此处分支 / 编辑撤回 fail-closed；顶栏重做失败提示（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/142 （未合并）
+- Android：长按「从此处分支」`session.fork` 改 `rpcOrThrow`，ok:false/缺 id Toast「没能创建分支」；「编辑并重发」的 `session.revert` 改 `rpcOrThrow`，拒绝撤回不再继续 select/重发；顶栏「重做撤销」改 `rpcOrThrow`，失败 Toast「没能重做」。
+- 验证：smoke「Review polish r111」；未合并。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
