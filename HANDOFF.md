@@ -222,7 +222,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 ## 逐轮记录（新到旧）
 
 ### 续八十二：writers 损坏保留 undo；Office 版本清单拒覆写；loadAgents 失败 toast（2026-10-30）
-- PR: （开 PR 后填）
+- PR: https://github.com/WyattCode/MCode/pull/180 （未合并）
 - Session：`SnapshotStore.sweep` 对损坏的 `*.writers.json` 与不可读一样 `spokenFor.add`，不再删 undo。
 - Windows Office：`VersionStore` 区分 ENOENT / 不可读 / 损坏；损坏 quarantine；blocked 时拒绝覆写 manifest。
 - Settings：`loadAgents`（agents.state）失败 toast，不再显示成「未配置」。
