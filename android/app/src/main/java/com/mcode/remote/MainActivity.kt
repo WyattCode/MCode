@@ -2569,6 +2569,10 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         partSeq = 0
         reasoningSeen.clear()
         reasoningParts.clear()
+        // Queue chips belong to the conversation leaving the screen;
+        // clear them with the transcript so a tap cannot name the one
+        // that just opened while session.get is still out.
+        queuedPrompts.clear()
         loadingThread = id != null
         if (id == null) return
         // Parked permissions ride along: a turn can be sitting on an answer
@@ -3785,20 +3789,19 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 else draftStore.edit().putString("draft.$key", words).apply()
             },
             /*
-             * Both take the id and leave if there is none. `currentSession!!`
-             * was an NPE waiting for the reader to switch away from a
-             * conversation with a queued message - the queue belongs to the
-             * conversation it was drawn in, and by the time the tap lands that
-             * one may no longer be the open one.
+             * The queue chips were drawn for this conversation. Capture its id
+             * here: select() may already have moved currentSession before the
+             * chips recompose away, and a tap must not name the new one.
              */
+            val queueSessionID = currentSession
             onQueueRemove = { id ->
                 queuedPrompts.removeAll { it.first == id }
-                currentSession?.let { sid ->
+                queueSessionID?.let { sid ->
                     request(JSONObject().put("type", "session.queue.remove").put("sessionID", sid).put("id", id))
                 }
             },
             onQueueSend = { id ->
-                currentSession?.let { sid ->
+                queueSessionID?.let { sid ->
                     request(JSONObject().put("type", "session.queue.send").put("sessionID", sid).put("id", id))
                 }
             },
@@ -6191,8 +6194,9 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             text = { Text("「${row.title}」及其对话记录将被永久移除。") },
             confirmButton = {
                 TextButton({
-                    request(JSONObject().put("type", "session.delete").put("sessionID", row.id))
+                    val doomed = row.id
                     deleteTarget = null
+                    request(JSONObject().put("type", "session.delete").put("sessionID", doomed))
                 }) { Text("删除", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = { TextButton({ deleteTarget = null }) { Text("取消") } },
@@ -6209,8 +6213,10 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             text = { OutlinedTextField(newTitle, { newTitle = it }, singleLine = true) },
             confirmButton = {
                 TextButton({
-                    if (newTitle.isNotBlank()) request(JSONObject().put("type", "session.rename").put("sessionID", row.id).put("title", newTitle.trim()))
+                    val title = newTitle.trim()
+                    val sid = row.id
                     renameTarget = null
+                    if (title.isNotBlank()) request(JSONObject().put("type", "session.rename").put("sessionID", sid).put("title", title))
                 }) { Text("保存") }
             },
             dismissButton = { TextButton({ renameTarget = null }) { Text("取消") } },

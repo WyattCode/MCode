@@ -89,7 +89,8 @@ function onDockKey(event: KeyboardEvent) {
   if (/^[1-9]$/.test(event.key) && !event.metaKey && !event.ctrlKey && !event.altKey) {
     if (!engaged) return
     const option = el.querySelector<HTMLButtonElement>(`[data-confirm-optkey="${event.key}"]`)
-    if (!option) return
+    // A disabled option is not an answer: Enter already skips it, so digits must too.
+    if (!option || option.disabled) return
     event.preventDefault()
     engage()
     option.click()

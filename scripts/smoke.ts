@@ -2246,6 +2246,68 @@ async function main() {
     const deletedAt = android.indexOf('"session.deleted"')
     const deleted = deletedAt < 0 ? "" : android.slice(deletedAt, deletedAt + 1800)
     check("deleting the open conversation clears its pending files", deleted.includes("attachments.clear()"))
+  section("Review polish r87")
+  {
+    // Walk up from cwd so a smoke runner started in scripts/ still finds sources.
+    let root = process.cwd()
+    for (let i = 0; i < 6; i++) {
+      try {
+        await fs.access(path.join(root, "src/renderer/src/components/Composer.vue"))
+        break
+      } catch {
+        root = path.dirname(root)
+      }
+    }
+    const activity = await fs.readFile(path.join(root, "android/app/src/main/java/com/mcode/remote/MainActivity.kt"), "utf8")
+    const dock = await fs.readFile(path.join(root, "src/renderer/src/components/QuestionDock.vue"), "utf8")
+    const perm = await fs.readFile(path.join(root, "src/renderer/src/components/PermissionDialog.vue"), "utf8")
+    const composer = await fs.readFile(path.join(root, "src/renderer/src/components/Composer.vue"), "utf8")
+
+    const selectAt = activity.indexOf("fun select(id: String?)")
+    check("select is present", selectAt >= 0)
+    const selectLaunch = activity.indexOf("scope.launch", selectAt)
+    const syncClear = activity.indexOf("queuedPrompts.clear()", selectAt)
+    check(
+      "select clears queued chips before session.get launches",
+      syncClear >= 0 && selectLaunch >= 0 && syncClear < selectLaunch,
+      { syncClear, selectLaunch },
+    )
+    check("queue taps close over queueSessionID", activity.includes("val queueSessionID = currentSession"))
+    check(
+      "queue remove uses the captured session",
+      /queueSessionID\?\.let[\s\S]{0,200}session\.queue\.remove/.test(activity),
+    )
+    check(
+      "queue send uses the captured session",
+      /queueSessionID\?\.let[\s\S]{0,200}session\.queue\.send/.test(activity),
+    )
+
+    const delBtn = activity.indexOf('put("type", "session.delete")')
+    check("delete confirm exists", delBtn >= 0)
+    const delWindow = activity.slice(Math.max(0, delBtn - 280), delBtn + 80)
+    check(
+      "delete clears deleteTarget before the request",
+      delWindow.indexOf("deleteTarget = null") >= 0 && delWindow.indexOf("deleteTarget = null") < delWindow.indexOf("session.delete"),
+      delWindow,
+    )
+    const renBtn = activity.indexOf('put("type", "session.rename")')
+    check("rename confirm exists", renBtn >= 0)
+    const renWindow = activity.slice(Math.max(0, renBtn - 280), renBtn + 80)
+    check(
+      "rename clears renameTarget before the request",
+      renWindow.indexOf("renameTarget = null") >= 0 && renWindow.indexOf("renameTarget = null") < renWindow.indexOf("session.rename"),
+      renWindow,
+    )
+
+    check(
+      "permission reason submit is in the dock arrow walk",
+      /data-cnav\s+data-perm-reason-submit/.test(perm) || /data-perm-reason-submit[^>]*data-cnav/.test(perm),
+    )
+    check("digit keys skip a disabled option", /option\.disabled/.test(dock))
+    check(
+      "goal mode toast uses the value just written",
+      /const next = !goalMode\.value/.test(composer) && /notify\(t\(next \?/.test(composer),
+    )
   }
 
   section("Permission guide")

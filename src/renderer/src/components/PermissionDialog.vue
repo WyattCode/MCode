@@ -197,7 +197,7 @@ function onReasonKey(event: KeyboardEvent) {
         :disabled="busy"
         @keydown="onReasonKey"
       />
-      <button type="button" class="perm-btn" data-perm-reason-submit :disabled="busy" @click="rejectWithReason">
+      <button type="button" class="perm-btn" data-cnav data-perm-reason-submit :disabled="busy" @click="rejectWithReason">
         {{ t("perm.submit") }}
       </button>
     </div>
