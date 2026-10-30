@@ -2145,6 +2145,37 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r123")
+  {
+    const { readFileSync } = await import("node:fs")
+    const { join } = await import("node:path")
+    const root = process.cwd()
+    const android = readFileSync(join(root, "android/app/src/main/java/com/mcode/remote/MainActivity.kt"), "utf8")
+    const sendAt = android.indexOf("onSend = {")
+    const stopAt = android.indexOf("onStop = {", sendAt >= 0 ? sendAt : 0)
+    // Prefer the InputCapsule onStop (after onSend), not an unrelated onStop.
+    const stop = stopAt >= 0 ? android.slice(stopAt, stopAt + 900) : ""
+    check("r123: capsule onStop uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,160}session\.abort/.test(stop))
+    check("r123: capsule onStop toasts 没能停止", stop.includes("没能停止"))
+    check("r123: capsule onStop no fire-and-forget request()", !/onStop = \{ currentSession\?\.let \{ request\(JSONObject\(\)\.put\("type", "session\.abort"\)/.test(android))
+
+    const goalBar = readFileSync(join(root, "src/renderer/src/components/GoalBar.vue"), "utf8")
+    check("r123: GoalBar imports notifyFailure", goalBar.includes("notifyFailure") && /import \{[\s\S]*notifyFailure[\s\S]*\} from ["']\.\.\/lib\/toast["']/.test(goalBar))
+    check("r123: GoalBar commitEdit try/catch", /async function commitEdit\(\) \{[\s\S]*?try \{[\s\S]*?setGoal[\s\S]*?catch/.test(goalBar))
+    check("r123: GoalBar dismiss/leave handlers", goalBar.includes("async function dismiss()") && goalBar.includes("async function leave()") && goalBar.includes('@click="dismiss"') && goalBar.includes('@click="leave"'))
+    check("r123: GoalBar no raw app.setGoal/leaveGoal clicks", !goalBar.includes('@click="app.setGoal(props.sessionID, null)"') && !goalBar.includes('@click="app.leaveGoal(props.sessionID)"'))
+
+    const appStore = readFileSync(join(root, "src/renderer/src/stores/app.ts"), "utf8")
+    const togAt = appStore.indexOf("async function toggleGoalMode(home = false)")
+    const tog = togAt >= 0 ? appStore.slice(togAt, togAt + 500) : ""
+    check("r123: app.toggleGoalMode try/catch notifyFailure", tog.includes("try {") && tog.includes("notifyFailure") && tog.includes("common.requestFailed") && tog.includes("return"))
+
+    const composer = readFileSync(join(root, "src/renderer/src/components/Composer.vue"), "utf8")
+    const cAt = composer.indexOf("async function toggleGoalMode()")
+    const c = cAt >= 0 ? composer.slice(cAt, cAt + 450) : ""
+    check("r123: Composer.toggleGoalMode captures next + try/catch", c.includes("const next = !goalMode.value") && c.includes("try {") && c.includes("notifyFailure") && c.includes('notify(t(next ? "toast.goalOn"'))
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }

@@ -3699,7 +3699,23 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 drafts.remove(sid)
                 draftStore.edit().remove("draft.$sid").apply()
             },
-            onStop = { currentSession?.let { request(JSONObject().put("type", "session.abort").put("sessionID", it)) } },
+            onStop = {
+                /* Capsule Stop: #143 only fixed pad header stopHere. */
+                val sid = currentSession
+                if (sid != null) {
+                    scope.launch {
+                        try {
+                            rpcOrThrow(JSONObject().put("type", "session.abort").put("sessionID", sid))
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, "没能停止", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                }
+            },
         )
     }
 
