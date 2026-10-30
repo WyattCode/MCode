@@ -628,6 +628,12 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - Windows：`HomeHero.existing` / `createBlank(source)`、`SettingsDialog.addProject`、`App.addAndBrowse` / `newSessionIn` 在 `addProject` 失败时 `notifyFailure`，成功才 take/startIn。
 - Android：编辑重发在 revert 成功后的 `session.prompt` 改 `rpcOrThrow`，失败 Toast「发送失败」。
 - 验证：smoke「Review polish r126」；未合并。
+### 续六十：项目重命名 fail-closed；导出日志失败可见；Android 附件全失败 Toast（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- Windows：`submitProjectRename` 同名校验与 `patchConfig` 失败时保留对话框；成功才关闭。`exportLog` 失败走 `reportSaveFailure(toast.exportFailed)`（对齐 `shareSession`）。
+- Android：文件选择器全部读失败时 Toast「没有附上文件」。
+- 验证：smoke「Review polish r127」；未合并。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 

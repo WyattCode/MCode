@@ -3293,6 +3293,34 @@ async function main() {
     const sentAt = main.indexOf("val sent = runCatching")
     const sent = sentAt >= 0 ? main.slice(sentAt, sentAt + 550) : ""
     check("Android edit-resend prompt toast", sent.includes("rpcOrThrow") && sent.includes('put("type", "session.prompt")') && sent.includes("发送失败"))
+  section("Review polish r127")
+  {
+    const appVue = read("src/renderer/src/App.vue")
+    const renameAt = appVue.indexOf("async function submitProjectRename")
+    const rename = renameAt >= 0 ? appVue.slice(renameAt, renameAt + 700) : ""
+    check(
+      "submitProjectRename fail-closed",
+      rename.includes("try {") &&
+        rename.includes("await app.patchConfig") &&
+        rename.includes("renamingProject.value = undefined") &&
+        rename.indexOf("toast.projectNameTaken") < rename.indexOf("renamingProject.value = undefined") &&
+        rename.indexOf("await app.patchConfig") < rename.indexOf("renamingProject.value = undefined"),
+    )
+    const exportAt = appVue.indexOf("async function exportLog")
+    const exp = exportAt >= 0 ? appVue.slice(exportAt, exportAt + 550) : ""
+    check(
+      "exportLog try/catch",
+      exp.includes("try {") && exp.includes("reportSaveFailure") && exp.includes("toast.exportFailed"),
+    )
+    const main = read("android/app/src/main/java/com/mcode/remote/MainActivity.kt")
+    const attachAt = main.indexOf('Toast.makeText(context, "已附上 $attached 个文件"')
+    const attach = attachAt >= 0 ? main.slice(attachAt, attachAt + 280) : ""
+    check(
+      "Android attach all-fail toast",
+      attach.includes("已附上 $attached 个文件") &&
+        attach.includes("uris.isNotEmpty()") &&
+        attach.includes("没有附上文件"),
+    )
   }
 
   section("Permission guide")

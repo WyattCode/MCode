@@ -1703,6 +1703,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             attached += 1
         } catch (_: Exception) {}
         if (attached > 0) Toast.makeText(context, "已附上 $attached 个文件", Toast.LENGTH_SHORT).show()
+        else if (uris.isNotEmpty()) Toast.makeText(context, "没有附上文件", Toast.LENGTH_SHORT).show()
     }
     fun pickImages() {
         runCatching { filePicker.launch(arrayOf("*/*")) }
