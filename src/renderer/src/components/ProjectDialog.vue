@@ -90,7 +90,12 @@ async function save() {
   else delete icons[props.directory]
   colors[props.directory] = color.value
 
-  await app.patchConfig({ projectNames: names, projectIcons: icons, projectColors: colors })
+  try {
+    await app.patchConfig({ projectNames: names, projectIcons: icons, projectColors: colors })
+  } catch {
+    // patchConfig already toasts; keep the dialog open.
+    return
+  }
   emit("close")
 }
 </script>

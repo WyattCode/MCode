@@ -634,6 +634,12 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - Windows：`submitProjectRename` 同名校验与 `patchConfig` 失败时保留对话框；成功才关闭。`exportLog` 失败走 `reportSaveFailure(toast.exportFailed)`（对齐 `shareSession`）。
 - Android：文件选择器全部读失败时 Toast「没有附上文件」。
 - 验证：smoke「Review polish r127」；未合并。
+### 续六十一：语音发送/删除 Agents 确认 fail-closed；项目外观保存失败不关对话框（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
+- Windows Settings：`enableVoiceSend` 对齐 `setWatermarkRemoval`，成功才关确认框；`removeAgents` 成功才清 `confirmingAgentsDelete`。
+- Windows ProjectDialog：`save` 的 `patchConfig` 失败保留对话框（try/catch，已有失败 toast）。
+- 验证：smoke「Review polish r128」；未合并。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
