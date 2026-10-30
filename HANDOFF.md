@@ -709,6 +709,10 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - PR: https://github.com/WyattCode/MCode/pull/172 （未合并）
 - Windows：`HomeHero.useWorktree` 对 `addProject` 加 try/catch，失败 `notifyFailure(common.requestFailed)` 并清掉 `added`、不 `choose`；`BranchPicker.create` 空结果 toast `home.branchCreateFailed`；`Sidebar.setDown` 拖拽排序对 `patchConfig` 加 try/catch（patchConfig 已 toast）。
 - 验证：slice smoke「Review polish r141」；未合并。
+### 续七十五：models/usage 损坏拒覆写；Plugins MCP toggle 空结果 Toast（2026-10-30）
+- PR: https://github.com/WyattCode/MCode/pull/173 （未合并）
+- Windows：`config.readDiscovered` 对 unreadable/quarantine-fail 设 `modelsBlocked`，`setDiscovered`/`setApiKey` 不再覆写；`UsageDays` 同样 blocked 拒写；`PluginsView.toggle` 空结果 `notifyFailure`。
+- 验证：slice smoke「Review polish r142」；未合并。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 

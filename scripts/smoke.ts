@@ -3096,6 +3096,7 @@ async function main() {
   section("Review polish r139")
   section("Review polish r140")
   section("Review polish r141")
+  section("Review polish r142")
   {
     const { readFileSync } = await import("node:fs")
     const { join } = await import("node:path")
@@ -3847,6 +3848,18 @@ async function main() {
         sd.includes("await app.patchConfig({ projectOrder:") &&
         sd.includes("await app.patchConfig({ taskOrder:"),
     )
+    const config = readFileSync(join(root, "src/server/config.ts"), "utf8")
+    check("config has modelsBlocked", config.includes("private modelsBlocked = false"))
+    check("readDiscovered handles unreadable", config.includes("if (read.unreadable)") && config.includes("this.modelsBlocked = true"))
+    check("readDiscovered blocks when quarantine fails", config.includes("if (aside === undefined) this.modelsBlocked = true"))
+    check("setDiscovered early-returns on modelsBlocked", config.includes("if (this.modelsBlocked) return"))
+    check("setApiKey models write guarded", config.includes("if (!this.modelsBlocked) {"))
+    const usage = readFileSync(join(root, "src/server/session/usage-days.ts"), "utf8")
+    check("usage has blocked flag", usage.includes("private blocked = false") && usage.includes("this.blocked = true"))
+    check("usage pass write guarded", usage.includes("!this.stopped && !this.blocked"))
+    const plugins = readFileSync(join(root, "src/renderer/src/components/PluginsView.vue"), "utf8")
+    check("PluginsView.toggle reports empty result", plugins.includes("if (!result) {") && plugins.includes("notifyFailure(t(\"mcp.title\"), t(\"common.requestFailed\"))"))
+    check("PluginsView.toggle no bare if (result)", !plugins.includes("if (result) servers.value = result.servers"))
   }
 
   section("Permission guide")

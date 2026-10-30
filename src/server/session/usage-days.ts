@@ -81,6 +81,8 @@ export class UsageDays {
   private timer?: ReturnType<typeof setTimeout>
   private live = false
   private stopped = false
+  /** The stored file could not be read and could not be moved aside: nothing may write over it. */
+  private blocked = false
 
   constructor(
     private readonly storage: Storage,
@@ -122,8 +124,12 @@ export class UsageDays {
   private load(): Promise<UsageDocument> {
     this.document ??= (async () => {
       const read = await this.storage.readOrCorrupt<UsageDocument>(KEY)
-      if (read.corrupt !== undefined) {
+      if (read.unreadable) {
+        this.blocked = true
+        console.warn(`[usage] ${this.storage.fileOf(KEY)} could not be read (${read.unreadable}); left in place, writes are refused, counted again from the conversations`)
+      } else if (read.corrupt !== undefined) {
         const aside = await this.storage.quarantine(KEY).catch(() => undefined)
+        if (aside === undefined) this.blocked = true
         console.warn(`[usage] ${this.storage.fileOf(KEY)} could not be read (${read.corrupt}); moved to ${aside ?? "nowhere"} and counted again from the conversations`)
       }
       const value = read.value
@@ -175,7 +181,7 @@ export class UsageDays {
       document.sessions[session.id] = { updated: session.updated, rows: [...byKey.values()].map(pack) }
       changed = true
     })
-    if (changed && !this.stopped) await this.storage.write(KEY, document).catch(() => undefined)
+    if (changed && !this.stopped && !this.blocked) await this.storage.write(KEY, document).catch(() => undefined)
   }
 
   /**
