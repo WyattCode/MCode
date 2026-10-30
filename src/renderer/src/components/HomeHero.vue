@@ -180,7 +180,12 @@ function choose(directory: string) {
  */
 async function useWorktree(directory: string) {
   added.value = directory
-  await app.addProject(directory, { used: true }).catch(() => {})
+  try {
+    await app.addProject(directory, { used: true })
+  } catch (err) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    return
+  }
   choose(directory)
 }
 
@@ -217,7 +222,10 @@ async function createBlank(title: string, source?: string) {
   }
   try {
     const made = await app.client?.request({ type: "project.createBlank", name: title })
-    if (!made) return
+    if (!made) {
+      notifyFailure(t("home.blankFailed", { error: t("common.requestFailed") }))
+      return
+    }
     await app.addProject(made.directory, { switched: true })
     take(made.directory)
   } catch (err) {

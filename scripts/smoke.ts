@@ -2145,6 +2145,25 @@ async function main() {
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
+  section("Review polish r115")
+  {
+    const commitCard = read("src/renderer/src/components/InfoCommitCard.vue")
+    const pushAt = commitCard.indexOf('type: "git.push"')
+    const push = pushAt >= 0 ? commitCard.slice(pushAt, pushAt + 280) : ""
+    check("InfoCommitCard push null sets error", push.includes('error.value = t("info.pushError.generic")') && !/if \(!result\) return\n\s*if \(result\.ok\)/.test(push))
+    const commitAt = commitCard.indexOf('type: "git.commit"')
+    const commit = commitAt >= 0 ? commitCard.slice(commitAt, commitAt + 900) : ""
+    check("InfoCommitCard commit null sets error", commit.includes('error.value = t("info.commitError.generic")') && !/if \(!result\) return\n\s*if \(!result\.ok\)/.test(commit))
+    const home = read("src/renderer/src/components/HomeHero.vue")
+    const wtAt = home.indexOf("async function useWorktree")
+    const wtEnd = wtAt >= 0 ? home.indexOf("\n}", wtAt) : -1
+    const wt = wtAt >= 0 && wtEnd > wtAt ? home.slice(wtAt, wtEnd) : ""
+    check("HomeHero useWorktree fail-closed", wt.includes("notifyFailure") && !wt.includes(".catch(() => {})"))
+    const blankAt = home.indexOf('type: "project.createBlank"')
+    const blank = blankAt >= 0 ? home.slice(blankAt, blankAt + 320) : ""
+    check("HomeHero createBlank null toasts", blank.includes("home.blankFailed") && blank.includes("common.requestFailed"))
+  }
+
   section("Permission guide")
   {
     const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }
