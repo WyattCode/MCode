@@ -293,6 +293,13 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - `session-context.ts`：`readContext` 先看顺序——最后一次花过 token 的回合在 `compacted.messageID` **之后**就用真实用量（哪怕时间戳相同或更早）；在它之前（或就是它）才保留估算。边界消息已不在转录里时仍按原来的时间戳判断。
 
 **验证**：`scripts/smoke-round29.ts` 第 4 节——顺序清估算（`post.time.created <= compacted.at` 也清）、边界之前仍估算、边界缺失回落到时间戳；再读 `runner.ts` 源码，断言 `addUsage` 之后、`promptSize` 之前有 `saveMessage(assistant)`，以及溢出救援的 `continue` 前有 `continuing = undefined`。
+### 续十二：驾驶舱权限/提问卡等服务端确认再消失（2026-10-30）
+
+- 驾驶舱的权限卡和提问卡点了按钮后不再立刻消失，等服务端回帧确认；失败则按钮恢复可点。
+- 强制确认的权限卡不再显示「总是允许」，并提示「此操作每次都要确认」；`permission.respond` 把 forced + always 记成 once。
+- 提问卡跳过时保留已经选过的答案（`[["A"],[]]`），不再清空。
+- `remote-check` 的 VM 回归补了四条：强制卡、等确认、重复卡去重、跳过保留答案。
+- 本轮的 PR 还没合并。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 

@@ -1949,8 +1949,12 @@ async function main() {
   await new Promise((resolve) => setTimeout(resolve, 20))
   const removalAsk = permissions.outstanding()[0]
   check("a delete asks despite an earlier always", removalAsk?.forced === true, removalAsk)
-  if (removalAsk) permissions.respond(removalAsk.id, "always")
-  check("the delete ran once approved", (await removal) === "allowed")
+    const forcedHeard: PermissionRecord[] = []
+    const stopForcedHearing = removalAsk ? permissions.onDecided(removalAsk.callID, (record) => forcedHeard.push(record)) : () => {}
+    if (removalAsk) permissions.respond(removalAsk.id, "always")
+    check("the delete ran once approved", (await removal) === "allowed")
+    check("always on a forced ask is recorded as once", forcedHeard[0]?.decided === "allow-once", forcedHeard)
+    stopForcedHearing()
   const again = asking("s-forced", "bash", "rm -rf build")
   await new Promise((resolve) => setTimeout(resolve, 20))
   const againAsk = permissions.outstanding()[0]

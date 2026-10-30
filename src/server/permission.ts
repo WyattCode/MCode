@@ -600,6 +600,9 @@ export class Permissions {
     const pending = this.pending.get(requestID)
     if (!pending) return
     this.pending.delete(requestID)
+    // A forced ask must never record allow-always: remember() already skips forced, but the
+    // decided frame and the resolve() value must say once too.
+    if (response === "always" && pending.request.forced) response = "once"
     if (response === "reject" && reason) pending.reason = reason
     pending.decided = decisionOf(response, pending.reason)
     pending.resolve(response)
