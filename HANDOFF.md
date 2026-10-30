@@ -718,6 +718,11 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - Windows：`readStorageLayout` 对 unreadable/quarantine-fail 拒写 marker；`BackgroundUsage` blocked 拒写 `usage-background.json`。
 - Android：Plugins `onToggleSkill` 在 config.get/set 失败时 Toast「无法切换技能」，成功才 refresh。
 - 验证：slice smoke「Review polish r143」；未合并。
+### 续七十七：chat-queue 损坏拒覆写；Android 权限/宽屏目标失败 Toast（2026-10-30）
+- PR: https://github.com/WyattCode/MCode/pull/175 （未合并）
+- Windows：`SessionChat` 对 unreadable/quarantine-fail 的 `chat-queue.json` 设 `queueBlocked` 拒写。
+- Android：`onAccess` 成功才改本地；宽屏目标模式失败回滚 + Toast「无法开启目标模式」。
+- 验证：slice smoke「Review polish r144」；未合并。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 

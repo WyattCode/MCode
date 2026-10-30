@@ -3949,6 +3949,16 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 Toast.makeText(context, "切换权限失败：${e.message?.take(60) ?: "未知错误"}", Toast.LENGTH_LONG).show()
                             }
                         }
+                        runCatching { rpc(JSONObject().put("type", "session.access").put("sessionID", sid).put("access", level)) }
+                            .onSuccess {
+                                val at = sessions.indexOfFirst { it.id == sid }
+                                if (at >= 0) sessions[at] = sessions[at].copy(access = level)
+                            }
+                            .onFailure {
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(context, "无法切换权限", Toast.LENGTH_SHORT).show()
+                                }
+                            }
                     }
                 }
             },
@@ -7084,6 +7094,16 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                                 Toast.makeText(context, "切换权限失败：${e.message?.take(60) ?: "未知错误"}", Toast.LENGTH_LONG).show()
                                             }
                                         }
+                                        runCatching { rpc(JSONObject().put("type", "session.access").put("sessionID", sid).put("access", level)) }
+                                            .onSuccess {
+                                                val at2 = sessions.indexOfFirst { it.id == sid }
+                                                if (at2 >= 0) sessions[at2] = sessions[at2].copy(access = level)
+                                            }
+                                            .onFailure {
+                                                withContext(Dispatchers.Main) {
+                                                    Toast.makeText(context, "无法切换权限", Toast.LENGTH_SHORT).show()
+                                                }
+                                            }
                                     }
                                 }
                             },
@@ -7136,6 +7156,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         val sid = currentSession
                         goalMode = next
                         if (sid != null) {
+                        currentSession?.let { sid ->
                             scope.launch {
                                 runCatching {
                                     rpc(JSONObject().put("type", "session.goalMode").put("sessionID", sid).put("on", next))
@@ -7143,6 +7164,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                     // A write that fails puts the switch back, as the
                                     // desktop's does, rather than lying about it.
                                     if (currentSession == sid) goalMode = !next
+                                    goalMode = !next
                                     withContext(Dispatchers.Main) {
                                         Toast.makeText(context, "无法开启目标模式", Toast.LENGTH_SHORT).show()
                                     }
@@ -7161,6 +7183,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 withContext(Dispatchers.Main) {
                                     Toast.makeText(context, "没能切换目标模式", Toast.LENGTH_SHORT).show()
                                 }
+
                             }
                         }
                     },

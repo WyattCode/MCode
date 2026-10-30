@@ -3098,6 +3098,7 @@ async function main() {
   section("Review polish r141")
   section("Review polish r142")
   section("Review polish r143")
+  section("Review polish r144")
   {
     const { readFileSync } = await import("node:fs")
     const { join } = await import("node:path")
@@ -3902,6 +3903,14 @@ async function main() {
             !/runCatching \{[\s\S]*?config\.set[\s\S]*?\}\s*\n\s*refreshPlugins\+\+/.test(body),
         ),
     )
+    const chatSrc = readFileSync(join(root, "src/server/session/chat.ts"), "utf8")
+    check("chat queue has a blocked flag", chatSrc.includes("queueBlocked"))
+    check("chat queue reads through readOrCorrupt", chatSrc.includes("readOrCorrupt"))
+    check("chat persist refuses to write when blocked", /if \(!this\.storage \|\| this\.queueBlocked\) return/.test(chatSrc))
+    check("chat restore handles unreadable queue", chatSrc.includes("read.unreadable"))
+    const androidSrc = readFileSync(join(root, "android/app/src/main/java/com/mcode/remote/MainActivity.kt"), "utf8")
+    check("android access failure is surfaced", (androidSrc.match(/无法切换权限/g) ?? []).length >= 2)
+    check("android wide goal failure is surfaced", androidSrc.includes("无法开启目标模式"))
   }
 
   section("Permission guide")
