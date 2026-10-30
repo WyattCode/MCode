@@ -2461,6 +2461,7 @@ async function main() {
   section("Review polish r106")
   section("Review polish r107")
   section("Review polish r108")
+  section("Review polish r109")
   {
     const root = process.cwd()
     const main = await fs.readFile(
@@ -2881,6 +2882,18 @@ async function main() {
     const q = qAt >= 0 ? main.slice(qAt, qAt + 700) : ""
     check("r108: question.list uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,60}question\.list/.test(q))
     check("r108: question.list toasts on failure", q.includes("没能加载待答问题"))
+    const listAt = main.indexOf("atListDir = {")
+    const list = listAt >= 0 ? main.slice(listAt, listAt + 900) : ""
+    check("r109: atListDir uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}file\.listDir/.test(list))
+    check("r109: atListDir toasts on failure", list.includes("没能列出文件"))
+    const searchAt = main.indexOf("atSearch = {")
+    const search = searchAt >= 0 ? main.slice(searchAt, searchAt + 900) : ""
+    check("r109: atSearch uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,100}file\.search/.test(search))
+    check("r109: atSearch toasts on failure", search.includes("没能搜索文件"))
+    const attachAt = main.indexOf('put("type", "shell.attach")')
+    const attach = attachAt >= 0 ? main.slice(Math.max(0, attachAt - 160), attachAt + 550) : ""
+    check("r109: shell.attach uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}shell\.attach/.test(attach))
+    check("r109: shell.attach toasts on failure", attach.includes("没能连接终端"))
   }
 
   section("Permission guide")
