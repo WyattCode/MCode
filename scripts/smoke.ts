@@ -3466,6 +3466,41 @@ async function main() {
         rr.includes("common.requestFailed") &&
         rr.includes('type: "session.reviewRestricted"') &&
         !rr.includes("app.client?.request"),
+  section("Review polish r132")
+  {
+    const fs = await import("node:fs/promises")
+    const path = await import("node:path")
+    const qs = await fs.readFile(path.join(process.cwd(), "src/renderer/src/stores/questions.ts"), "utf8")
+    const replyAt = qs.indexOf("async function reply(")
+    const reply = replyAt >= 0 ? qs.slice(replyAt, replyAt + 700) : ""
+    check(
+      "r132: questions.reply null-client fail-closed",
+      reply.includes("const client = app.client") &&
+        reply.includes("if (!client)") &&
+        reply.includes('t("error.questionReplyFailed")') &&
+        reply.includes("common.requestFailed") &&
+        reply.includes('type: "question.reply"') &&
+        !reply.includes("app.client?.request"),
+    )
+    const onceAt = qs.indexOf("function allowOnce(")
+    const once = onceAt >= 0 ? qs.slice(onceAt, onceAt + 900) : ""
+    check(
+      "r132: questions.allowOnce null-client fail-closed",
+      once.includes("const client = app.client") &&
+        once.includes("if (!client)") &&
+        once.includes("autoAnswered.delete(requestID)") &&
+        once.includes('t("error.autoPermissionFailed")') &&
+        once.includes("common.requestFailed") &&
+        once.includes('type: "permission.respond"') &&
+        !once.includes("app.client?.request"),
+    )
+    const composer = await fs.readFile(path.join(process.cwd(), "src/renderer/src/components/Composer.vue"), "utf8")
+    const hearAt = composer.indexOf("async function hearSegment")
+    const hear = hearAt >= 0 ? composer.slice(hearAt, hearAt + 2200) : ""
+    check(
+      "r132: hearSegment voice.transcribe null throws into catch",
+      hear.includes('throw new Error("voice.transcribe returned no result")') &&
+        !hear.includes("if (!result) return"),
     )
   }
 

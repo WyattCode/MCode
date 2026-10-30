@@ -1013,6 +1013,8 @@ async function hearSegment(recording: Recording, run: number) {
       stopVoice(run)
       return
     }
+    // Null client / empty reply: fall into catch (toast + failed status + stopVoice).
+    if (!result) throw new Error("voice.transcribe returned no result")
     /*
      * 智能编辑 that did not happen. The words still land - dictation is better
      * than nothing - but the mode quietly becoming 快速输入 is what used to hide

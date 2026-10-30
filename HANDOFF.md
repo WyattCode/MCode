@@ -655,6 +655,11 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - PR: https://github.com/WyattCode/MCode/pull/162 （未合并）
 - Windows：`EditedFilesCard.revert` 成功后才关确认框；`row.moveOut` / `row.reviewRestricted` 空 client `notifyFailure`。
 - 验证：smoke「Review polish r131」；未合并。
+### 续六十五：本任务放行 / 问题回答空 client toast；语音转写空结果走失败路径（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/163 （未合并）
+- Windows：`questions.allowOnce` / `questions.reply` 空 client `notifyFailure`；`Composer.hearSegment` 对 `voice.transcribe` 空结果抛入既有 catch（toast + failed 状态 + stopVoice）。
+- 验证：smoke「Review polish r132」；未合并。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 
