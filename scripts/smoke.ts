@@ -2460,6 +2460,7 @@ async function main() {
   section("Review polish r105")
   section("Review polish r106")
   section("Review polish r107")
+  section("Review polish r108")
   {
     const root = process.cwd()
     const main = await fs.readFile(
@@ -2868,6 +2869,18 @@ async function main() {
     const cmd = cmdAt >= 0 ? main.slice(Math.max(0, cmdAt - 200), cmdAt + 1000) : ""
     check("r107: command.list uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,80}command\.list/.test(cmd))
     check("r107: command.list toasts on failure", cmd.includes("没能加载命令"))
+    const voiceAt = main.indexOf('put("type", "voice.transcribe")')
+    const voice = voiceAt >= 0 ? main.slice(Math.max(0, voiceAt - 120), voiceAt + 400) : ""
+    check("r108: voice.transcribe uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,120}voice\.transcribe/.test(voice))
+    check("r108: voice.transcribe does not use plain rpc", !/=\s*rpc\(\s*\n\s*JSONObject\(\)/.test(voice))
+    const provAt = main.indexOf("fun loadProviders()")
+    const prov = provAt >= 0 ? main.slice(provAt, provAt + 500) : ""
+    check("r108: provider.list uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,60}provider\.list/.test(prov))
+    check("r108: provider.list toasts on failure", prov.includes("没能加载模型"))
+    const qAt = main.indexOf("fun loadPendingQuestions()")
+    const q = qAt >= 0 ? main.slice(qAt, qAt + 700) : ""
+    check("r108: question.list uses rpcOrThrow", /rpcOrThrow\([\s\S]{0,60}question\.list/.test(q))
+    check("r108: question.list toasts on failure", q.includes("没能加载待答问题"))
   }
 
   section("Permission guide")

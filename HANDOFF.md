@@ -525,6 +525,11 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - PR: https://github.com/WyattCode/MCode/pull/XXX （未合并）
 - Android：`session.model` 改 `rpcOrThrow`（plain rpc 把 ok:false 当成功仍改 pill）；`artifact.list` / `command.list` 改 `rpcOrThrow` + Toast「没能加载作品」/「没能加载命令」。
 - 验证：smoke「Review polish r107」；未合并。
+### 续四十一：语音识别 ok:false 不再假「没听清」；模型列表/待答问题加载失败提示（2026-10-30）
+
+- PR: https://github.com/WyattCode/MCode/pull/139 （未合并）
+- Android：`voice.transcribe` 改 `rpcOrThrow`（plain rpc 把 ok:false 当空文本，误弹「没听清」）；`provider.list` / `question.list` 改 `rpcOrThrow` + Toast「没能加载模型」/「没能加载待答问题」（原仅 println）。
+- 验证：smoke「Review polish r108」；未合并。
 
 ### 平板真机验证：端到端首次打通（2026-10-29）
 

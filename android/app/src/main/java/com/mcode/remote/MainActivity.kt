@@ -1921,7 +1921,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             try {
                 val bytes = withContext(Dispatchers.IO) { file.readBytes() }
                 file.delete()
-                val reply = rpc(
+                val reply = rpcOrThrow(
                     JSONObject()
                         .put("type", "voice.transcribe")
                         .put("audio", android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP))
@@ -2093,12 +2093,13 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     fun loadProviders() {
         scope.launch {
             try {
-                val reply = rpc(JSONObject().put("type", "provider.list"))
+                val reply = rpcOrThrow(JSONObject().put("type", "provider.list"))
                 providers = reply.optJSONObject("data")?.optJSONArray("providers")?.let { arr ->
                     (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
                 } ?: emptyList()
             } catch (e: Exception) {
                 println("[remote] provider.list failed: $e")
+                Toast.makeText(context, "没能加载模型", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -2135,7 +2136,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     fun loadPendingQuestions() {
         scope.launch {
             try {
-                val reply = rpc(JSONObject().put("type", "question.list"))
+                val reply = rpcOrThrow(JSONObject().put("type", "question.list"))
                 val arr = reply.optJSONObject("data")?.optJSONArray("questions") ?: return@launch
 
                 for (i in 0 until arr.length()) {
@@ -2146,6 +2147,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
 
             } catch (e: Exception) {
                 println("[remote] question.list failed: $e")
+                Toast.makeText(context, "没能加载待答问题", Toast.LENGTH_SHORT).show()
             }
         }
     }
