@@ -368,6 +368,7 @@ async function applyMcpNow() {
   const result = await client.request({ type: "mcp.applyNow" }).catch(() => undefined)
   if (!result) {
     mcpApply.value = "failed"
+    notifyFailure(t("set.mcp.applyFailed"))
     return
   }
   app.mcpServers = result.servers
@@ -949,10 +950,12 @@ async function chooseAppIcon(id: string) {
     return
   }
   try {
-    await app.patchConfig({ appIcon: id })
+    // quiet: one specific toast below instead of the generic prefSaveFailed.
+    await app.patchConfig({ appIcon: id }, { quiet: true })
   } catch {
     // Not saved: the window goes back to the icon the config still names.
     void window.mcode.appIcon(appIcon.value)
+    notifyFailure(t("set.appIconApplyFail"))
     return
   }
   notify(t("set.appIconApplied"), { level: "success" })
