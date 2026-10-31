@@ -7830,9 +7830,21 @@ fun SetUsage(data: JSONObject?) {
 @Composable
 fun SetNameField(value: String, onSave: (String) -> Unit) {
     var draft by remember(value) { mutableStateOf(value) }
+    /*
+     * The field takes the row, not a fixed 220dp.
+     *
+     * 220 is a phone measure - wide enough for a name on a narrow screen and
+     * comfortable there. On the pad it left 400dp of the settings column empty
+     * beside it, so a one-line name field looked like a chip with a Save button
+     * stuck to it. Measured before: the field ran 1251..1801 with the button at
+     * 1821..1966, all of it inside a 1600px column.
+     *
+     * `weight(1f)` so the field follows the column; the button keeps its own
+     * width and an 8dp gap, as on the desktop.
+     */
     Row(Modifier.padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         androidx.compose.material3.OutlinedTextField(
-            draft, { draft = it }, Modifier.width(220.dp),
+            draft, { draft = it }, Modifier.weight(1f),
             singleLine = true,
             textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp),
             shape = RoundedCornerShape(8.dp),
