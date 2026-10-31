@@ -2,7 +2,7 @@
   "name": "mcode",
   "productName": "MCode",
   "desktopName": "mcode.desktop",
-  "version": "0.9.8",
+  "version": "0.9.9",
   "description": "A keyboard-first, command-palette-driven AI coding agent.",
   "author": "MCode",
   "main": "./out/main/index.js",
@@ -38,7 +38,8 @@
     "providercheck": "esbuild scripts/provider-check.ts --bundle --platform=node --format=esm --target=node22 --alias:@shared=./src/shared --outfile=out/provider-check.mjs --packages=external && node out/provider-check.mjs",
     "pathscheck": "esbuild scripts/paths-check.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/paths-check.mjs --packages=external && node out/paths-check.mjs",
     "gencheck": "node scripts/gen-cockpit.mjs --check",
-    "prebuild": "npm run gencheck"
+    "prebuild": "npm run gencheck",
+    "androidtheme": "esbuild scripts/android-theme-check.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/android-theme-check.mjs --packages=external && node out/android-theme-check.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.117.1",

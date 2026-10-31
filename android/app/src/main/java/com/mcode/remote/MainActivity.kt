@@ -221,7 +221,22 @@ private val DarkToolSummary = Color(0xFFA8A8A8)
  * near each other. 17.6 tall.
  */
 private val DiffAddBg = Color(0xFFD2E6D4)
-private val DiffAddFg = Color(0xFF4C9C49)
+/*
+ * Darker than the reference's (76,156,73), because the reference's does not
+ * survive being drawn.
+ *
+ * The value above is the measured one, and it stays the honest reading of that
+ * page - but a diff is the one place where the reader is comparing characters
+ * rather than reading words, so it is the worst place to be short of contrast.
+ * Measured as drawn, on the capsule's own green half: (76,156,73) against
+ * (210,230,212) is 2.60:1 - under even the 3:1 floor, let alone 4.5.
+ *
+ * #2E6B2B keeps the hue and the two-step relationship to the wash, and comes to
+ * 4.92:1 on that half. Same treatment for the minus side below.
+ *
+ * Dark needed nothing: those two are 6.95:1 and 6.63:1 already.
+ */
+private val DiffAddFg = Color(0xFF2E6B2B)
 private val DiffDelBg = Color(0xFFEACED7)
 /*
  * (188,52,86), not the (212,136,160) this carried.
@@ -231,8 +246,12 @@ private val DiffDelBg = Color(0xFFEACED7)
  * the counter read as an empty pill. Sampled at native resolution off
  * `REF-now.png` the ink is a deep raspberry, and the pair now reads as one
  * figure with a size rather than as an empty box.
+ *
+ * Still not enough: (188,52,86) on (234,206,215) is 3.80:1, so the minus side
+ * stayed harder to read than the plus. #A02A47 is 4.91:1 on the same wash and
+ * the same raspberry.
  */
-private val DiffDelFg = Color(0xFFBC3456)
+private val DiffDelFg = Color(0xFFA02A47)
 private val DarkDiffAddBg = Color(0xFF23342A)
 private val DarkDiffAddFg = Color(0xFF8FCB8C)
 private val DarkDiffDelBg = Color(0xFF3A2530)
