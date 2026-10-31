@@ -9789,7 +9789,37 @@ fun Timeline(
                                             "MCode 是 AI，可能会出错。",
                                             fontSize = 13.sp,
                                             lineHeight = 18.sp,
-                                            color = LocalMuted.current.copy(alpha = 0.75f),
+                                            /*
+                                             * `LocalMuted` as it comes, with no
+                                             * alpha on top.
+                                             *
+                                             * This carried
+                                             * `.copy(alpha = 0.75f)`, on the
+                                             * reasoning that a footnote should
+                                             * be fainter than the muted colour
+                                             * already there. Muted is itself
+                                             * picked to sit just under the body
+                                             * text, though, so a further
+                                             * quarter of transparency puts it
+                                             * under the readable floor on a
+                                             * light page: sampled, the ink came
+                                             * out (133,133,128) on
+                                             * (255,254,253) - 3.68:1, below the
+                                             * 4.5:1 body text needs. Dark
+                                             * survived only by luck, 5.70:1.
+                                             *
+                                             * It is also the one line on the
+                                             * screen that says the answers can be
+                                             * wrong, so it is the last one that
+                                             * should be the hardest to read.
+                                             *
+                                             * Plain muted measures 6.67:1 here
+                                             * and 9.29:1 in dark - comfortably
+                                             * over, still well under the 17.2 of
+                                             * the reply above it, so it stays a
+                                             * footnote to the eye.
+                                             */
+                                            color = LocalMuted.current,
                                             modifier = Modifier.padding(top = 12.dp),
                                         )
                                     }
@@ -10846,12 +10876,31 @@ private fun DiffLines(
              * already say which side a line is on, so the type does not have to
              * shout as well. Light stays #383A41, which was measured.
              */
+            /*
+             * Muted as it comes, no alpha.
+             *
+             * This was `.copy(alpha = 0.8f)` on the two plain branches, and the
+             * code sits on a wash that is itself only half the page's colour
+             * apart from it, so the two quietings compound. Sampled through the
+             * stack on the pad: page (255,254,253) → the pill at 50% gives the
+             * code block (248,247,245), and muted at 80% over that gives
+             * (123,123,119) - 3.97:1. Dark was fine at 6.03:1; light was under
+             * the floor.
+             *
+             * The floor matters more here than anywhere else on the page,
+             * because this is 11sp monospace - the smallest type in the app, in
+             * the one place a reader is trying to make out characters rather
+             * than read prose. Muted plain measures 6.19:1 on that wash.
+             *
+             * Still weaker than the reply's own ink, so the code block still
+             * reads as a quotation rather than as the answer.
+             */
             val codeInk = when {
-                !isPatch -> LocalMuted.current.copy(alpha = 0.8f)
+                !isPatch -> LocalMuted.current
                 line.side == 1 || line.side == 2 ->
                     RemoteChrome.c(if (dark) RemoteChrome.DiffCodeInkDark else RemoteChrome.DiffCodeInkLight)
                 line.text.startsWith("@@") -> LocalMuted.current
-                else -> LocalMuted.current.copy(alpha = 0.8f)
+                else -> LocalMuted.current
             }
             /*
              * The gutter's ink follows the row.
