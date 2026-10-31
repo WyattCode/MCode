@@ -4670,7 +4670,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                     modifier = Modifier.size(16.dp),
                                     viewBox = 24f,
                                     strokeWidth = 1.9f,
-                                    tint = Color(0xFF383835),
+                                    tint = LocalMuted.current,
                                 )
                             }
                             Box(
@@ -4696,7 +4696,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                     modifier = Modifier.size(16.8.dp),
                                     viewBox = 24f,
                                     strokeWidth = 1.9f,
-                                    tint = Color(0xFF383835),
+                                    tint = LocalMuted.current,
                                 )
                             }
                         } else {
