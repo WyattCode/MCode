@@ -59,6 +59,15 @@ export interface RemoteGatewayOptions {
   port: number
   /** The pairing token a phone presents in its subprotocol list. */
   token: string
+  /**
+   * How often to ask every phone whether it is still there, in milliseconds.
+   *
+   * Defaults to 30s, which is what ships. It is an option so the check below can
+   * exercise the sweep in a test that finishes in a second rather than a minute
+   * - the alternative was waiting sixty seconds for a two-round timeout, which
+   * no suite should do.
+   */
+  sweepIntervalMs?: number
 }
 
 export interface RemoteGateway {
@@ -273,7 +282,7 @@ export async function startRemoteGateway(runtime: Runtime, options: RemoteGatewa
         // `close` it fires will drop it.
       }
     }
-  }, 30_000)
+  }, options.sweepIntervalMs ?? 30_000)
   if (typeof sweep.unref === "function") sweep.unref()
 
   await new Promise<void>((resolve, reject) => {

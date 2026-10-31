@@ -886,8 +886,16 @@ class RemoteClient {
          * the protocol), and OkHttp fails the socket once a pong does not come
          * back within the interval - which fires onFailure and hands the case to
          * the reconnect loop that already exists.
+         *
+         * 30s, not the 20s this started at. At 20 the pad declared the link dead
+         * and dialled again one second later - the socket had been fine, the PC
+         * was merely busy (it had just been restarted and was still initialising
+         * its providers). The log reads `sent ping but didn't receive pong within
+         * 20000ms (after 82 successful ping/pongs)`, which is a false alarm after
+         * ninety minutes of healthy ones. A gateway sweep also runs every 30s,
+         * so the two ends now wait the same length before giving up.
          */
-        .pingInterval(20, TimeUnit.SECONDS)
+        .pingInterval(30, TimeUnit.SECONDS)
         .build()
     private var ws: okhttp3.WebSocket? = null
     // Each dial mints a generation: a superseded socket's callbacks still

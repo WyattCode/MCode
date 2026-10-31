@@ -28,7 +28,7 @@ const check = (name: string, ok: boolean, detail?: unknown) => {
 const dataDir = mkdtempSync(path.join(tmpdir(), "mcode-remote-check-"))
 const backend = await startBackend(dataDir, { origins: [] })
 const TOKEN = "check-token-2918"
-const gateway = await startRemoteGateway(backend.runtime, { host: "loopback", port: 0, token: TOKEN })
+const gateway = await startRemoteGateway(backend.runtime, { host: "loopback", port: 0, token: TOKEN, sweepIntervalMs: 150 })
 const url = `ws://127.0.0.1:${gateway.port}`
 
 /** Every frame a socket has received, in order - welcome can beat the open handler. */
@@ -399,6 +399,72 @@ let phone: WebSocket
   send(again, { kind: "remote.resume", cursor: missedCursor })
   const replayed = await nextFrame(again, (f) => f.kind === "remote.event" && f.event?.type === "session.updated" && f.event?.session?.title === "missed while away")
   check("events missed while offline are replayed by remote.resume", replayed.eventId > missedCursor, replayed.eventId)
+}
+
+// 6. a phone that stops answering is dropped by the sweep
+//
+// The failure this covers: a phone loses its network, the TCP connection goes
+// half-open, and `ws` never fires `close` - because `close` is a message, and
+// nobody sent one. The gateway used to hold those sockets forever; measured
+// after one Wi-Fi drop, 3 ESTABLISHED on the gateway against 1 on the pad, and
+// still 3 a minute later.
+//
+// `ws` answers control pings automatically, so a normal client cannot be made to
+// go quiet. This one is a raw socket: it completes the upgrade by hand and then
+// stops reading. The kernel buffers whatever arrives, nothing replies, and the
+// connection looks exactly like a phone that dropped off the network.
+{
+  const net = await import("node:net")
+  const crypto = await import("node:crypto")
+  const silent = net.connect(gateway.port, "127.0.0.1")
+  const key = crypto.randomBytes(16).toString("base64")
+  const opened = new Promise<boolean>((resolve) => {
+    let upgraded = false
+    silent.once("connect", () => {
+      silent.write(
+        `GET / HTTP/1.1\r\nHost: 127.0.0.1:${gateway.port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n` +
+          `Sec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\n` +
+          `Sec-WebSocket-Protocol: mcode, mcode.remote.${TOKEN}\r\n\r\n`,
+      )
+    })
+    /*
+     * Wait for the 101 before going quiet.
+     *
+     * Pausing straight after the write can drop the response that completes the
+     * upgrade, and then the server never treats this as a phone at all - the
+     * test would pass on the wrong reason. Watching for the status line is the
+     * difference between "a connected phone that went silent" and "a socket that
+     * never joined".
+     */
+    silent.once("data", () => {
+      if (upgraded) return
+      upgraded = true
+      resolve(true)
+      // Answer the handshake, then read nothing more: no pong can follow.
+      setTimeout(() => silent.pause(), 80)
+    })
+    silent.once("error", () => resolve(false))
+  })
+  const connected = await opened
+  check("a silent phone can complete the handshake", connected)
+
+  /*
+   * Two sweep rounds have to pass: the first clears the flag and pings, the
+   * second sees no pong and terminates. At 150ms per round that is 300ms of
+   * waiting plus a margin, and it is the reason the interval is configurable.
+   */
+  const closed = await new Promise<boolean>((resolve) => {
+    let done = false
+    silent.once("close", () => {
+      done = true
+      resolve(true)
+    })
+    setTimeout(() => {
+      if (!done) resolve(false)
+    }, 2500)
+  })
+  check("a phone that stops answering pong is dropped by the sweep", closed)
+  silent.destroy()
 }
 
 await gateway.close()
