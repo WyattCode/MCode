@@ -31,10 +31,10 @@ object RemoteChrome {
      *   ink    #6B6862  (107,104,98)  - the language label and both marks
      *   expand #FFFEFD  - the full-screen sheet's own plate
      */
-    const val CodeHeadLight: Long = 0xFFF0EFEC
-    const val CodeBodyLight: Long = 0xFFF3F3F0
-    const val CodeInkLight: Long = 0xFF6B6862
-    const val CodeExpandLight: Long = 0xFFFFFEFD
+    const val CodeHeadLight: Long = 0xFFF0F0F0
+    const val CodeBodyLight: Long = 0xFFF5F5F5
+    const val CodeInkLight: Long = 0xFF7A7A7A
+    const val CodeExpandLight: Long = 0xFFFFFFFF
 
     /*
      * Dark, calibrated as a set this round (第七十八轮 续七).
@@ -50,10 +50,10 @@ object RemoteChrome {
      * a value that appears nowhere else in the theme and read as a slightly
      * dirty page rather than as a card lifted over one.
      */
-    const val CodeHeadDark: Long = 0xFF313131
-    const val CodeBodyDark: Long = 0xFF3A3A38
-    const val CodeInkDark: Long = 0xFF97958E
-    const val CodeExpandDark: Long = 0xFF20201F
+    const val CodeHeadDark: Long = 0xFF242424
+    const val CodeBodyDark: Long = 0xFF2A2A2A
+    const val CodeInkDark: Long = 0xFF8A8A8A
+    const val CodeExpandDark: Long = 0xFF1A1A1A
 
     /* ------------------------------------------------------------------ */
     /* Diff sheet                                                          */
@@ -72,7 +72,7 @@ object RemoteChrome {
      * speaking. The wash is the signal; the type stays quiet.
      */
     const val DiffCodeInkLight: Long = 0xFF383A41
-    const val DiffCodeInkDark: Long = 0xFF5D636F
+    const val DiffCodeInkDark: Long = 0xFF6A6E76
 
     /*
      * The row washes.
@@ -111,16 +111,16 @@ object RemoteChrome {
      * value to stand proud of it - #20201F, which is also `DarkSurface` and
      * `LocalCard`, so a sheet and a card are the same plate.
      */
-    const val SheetDark: Long = 0xFF20201F
+    const val SheetDark: Long = 0xFF1A1A1A
 
     /* The grabber and the connector between tool rows: (58,58,56) dark. */
-    const val SheetGrabberDark: Long = 0xFF3A3A38
-    const val SheetGrabberLight: Long = 0xFFD8D8D6
-    const val SheetLinkDark: Long = 0xFF3A3A38
-    const val SheetLinkLight: Long = 0xFFD8D8D6
+    const val SheetGrabberDark: Long = 0xFF2A2A2A
+    const val SheetGrabberLight: Long = 0xFFD4D4D4
+    const val SheetLinkDark: Long = 0xFF2A2A2A
+    const val SheetLinkLight: Long = 0xFFD4D4D4
 
     /* The title's ink: (249,249,247) dark, (19,19,19) light. */
-    const val SheetTitleDark: Long = 0xFFF9F9F7
+    const val SheetTitleDark: Long = 0xFFF5F5F5
     const val SheetTitleLight: Long = 0xFF131313
 
     /* ------------------------------------------------------------------ */
@@ -137,7 +137,7 @@ object RemoteChrome {
      * as `DarkToolWhat` #97958E, which is what the reference gives a finished
      * row's words in dark.
      */
-    const val DarkToolMark: Long = 0xFF9A9A96
+    const val DarkToolMark: Long = 0xFF8A8A8A
 
     /** A calibrated ARGB long as the `Color` the renderer wants. */
     fun c(argb: Long): Color = Color(argb)
