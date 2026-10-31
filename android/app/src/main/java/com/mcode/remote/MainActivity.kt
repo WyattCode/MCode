@@ -192,8 +192,17 @@ private val ToolWhat = Color(0xFF5C5C57)
  * A finished tool row's own ink, dark: (151,149,142) sampled off the reference's
  * reply - the same warm grey it gives a timestamp, not the neutral (154,154,150)
  * this carried. In light the row is (123,121,116), which is the same relationship.
+ *
+ * `0xFF97958E` is that (151,149,142). The line read `0xFF5C5C57` - the *light*
+ * value, copied from `ToolWhat` above - so in dark every 「已编辑 鹈鹕骑自行车.h」
+ * row drew at (92,92,87) on a (20,20,20) page: 2.74:1, under even the 3:1 a
+ * non-text mark needs. Eight of them on one conversation, and they are the rows
+ * that say what the turn changed, so this is the one list a reader scans.
+ *
+ * The note above already gave the number, which is how the mistake survived:
+ * the comment described 151 and the constant beside it said 92.
  */
-private val DarkToolWhat = Color(0xFF5C5C57)
+private val DarkToolWhat = Color(0xFF97958E)
 /* The mark before the verb: (56,56,53) on the reference, between the verb's 19
  * and the target's 123. It was `LocalMuted` (107,104,99), which drew the icon
  * as light as the words it introduces and lost the three-step rhythm. */
@@ -10209,11 +10218,26 @@ fun WorkingLine(label: String = "思考中…") {
     )
     /*
      * Claude's working mark is a sentence, not a row of dots: 「思考中…」 in the
-     * ember tone (188,109,79 on the pad) with three dots breathing after it.
-     * This used to be three grey dots alone, which said nothing about what was
-     * happening.
+     * ember tone with three dots breathing after it. This used to be three grey
+     * dots alone, which said nothing about what was happening.
+     *
+     * Ember, per theme, because one value cannot clear both.
+     *
+     * The reference's mark measures (188,109,79) on its page, and that is what
+     * this carried as `Color(0xFFBD6F50)`. On the pad it comes out 3.75:1 against
+     * the light page (255,254,253) - under the 4.5:1 body text needs - while
+     * being fine in dark at 4.87:1, which is why the light theme went unexamined.
+     *
+     * No single ember fixes that: darkening it to pass on light (4.97 at
+     * #A85A3C) drops dark to 3.68, and lightening it to pass in dark (7.00 at
+     * #E08A63) drops light to 2.61. The two grounds are 21x apart in luminance,
+     * so the same hue has to be mixed to two different depths - which is what
+     * every other themed colour in this file already does.
+     *
+     * 4.97 and 7.00, both still the reference's warm orange, and the darker one
+     * still reads as ember rather than as a warning red.
      */
-    val ink = Color(0xFFBD6F50)
+    val ink = if (LocalBg.current == DarkBg) Color(0xFFE08A63) else Color(0xFFA85A3C)
     /*
      * Claude's order is dots first, then the words - 「... Deliberating…」 - not
      * the other way round, and the words change with what the turn is doing:
