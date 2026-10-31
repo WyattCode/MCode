@@ -1,8 +1,0 @@
-p = r"D:/Documents/Claude Code/MCode/android/app/src/main/java/com/mcode/remote/MainActivity.kt"
-lines = open(p, encoding="utf-8").read().split("\n")
-for i in range(3760, 3775):
-    if ".offset(x = 5.dp)," in lines[i]:
-        lines[i] = "                                .offset(x = (-5.8).dp),"
-        print("line %d: +5.0 -> -5.8" % (i+1))
-        break
-open(p, "w", encoding="utf-8").write("\n".join(lines))

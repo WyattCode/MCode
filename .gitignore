@@ -22,3 +22,36 @@ android/.idea/
 
 # Local agent tooling: its own settings and worktrees, not part of the product.
 .claude/
+
+# The agent's own scratch space: debug scripts, screen captures, bytecode and
+# extracted sources. None of it is product. The written records under
+# .workbuddy/memory and its status notes stay tracked - they are the history of
+# what was measured and why - so the directory is excluded by kind, not wholesale.
+.workbuddy/*.png
+.workbuddy/shots/
+.workbuddy/__pycache__/
+.workbuddy/tmp/
+.workbuddy/*.pyc
+.workbuddy/*.kt
+.workbuddy-ai/
+.workbuddy/*.xml
+.workbuddy/*.txt
+.workbuddy/*.py
+.workbuddy/*.cjs
+.workbuddy/*.mjs
+.workbuddy/*.js
+.workbuddy/*.log
+.workbuddy/*.json
+
+# Stray byproducts at the repository root: a sqlite scratch file and two one-off
+# drawings made while testing the artifact viewer. Neither belongs to the app.
+.workdb
+鹈鹕骑自行车*.html
+.workbuddy/*.sh
+.workbuddy/*.bat
+.workbuddy/*.ts
+.workbuddy/*.bak
+.workbuddy/*.wav
+.workbuddy/*.err
+.workbuddy/*.out
+.workbuddy/sweep/
