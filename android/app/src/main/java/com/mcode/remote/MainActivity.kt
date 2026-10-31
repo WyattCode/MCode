@@ -3297,9 +3297,6 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 Toast.makeText(context, "这类文件还不能在这里预览", Toast.LENGTH_SHORT).show()
                 return@launch
             }
-            val body = payload.optString("content").orEmpty()
-            if (body.isNotBlank()) filePreview = rel.substringAfterLast('/').substringAfterLast('\\') to body
-            else Toast.makeText(context, "打不开这个文件", Toast.LENGTH_SHORT).show()
             val body = payload?.optString("content").orEmpty()
             if (body.isNotBlank()) {
                 filePreview = rel.substringAfterLast('/').substringAfterLast('\\') to body
@@ -3608,13 +3605,6 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         withContext(Dispatchers.Main) {
                             Toast.makeText(context, "没能移除项目", Toast.LENGTH_SHORT).show()
                         }
-                    val ok = runCatching {
-                        rpcOrThrow(JSONObject().put("type", "project.remove").put("directories", org.json.JSONArray().put(directory)))
-                    }.isSuccess
-                    if (ok && projectFilter == directory) projectFilter = null
-                    refreshCommandsTick++
-                    withContext(Dispatchers.Main) {
-                        Toast.makeText(context, if (ok) "已移除项目" else "移除失败", Toast.LENGTH_SHORT).show()
                     }
                 }
             },
@@ -3694,12 +3684,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         .getOrNull()?.optJSONObject("data")?.optJSONObject("config")
                     if (config == null) {
                         withContext(Dispatchers.Main) {
-                            Toast.makeText(context, "没能更新技能", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "无法切换技能", Toast.LENGTH_LONG).show()
                         }
-                    val reply = runCatching { rpc(JSONObject().put("type", "config.get")) }.getOrNull()
-                    val config = reply?.optJSONObject("data")?.optJSONObject("config")
-                    if (config == null) {
-                        Toast.makeText(context, "无法切换技能", Toast.LENGTH_LONG).show()
                         return@launch
                     }
                     val off = config.optJSONArray("disabledSkills")?.let { arr ->
@@ -3717,8 +3703,6 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         withContext(Dispatchers.Main) {
                             Toast.makeText(context, "没能更新技能", Toast.LENGTH_SHORT).show()
                         }
-                    }.onSuccess { refreshPlugins++ }.onFailure {
-                        Toast.makeText(context, "无法切换技能", Toast.LENGTH_LONG).show()
                     }
                 }
             },
@@ -3950,25 +3934,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         }.onFailure {
                             withContext(Dispatchers.Main) {
                                 Toast.makeText(context, "没能更改权限", Toast.LENGTH_SHORT).show()
-                        try {
-                            rpcOrThrow(JSONObject().put("type", "session.access").put("sessionID", sid).put("access", level))
-                            val at = sessions.indexOfFirst { it.id == sid }
-                            if (at >= 0) sessions[at] = sessions[at].copy(access = level)
-                        } catch (e: Exception) {
-                            withContext(Dispatchers.Main) {
-                                Toast.makeText(context, "切换权限失败：${e.message?.take(60) ?: "未知错误"}", Toast.LENGTH_LONG).show()
                             }
                         }
-                        runCatching { rpc(JSONObject().put("type", "session.access").put("sessionID", sid).put("access", level)) }
-                            .onSuccess {
-                                val at = sessions.indexOfFirst { it.id == sid }
-                                if (at >= 0) sessions[at] = sessions[at].copy(access = level)
-                            }
-                            .onFailure {
-                                withContext(Dispatchers.Main) {
-                                    Toast.makeText(context, "无法切换权限", Toast.LENGTH_SHORT).show()
-                                }
-                            }
                     }
                 }
             },
@@ -4015,17 +3982,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         }.onFailure {
                             withContext(Dispatchers.Main) {
                                 Toast.makeText(context, "没能清除目标", Toast.LENGTH_SHORT).show()
-                        try {
-                            rpcOrThrow(JSONObject().put("type", "session.goal").put("sessionID", sid).put("condition", JSONObject.NULL))
-                            rpcOrThrow(JSONObject().put("type", "session.goalMode").put("sessionID", sid).put("on", false))
-                            withContext(Dispatchers.Main) { goalMode = false }
-                        } catch (e: Exception) {
-                            withContext(Dispatchers.Main) {
-                                Toast.makeText(context, "无法清除目标", Toast.LENGTH_SHORT).show()
                             }
-                            withContext(Dispatchers.Main) { goalMode = false }
-                        }.onFailure {
-                            withContext(Dispatchers.Main) { Toast.makeText(context, "没能保存目标", Toast.LENGTH_SHORT).show() }
                         }
                     }
                 }
@@ -4050,19 +4007,6 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 }
                             } finally {
                                 goalResending.set(false)
-                    scope.launch {
-                        runCatching {
-                            rpcOrThrow(JSONObject().put("type", "session.goal").put("sessionID", sessionID).put("condition", condition))
-                            rpcOrThrow(JSONObject().put("type", "session.prompt").put("sessionID", sessionID).put("text", condition))
-                            // The reader may have left this conversation while the
-                            // two round trips were out; the row it names is still
-                            // the one that started running, so the id is taken
-                            // before the calls rather than re-read after them.
-                            withContext(Dispatchers.Main) { setRunning(sessionID, true) }
-                        }.onFailure {
-                            withContext(Dispatchers.Main) {
-                                Toast.makeText(context, "没能重新执行目标", Toast.LENGTH_SHORT).show()
-                                Toast.makeText(context, "无法重新发送目标", Toast.LENGTH_SHORT).show()
                             }
                         }
                     }
@@ -4083,24 +4027,11 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             },
             /*
              * The queue chips were drawn for this conversation. Capture its id
-             * here: select() may already have moved currentSession before the
-             * chips recompose away, and a tap must not name the new one.
+             * inside each handler: select() may already have moved currentSession
+             * before the chips recompose away, and a tap must not name the new one.
              */
-            val queueSessionID = currentSession
             onQueueRemove = { id ->
                 queuedPrompts.removeAll { it.first == id }
-                queueSessionID?.let { sid ->
-                    request(JSONObject().put("type", "session.queue.remove").put("sessionID", sid).put("id", id))
-                }
-            },
-            onQueueSend = { id ->
-                queueSessionID?.let { sid ->
-                    request(JSONObject().put("type", "session.queue.send").put("sessionID", sid).put("id", id))
-                /*
-                 * Fail-closed: plain request() dropped the chip before the
-                 * server agreed, so a refused remove looked like success
-                 * while the message stayed queued. Drop only after ok.
-                 */
                 currentSession?.let { sid ->
                     scope.launch {
                         runCatching {
@@ -4113,10 +4044,9 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             withContext(Dispatchers.Main) {
                                 queuedPrompts.removeAll { it.first == id }
                             }
-                        }.onFailure { e ->
-                            if (e is kotlinx.coroutines.CancellationException) throw e
+                        }.onFailure {
                             withContext(Dispatchers.Main) {
-                                Toast.makeText(context, "没能撤回排队", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "没能移除队列", Toast.LENGTH_SHORT).show()
                             }
                         }
                     }
@@ -4176,22 +4106,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     // a steer into a turn that is already stopping.
                     setRunning(sid, false)
                     request(JSONObject().put("type", "session.abort").put("sessionID", sid))
-                }
-                val sid = currentSession
-                if (sid != null) request(JSONObject().put("type", "session.abort").put("sessionID", sid))
-                /* Capsule Stop: #143 only fixed pad header stopHere. */
-                val sid = currentSession
-                if (sid != null) {
+                    /* Capsule Stop: #143 only fixed pad header stopHere. */
                     scope.launch {
-                        try {
-                            rpcOrThrow(JSONObject().put("type", "session.abort").put("sessionID", sid))
-                        } catch (e: kotlinx.coroutines.CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            withContext(Dispatchers.Main) {
-                                Toast.makeText(context, "没能停止", Toast.LENGTH_SHORT).show()
+                        runCatching { rpcOrThrow(JSONObject().put("type", "session.abort").put("sessionID", sid)) }
+                            .onFailure {
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(context, "没能停止", Toast.LENGTH_SHORT).show()
+                                }
                             }
-                        }
                     }
                 }
             },
@@ -5129,34 +5051,6 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 },
                                 onRename = { directory, name ->
                                     scope.launch {
-                                        runCatching {
-                                    scope.launch {
-                                        val exists = runCatching {
-                                            rpc(
-                                                JSONObject().put("type", "file.listDir")
-                                                    .put("directory", directory).put("sub", ""),
-                                                8_000,
-                                            ).optJSONObject("data")?.has("entries") == true
-                                        }.getOrDefault(false)
-                                        if (!exists) {
-                                            withContext(Dispatchers.Main) {
-                                                Toast.makeText(context, "文件夹不存在：$directory", Toast.LENGTH_LONG).show()
-                                            }
-                                            return@launch
-                                        }
-                                        val reply = runCatching {
-                                            rpcOrThrow(JSONObject().put("type", "project.add").put("directory", directory).put("used", true))
-                                        }.getOrNull()?.optJSONObject("data")
-                                        refreshCommandsTick++
-                                        withContext(Dispatchers.Main) {
-                                            if (reply == null) Toast.makeText(context, "文件夹没有添加成功", Toast.LENGTH_SHORT).show()
-                                            else if (reply.optBoolean("existed")) Toast.makeText(context, "该项目已在列表中", Toast.LENGTH_SHORT).show()
-                                            else Toast.makeText(context, "已添加项目：${directory.substringAfterLast('\\').substringAfterLast('/')}", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                },
-                                onRename = { directory, name ->
-                                    scope.launch {
                                         val ok = runCatching {
                                             val config = runCatching { rpc(JSONObject().put("type", "config.get")) }.getOrNull()
                                                 ?.optJSONObject("data")?.optJSONObject("config")
@@ -5173,10 +5067,6 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                             withContext(Dispatchers.Main) {
                                                 Toast.makeText(context, "没能重命名项目", Toast.LENGTH_SHORT).show()
                                             }
-                                        }.isSuccess
-                                        refreshCommandsTick++
-                                        withContext(Dispatchers.Main) {
-                                            Toast.makeText(context, if (ok) "已重命名" else "重命名失败", Toast.LENGTH_SHORT).show()
                                         }
                                     }
                                 },
@@ -5194,13 +5084,6 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                             withContext(Dispatchers.Main) {
                                                 Toast.makeText(context, "没能移除项目", Toast.LENGTH_SHORT).show()
                                             }
-                                        val ok = runCatching {
-                                            rpcOrThrow(JSONObject().put("type", "project.remove").put("directories", org.json.JSONArray().put(directory)))
-                                        }.isSuccess
-                                        if (ok && projectFilter == directory) projectFilter = null
-                                        refreshCommandsTick++
-                                        withContext(Dispatchers.Main) {
-                                            Toast.makeText(context, if (ok) "已移除项目" else "移除失败", Toast.LENGTH_SHORT).show()
                                         }
                                     }
                                 },
@@ -5243,10 +5126,6 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                             withContext(Dispatchers.Main) {
                                                 Toast.makeText(context, "没能更新技能", Toast.LENGTH_SHORT).show()
                                             }
-                                        val reply = runCatching { rpc(JSONObject().put("type", "config.get")) }.getOrNull()
-                                        val config = reply?.optJSONObject("data")?.optJSONObject("config")
-                                        if (config == null) {
-                                            Toast.makeText(context, "无法切换技能", Toast.LENGTH_LONG).show()
                                             return@launch
                                         }
                                         val off = config.optJSONArray("disabledSkills")?.let { arr ->
@@ -5261,9 +5140,6 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                             withContext(Dispatchers.Main) {
                                                 Toast.makeText(context, "没能更新技能", Toast.LENGTH_SHORT).show()
                                             }
-                                            rpc(JSONObject().put("type", "config.set").put("patch", JSONObject().put("disabledSkills", org.json.JSONArray(off))))
-                                        }.onSuccess { refreshPlugins++ }.onFailure {
-                                            Toast.makeText(context, "无法切换技能", Toast.LENGTH_LONG).show()
                                         }
                                     }
                                 },
@@ -5580,17 +5456,6 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                             scope.launch {
                                                 runCatching { rpcOrThrow(JSONObject().put("type", "session.undo").put("sessionID", sid)) }
                                                     .onFailure { Toast.makeText(context, "撤销失败：${it.message?.take(40) ?: ""}", Toast.LENGTH_LONG).show() }
-                                            currentSession?.let { sid ->
-                                                scope.launch {
-                                                    try {
-                                                        rpcOrThrow(JSONObject().put("type", "session.undo").put("sessionID", sid))
-                                                    } catch (e: Exception) {
-                                                        if (e is kotlinx.coroutines.CancellationException) throw e
-                                                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                                                            Toast.makeText(context, "没能撤销", Toast.LENGTH_SHORT).show()
-                                                        }
-                                                    }
-                                                }
                                             }
                                         })
                                     MenuRow(label = "重做撤销", onClick = {
@@ -5599,17 +5464,6 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                             scope.launch {
                                                 runCatching { rpcOrThrow(JSONObject().put("type", "session.redo").put("sessionID", sid)) }
                                                     .onFailure { Toast.makeText(context, "重做失败：${it.message?.take(40) ?: ""}", Toast.LENGTH_LONG).show() }
-                                            currentSession?.let { sid ->
-                                                scope.launch {
-                                                    try {
-                                                        rpcOrThrow(JSONObject().put("type", "session.redo").put("sessionID", sid))
-                                                    } catch (e: Exception) {
-                                                        if (e is kotlinx.coroutines.CancellationException) throw e
-                                                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                                                            Toast.makeText(context, "没能重做", Toast.LENGTH_SHORT).show()
-                                                        }
-                                                    }
-                                                }
                                             }
                                         })
                                     MenuRow(label = if (runningOnly) "显示全部会话" else "只看运行中", onClick = { headerMenu = false; runningOnly = !runningOnly })
@@ -5881,37 +5735,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     }.onFailure {
                         withContext(Dispatchers.Main) {
                             Toast.makeText(context, "没能打开终端", Toast.LENGTH_SHORT).show()
-                    val opened = runCatching {
-                        rpcOrThrow(JSONObject().put("type", "shell.open").put("directory", root).put("cols", 100).put("rows", 40))
-                    }.getOrNull()
-                    if (opened == null) {
-                        Toast.makeText(context, "无法打开终端", Toast.LENGTH_SHORT).show()
-                        return@LaunchedEffect
-                    }
-                    val id = opened.optJSONObject("data")?.optString("shellID").orEmpty()
-                    if (id.isBlank()) {
-                        Toast.makeText(context, "无法打开终端", Toast.LENGTH_SHORT).show()
-                        return@LaunchedEffect
-                    }
-                    terminalId = id
-                    runCatching {
-                        val attached = rpcOrThrow(JSONObject().put("type", "shell.attach").put("shellID", id))
-                        val seen = attached.optJSONObject("data")?.optString("data").orEmpty()
-                        if (seen.isNotBlank()) terminalText = seen.takeLast(8000)
-                    }.onFailure {
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(context, "没能连接终端", Toast.LENGTH_SHORT).show()
                         }
                     }
-                    val attached = runCatching {
-                        rpcOrThrow(JSONObject().put("type", "shell.attach").put("shellID", id))
-                    }.getOrNull()
-                    if (attached == null) {
-                        Toast.makeText(context, "无法读取终端内容", Toast.LENGTH_SHORT).show()
-                        return@LaunchedEffect
-                    }
-                    val seen = attached.optJSONObject("data")?.optString("data").orEmpty()
-                    if (seen.isNotBlank()) terminalText = seen.takeLast(8000)
                 }
                 Box(
                     Modifier
@@ -6576,16 +6401,6 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                     Toast.makeText(context, "没能压缩对话", Toast.LENGTH_SHORT).show()
                                 }
                             }
-                    scope.launch {
-                        runCatching {
-                            rpcOrThrow(JSONObject().put("type", "session.compact").put("sessionID", row.id))
-                        }.onSuccess {
-                            sheetTarget = null
-                        }.onFailure {
-                            withContext(Dispatchers.Main) {
-                                Toast.makeText(context, "没能压缩对话", Toast.LENGTH_SHORT).show()
-                            }
-                        }
                     }
                 }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Outlined.Checklist, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(20.dp))
@@ -6603,16 +6418,6 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                     Toast.makeText(context, "没能撤销", Toast.LENGTH_SHORT).show()
                                 }
                             }
-                    scope.launch {
-                        runCatching {
-                            rpcOrThrow(JSONObject().put("type", "session.undo").put("sessionID", row.id))
-                        }.onSuccess {
-                            sheetTarget = null
-                        }.onFailure {
-                            withContext(Dispatchers.Main) {
-                                Toast.makeText(context, "没能撤销", Toast.LENGTH_SHORT).show()
-                            }
-                        }
                     }
                 }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(20.dp))
@@ -6630,16 +6435,6 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                     Toast.makeText(context, "没能归档", Toast.LENGTH_SHORT).show()
                                 }
                             }
-                    scope.launch {
-                        runCatching {
-                            rpcOrThrow(JSONObject().put("type", "session.archive").put("sessionID", row.id).put("archived", true))
-                        }.onSuccess {
-                            sheetTarget = null
-                        }.onFailure {
-                            withContext(Dispatchers.Main) {
-                                Toast.makeText(context, "没能归档", Toast.LENGTH_SHORT).show()
-                            }
-                        }
                     }
                 }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Outlined.Folder, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(20.dp))
@@ -6910,10 +6705,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 TextButton({
                     val title = newTitle.trim()
                     val sid = row.id
-                    renameTarget = null
-                    if (title.isNotBlank()) request(JSONObject().put("type", "session.rename").put("sessionID", sid).put("title", title))
                     if (title.isBlank()) return@TextButton
-                    val sid = row.id
                     scope.launch {
                         runCatching {
                             rpc(JSONObject().put("type", "session.rename").put("sessionID", sid).put("title", title))
@@ -6966,15 +6758,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     if (next.isNotBlank() && sid != null) {
                         scope.launch {
                             runCatching {
-                                rpc(JSONObject().put("type", "session.goal").put("sessionID", sid).put("condition", next))
-                            }.onFailure {
-                                withContext(Dispatchers.Main) {
-                                    Toast.makeText(context, "没能保存目标", Toast.LENGTH_SHORT).show()
-                    if (next.isBlank() || sid == null) return@TextButton
-                    scope.launch {
-                        runCatching {
-                            rpc(JSONObject().put("type", "session.goal").put("sessionID", sid).put("condition", next))
-                        }.onSuccess {
+                                rpcOrThrow(JSONObject().put("type", "session.goal").put("sessionID", sid).put("condition", next))
+                            }.onSuccess {
                             withContext(Dispatchers.Main) {
                                 val at = sessions.indexOfFirst { it.id == sid }
                                 if (at >= 0) {
@@ -6996,6 +6781,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             withContext(Dispatchers.Main) {
                                 Toast.makeText(context, "没能保存目标", Toast.LENGTH_SHORT).show()
                             }
+                        }
                         }
                     }
                 }) { Text("保存") }
@@ -7048,13 +6834,6 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                         }.onFailure {
                                             withContext(Dispatchers.Main) {
                                                 Toast.makeText(context, "没能切换 Agent", Toast.LENGTH_SHORT).show()
-                                        try {
-                                            rpcOrThrow(JSONObject().put("type", "session.agent").put("sessionID", sid).put("agent", agent))
-                                            val at = sessions.indexOfFirst { it.id == sid }
-                                            if (at >= 0) sessions[at] = sessions[at].copy(agent = agent)
-                                        } catch (e: Exception) {
-                                            withContext(Dispatchers.Main) {
-                                                Toast.makeText(context, "切换 Agent 失败：${e.message?.take(60) ?: "未知错误"}", Toast.LENGTH_LONG).show()
                                             }
                                         }
                                     }
@@ -7098,25 +6877,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                         }.onFailure {
                                             withContext(Dispatchers.Main) {
                                                 Toast.makeText(context, "没能更改权限", Toast.LENGTH_SHORT).show()
-                                        try {
-                                            rpcOrThrow(JSONObject().put("type", "session.access").put("sessionID", sid).put("access", level))
-                                            val at2 = sessions.indexOfFirst { it.id == sid }
-                                            if (at2 >= 0) sessions[at2] = sessions[at2].copy(access = level, goalMode = sessions[at2].goalMode)
-                                        } catch (e: Exception) {
-                                            withContext(Dispatchers.Main) {
-                                                Toast.makeText(context, "切换权限失败：${e.message?.take(60) ?: "未知错误"}", Toast.LENGTH_LONG).show()
                                             }
                                         }
-                                        runCatching { rpc(JSONObject().put("type", "session.access").put("sessionID", sid).put("access", level)) }
-                                            .onSuccess {
-                                                val at2 = sessions.indexOfFirst { it.id == sid }
-                                                if (at2 >= 0) sessions[at2] = sessions[at2].copy(access = level)
-                                            }
-                                            .onFailure {
-                                                withContext(Dispatchers.Main) {
-                                                    Toast.makeText(context, "无法切换权限", Toast.LENGTH_SHORT).show()
-                                                }
-                                            }
                                     }
                                 }
                             },
@@ -7144,13 +6906,6 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                         }.onFailure {
                                             withContext(Dispatchers.Main) {
                                                 Toast.makeText(context, "没能切换 Effort", Toast.LENGTH_SHORT).show()
-                                        try {
-                                            rpcOrThrow(JSONObject().put("type", "session.effort").put("sessionID", sid).put("effort", effort))
-                                            val at = sessions.indexOfFirst { it.id == sid }
-                                            if (at >= 0) sessions[at] = sessions[at].copy(effort = effort)
-                                        } catch (e: Exception) {
-                                            withContext(Dispatchers.Main) {
-                                                Toast.makeText(context, "切换 Effort 失败：${e.message?.take(60) ?: "未知错误"}", Toast.LENGTH_LONG).show()
                                             }
                                         }
                                     }
@@ -7166,25 +6921,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     Modifier.fillMaxWidth().padding(top = 14.dp).clickable(enabled = currentSession != null) {
                         val sid = currentSession ?: return@clickable
                         val next = !goalMode
-                        val sid = currentSession
                         goalMode = next
-                        if (sid != null) {
-                        currentSession?.let { sid ->
-                            scope.launch {
-                                runCatching {
-                                    rpc(JSONObject().put("type", "session.goalMode").put("sessionID", sid).put("on", next))
-                                }.onFailure {
-                                    // A write that fails puts the switch back, as the
-                                    // desktop's does, rather than lying about it.
-                                    if (currentSession == sid) goalMode = !next
-                                    goalMode = !next
-                                    withContext(Dispatchers.Main) {
-                                        Toast.makeText(context, "无法开启目标模式", Toast.LENGTH_SHORT).show()
-                                    }
-                                }
-                                .onSuccess {
-                                    val at = sessions.indexOfFirst { it.id == sid }
-                                    if (at >= 0) sessions[at] = sessions[at].copy(goalMode = next)
                         scope.launch {
                             runCatching {
                                 rpcOrThrow(JSONObject().put("type", "session.goalMode").put("sessionID", sid).put("on", next))
@@ -7192,11 +6929,12 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 val at = sessions.indexOfFirst { it.id == sid }
                                 if (at >= 0) sessions[at] = sessions[at].copy(goalMode = next)
                             }.onFailure {
-                                goalMode = !next
+                                // A write that fails puts the switch back, as the
+                                // desktop's does, rather than lying about it.
+                                if (currentSession == sid) goalMode = !next
                                 withContext(Dispatchers.Main) {
                                     Toast.makeText(context, "没能切换目标模式", Toast.LENGTH_SHORT).show()
                                 }
-
                             }
                         }
                     },
