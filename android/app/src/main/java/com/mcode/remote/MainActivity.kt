@@ -825,7 +825,25 @@ private fun rowOf(s: JSONObject, running: Boolean): SessionRow {
 class RemoteClient {
     private val http = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(0, TimeUnit.MILLISECONDS)
+        /*
+         * No read timeout: the socket is idle between turns, and a timeout would
+         * tear down a connection that is merely quiet.
+         *
+         * That is also why a dead link used to survive so long. When the Wi-Fi
+         * drops or the PC sleeps, the TCP connection goes half-open - the pad's
+         * kernel holds it, nothing arrives, and OkHttp raises neither onClosed
+         * nor onFailure, because as far as the socket knows nothing has failed.
+         * The app therefore kept drawing 连接正常 over a link that could not
+         * carry a frame, and every request sat until its own timeout. Only a
+         * restart recovered it.
+         *
+         * A keepalive ping is what distinguishes silence from a dead peer: the
+         * gateway answers control pings itself (the `ws` library does it below
+         * the protocol), and OkHttp fails the socket once a pong does not come
+         * back within the interval - which fires onFailure and hands the case to
+         * the reconnect loop that already exists.
+         */
+        .pingInterval(20, TimeUnit.SECONDS)
         .build()
     private var ws: okhttp3.WebSocket? = null
     // Each dial mints a generation: a superseded socket's callbacks still
@@ -869,6 +887,31 @@ class RemoteClient {
         waiters.remove(id)
     }
 
+    /**
+     * Releases every outstanding request when the socket goes down.
+     *
+     * A reply that was in flight can never arrive once the link is gone, but
+     * each waiter used to sit until its own timeout - twenty seconds per call,
+     * on a screen already showing 连接已断开 that would not retry until they
+     * returned.
+     *
+     * They are completed with a refusal frame, not an exception. Most of the
+     * callers already run under `runCatching`, but not all of them do, and a
+     * thrown exception in one of those would take the app down rather than
+     * report a lost link - trading a slow path for a crash. A `{ok:false}`
+     * frame is the shape every caller already handles for a refused request, so
+     * they fail fast down the path they were written for, and `rpcOrThrow`'s
+     * own check turns it into the exception its callers expect.
+     */
+    private fun failWaiters() {
+        val dropped = JSONObject()
+            .put("ok", false)
+            .put("error", "连接已断开")
+        for (key in waiters.keys) {
+            waiters.remove(key)?.complete(dropped)
+        }
+    }
+
     /** Connects; an unparseable address reports down instead of crashing the caller. */
     fun connect(url: String, token: String) {
         val mine = ++generation
@@ -901,11 +944,13 @@ class RemoteClient {
                 if (mine != generation) return
                 println("[remote] ws closed")
                 main.post { onState(false) }
+                failWaiters()
             }
             override fun onFailure(webSocket: okhttp3.WebSocket, t: Throwable, response: okhttp3.Response?) {
                 if (mine != generation) return
                 println("[remote] ws failure: $t")
                 main.post { onState(false) }
+                failWaiters()
             }
             override fun onMessage(webSocket: okhttp3.WebSocket, text: String) {
                 if (mine != generation) return
