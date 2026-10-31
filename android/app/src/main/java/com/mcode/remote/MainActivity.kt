@@ -959,9 +959,10 @@ class RemoteClient {
     /** Connects; an unparseable address reports down instead of crashing the caller. */
     fun connect(url: String, token: String) {
         val mine = ++generation
-        // A superseded socket is closed, not left half-open beside the new one -
-        // even when the new address turns out to be garbage.
-        ws?.close(1000, "reconnect")
+        // A superseded socket is cancelled, not politely closed - see release().
+        // `close()` on a half-open link writes a frame nobody will read and
+        // leaves the TCP connection in the pool, so every reconnect leaked one.
+        ws?.let { release(it) }
         ws = null
         // `Request.Builder().url` throws on an unparseable address, and the
         // caller is a coroutine that would die with it.
@@ -978,7 +979,10 @@ class RemoteClient {
         ws = http.newWebSocket(request, object : okhttp3.WebSocketListener() {
             override fun onOpen(webSocket: okhttp3.WebSocket, response: okhttp3.Response) {
                 if (mine != generation) {
-                    webSocket.close(1000, "superseded")
+                    // It opened after a newer dial had already replaced it;
+                    // cancel rather than close, for the same reason release()
+                    // exists - a polite close here leaves the TCP entry behind.
+                    webSocket.cancel()
                     return
                 }
                 println("[remote] ws open")
@@ -987,12 +991,14 @@ class RemoteClient {
             override fun onClosed(webSocket: okhttp3.WebSocket, code: Int, reason: String) {
                 if (mine != generation) return
                 println("[remote] ws closed")
+                release(webSocket)
                 main.post { onState(false) }
                 failWaiters()
             }
             override fun onFailure(webSocket: okhttp3.WebSocket, t: Throwable, response: okhttp3.Response?) {
                 if (mine != generation) return
                 println("[remote] ws failure: $t")
+                release(webSocket)
                 main.post { onState(false) }
                 failWaiters()
             }
@@ -1017,6 +1023,31 @@ class RemoteClient {
                 }
             }
         })
+    }
+
+    /**
+     * Drops a dead socket and the connection under it.
+     *
+     * `close()` is a protocol message - it asks the peer to end the session and
+     * waits for it to agree. On a link that just went away there is nobody to
+     * agree, so the frame is written into a black hole and the socket is left
+     * open: after a Wi-Fi drop and a reconnect, `netstat` on the gateway showed
+     * *both* connections ESTABLISHED and the old one never went away. One leak
+     * per drop, for as long as the process lives.
+     *
+     * `cancel()` tears the socket down locally, which is what is wanted once the
+     * reader has no hope of a reply. It is also what lets OkHttp free the
+     * connection pool entry rather than holding it until the OS notices.
+     */
+    private fun release(webSocket: okhttp3.WebSocket) {
+        // Only if it is still the current one: a newer dial may already have
+        // replaced the field, and cancelling that would kill a healthy socket.
+        if (ws === webSocket) ws = null
+        try {
+            webSocket.cancel()
+        } catch (e: Exception) {
+            println("[remote] cancel failed: $e")
+        }
     }
 
     fun send(text: String) {

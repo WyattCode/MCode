@@ -146,6 +146,14 @@ export async function startRemoteGateway(runtime: Runtime, options: RemoteGatewa
   })
 
   const phones = new Set<WebSocket>()
+  /**
+   * Whether each phone answered the last liveness ping.
+   *
+   * A WeakMap rather than a field on the socket: a phone that goes away must
+   * not be kept alive by this bookkeeping, and the map is the only thing that
+   * would have held it.
+   */
+  const alive = new WeakMap<WebSocket, boolean>()
   /** Which events each phone has confirmed; used to drop what every phone has seen. */
   const confirmed = new Map<WebSocket, number>()
   /** Drop the buffered events every connected phone has already received. */
@@ -160,8 +168,27 @@ export async function startRemoteGateway(runtime: Runtime, options: RemoteGatewa
   wss.on("connection", (socket: WebSocket) => {
     phones.add(socket)
     confirmed.set(socket, lastEventId)
+    /*
+     * Liveness, tracked here rather than hoped for.
+     *
+     * `close` is the only event that removes a phone, and a phone that lost its
+     * network never sends one: the TCP connection goes half-open and stays that
+     * way until the OS keepalive notices, which is two hours by default. After a
+     * Wi-Fi drop and a reconnect the gateway was holding two entries for one
+     * pad - the live socket and the corpse - and the corpse never went away.
+     * Measured: 3 ESTABLISHED on the gateway against 1 on the pad.
+     *
+     * This is the same mechanism the pad uses in the other direction (OkHttp's
+     * pingInterval), applied at the end that has something to clean up. `ws`
+     * answers a control ping automatically, so `alive` is set by the pong and
+     * cleared at the start of each round; a socket that misses a round is
+     * terminated, which fires `close` and lets the bookkeeping run.
+     */
+    alive.set(socket, true)
+    socket.on("pong", () => {
+      alive.set(socket, true)
+    })
     socket.send(JSON.stringify({ kind: "remote.welcome", eventId: lastEventId }))
-
     socket.on("error", (error) => console.warn(`[remote] a phone's connection failed: ${error.message}`))
     socket.on("close", () => {
       phones.delete(socket)
@@ -218,6 +245,37 @@ export async function startRemoteGateway(runtime: Runtime, options: RemoteGatewa
   })
 
   const listenAt = options.host === "loopback" ? "127.0.0.1" : options.host
+
+  /*
+   * The sweep. Every 30s, every phone is asked to prove it still exists.
+   *
+   * A phone has to survive two rounds to stay: the flag is cleared before the
+   * ping goes out, so a socket that was already dead when the round started is
+   * not rescued by a pong that happened to arrive just before it. `terminate`
+   * rather than `close` - a dead peer will never complete the closing
+   * handshake, and `close` would wait for one.
+   *
+   * `unref` so this timer never keeps a test process alive on its own.
+   */
+  const sweep = setInterval(() => {
+    for (const socket of phones) {
+      if (alive.get(socket) === false) {
+        phones.delete(socket)
+        confirmed.delete(socket)
+        socket.terminate()
+        continue
+      }
+      alive.set(socket, false)
+      try {
+        socket.ping()
+      } catch {
+        // A socket that cannot even take a ping is gone; the next round or the
+        // `close` it fires will drop it.
+      }
+    }
+  }, 30_000)
+  if (typeof sweep.unref === "function") sweep.unref()
+
   await new Promise<void>((resolve, reject) => {
     http.once("error", reject)
     http.listen(options.port, listenAt, () => resolve())
@@ -231,6 +289,9 @@ export async function startRemoteGateway(runtime: Runtime, options: RemoteGatewa
   return {
     port: boundPort,
     async close() {
+      // The sweep holds a reference to every phone it can still see; stopping it
+      // first means nothing is terminated while shutdown is in progress.
+      clearInterval(sweep)
       unsubscribe()
       for (const client of phones) client.close()
       phones.clear()
