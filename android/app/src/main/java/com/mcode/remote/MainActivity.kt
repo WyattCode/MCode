@@ -362,6 +362,19 @@ private val DotGrey = Color(0xFF9A9A9A)
  * chasing a neutral palette; the desktop is not neutral, it is MiMo's, and a pad
  * on #0D0D0D beside a PC on #141414 is two products.
  */
+/**
+ * The width the transcript and the composer share.
+ *
+ * One number, because they are one column - a line of prose and the box it was
+ * typed into must land on the same two edges. They were separate constants
+ * before (a `widthIn` on the list and two stacked paddings on the composer) and
+ * they drifted 89.6dp apart on this pad without anything failing.
+ *
+ * 812 is the desktop's reading column at this density, which is why the number
+ * is this one and not the pane's width.
+ */
+private val COMPOSER_MAX_WIDTH = 812.dp
+
 private val DarkBg = Color(0xFF141414)
 private val DarkSurface = Color(0xFF181818)
 private val DarkPill = Color(0xFF1F1F1F)
@@ -1413,8 +1426,33 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      */
     val seenUpdated = remember { java.util.HashMap<String, Long>() }
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
-    fun openDrawer() = scope.launch { drawerState.open() }
-    fun closeDrawer() = scope.launch { drawerState.close() }
+    /*
+     * A plain flag beside the drawer's own state.
+     *
+     * `drawerState.targetValue` looked like the right thing to read and did not
+     * work: the capsule at the foot of the column kept drawing while the sheet
+     * was open, over the sheet, with its label cut in half. Compose's drawer
+     * state is backed by an animation; reading it from a composable that is a
+     * sibling of the drawer - not a descendant - does not subscribe that
+     * composable to its changes, so the row never recomposed. A boolean this
+     * file owns, written by the two functions that open and close the drawer,
+     * has no such question about it.
+     */
+    var drawerOpen by remember { mutableStateOf(false) }
+    /*
+     * Keep the flag honest however the drawer moves.
+     *
+     * The two functions below cover the app's own buttons, but a sheet can also
+     * be dragged shut or dismissed on its scrim, and neither goes through them -
+     * a flag left at `true` would hide the capsule for the rest of the session.
+     * Watching the settled value covers every path, and the functions cover the
+     * animation in between (which is when the overlap is most visible).
+     */
+    LaunchedEffect(drawerState.currentValue) {
+        drawerOpen = drawerState.currentValue != DrawerValue.Closed
+    }
+    fun openDrawer() = scope.launch { drawerOpen = true; drawerState.open() }
+    fun closeDrawer() = scope.launch { drawerOpen = false; drawerState.close() }
     var search by remember { mutableStateOf("") }
     /*
      * What the transcripts say, not just what the titles say.
@@ -5317,7 +5355,40 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                          * composable in a different container, stretched by the
                          * list's own weight rather than sized by its content.
                          */
-                        if (leftMode == LeftMode.Sessions) FootCapsule(
+                        /*
+                         * Code and the recent list both carry it. The projects
+                         * and scheduled pages own their own foot.
+                         *
+                         * This was `Sessions` only, on the strength of a note
+                         * that the reference's 最近记录 has nothing at the foot
+                         * of the column. It may not - but the reference reaches
+                         * 新建会话 from a header it draws differently, and a
+                         * reader here landing on the default page (which *is*
+                         * the recent list) had no way to start a conversation
+                         * other than typing into a composer that had no
+                         * conversation behind it. The list is where a
+                         * conversation begins; the button belongs on it.
+                         *
+                         * `isListPage` was once widened with the same intent and
+                         * the capsule came out stretched - it was measured at
+                         * 286.8 wide against 123.2, because the list's weight
+                         * was handing it the column's leftover width. FootCapsule
+                         * is a sibling in a Column now, not a child of the list,
+                         * so it takes its own width from its content; the
+                         * measurement to watch is that it stays near 44 tall.
+                         */
+                        /*
+                         * Hidden while the drawer is open.
+                         *
+                         * The drawer is a 282dp sheet over the left column and
+                         * the capsule sits at the column's right edge, so the
+                         * two overlap - the capsule ends up half-covered with its
+                         * label cut through the middle, which reads as a broken
+                         * button rather than as something behind an overlay. The
+                         * drawer already carries its own 新建会话, so nothing is
+                         * lost by dropping this one while it is up.
+                         */
+                        if (isListPage && !drawerOpen) FootCapsule(
                             /*
                              * The desktop's capsule reads 新建任务 and makes a
                              * conversation wherever the list is showing; it is
@@ -5572,7 +5643,27 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                     drawCircle(Color(0xFF151C13), radius = r, center = androidx.compose.ui.geometry.Offset(gap * 2f, cy))
                                     drawCircle(Color(0xFF151C13), radius = r, center = androidx.compose.ui.geometry.Offset(gap * 3f, cy))
                                 }
-                                DropdownMenu(expanded = headerMenu, onDismissRequest = { headerMenu = false }) {
+                                DropdownMenu(
+                                    expanded = headerMenu,
+                                    onDismissRequest = { headerMenu = false },
+                                    /*
+                                     * A minimum width, because Material's default
+                                     * sizes this to its widest row and the rows
+                                     * are `fillMaxWidth` - a circle. What came
+                                     * out on the pad was 119.6dp wide: eight
+                                     * entries stacked in a strip narrower than
+                                     * the word 「撤销上一回合的改动」 needs at
+                                     * 13sp, so that row ellipsised and the other
+                                     * seven wrapped around a column the size of
+                                     * a phone menu.
+                                     *
+                                     * 208dp is the desktop's menu measure and
+                                     * wide enough for the longest label here.
+                                     * The rows keep their own 12dp inset, so the
+                                     * text starts at 220 from the panel's right.
+                                     */
+                                    modifier = Modifier.widthIn(min = 208.dp),
+                                ) {
                                     MenuRow(
                                         label = if (infoOpen) "关闭对话信息" else "对话信息",
                                         onClick = { infoOpen = !infoOpen; headerMenu = false },
@@ -9000,7 +9091,32 @@ fun Timeline(
      */
     LazyColumn(
         state = listState,
-        modifier = Modifier.fillMaxSize().widthIn(max = 812.dp).align(Alignment.Center),
+        /*
+         * The cap never applied. `fillMaxSize()` sets min = max = the parent's
+         * width, and `widthIn(max = 812.dp)` after it cannot shrink a range that
+         * has already been pinned - so the column drew 932.8dp wide on this pad
+         * while the composer below it drew 756.8dp. Measured on the device: the
+         * prose reached x 3354 and the composer's card ended at 3130, 89.6dp
+         * short, which is what made the transcript look like it was spilling out
+         * of the pane rather than sitting in it.
+         *
+         * Order matters here, and only one of the two can be a fill: the column
+         * takes a width limit first and fills the height after. `fillMaxHeight`
+         * rather than `fillMaxSize`, for the same reason.
+         *
+         * The horizontal padding is the composer's own - 36.8 either side - and
+         * it is here so the two centre on the same line. The composer sits in a
+         * Box that pads 36.8 before centring its 812dp card; without the same
+         * inset the transcript centred in the full pane instead, which put its
+         * column 147px (58.8dp) to the left of the box a reader types into.
+         * Sampling the pixels: card x 992..3021, prose column should start at
+         * the same 992, not the 1139 a bare centre gives.
+         */
+        modifier = Modifier
+            .widthIn(max = COMPOSER_MAX_WIDTH)
+            .fillMaxWidth()
+            .fillMaxHeight()
+            .align(Alignment.Center),
         verticalArrangement = Arrangement.spacedBy(8.dp),
         // The first turn used to sit flush against the header and read as
         // clipped; Claude leaves a breath of air above it.
@@ -14295,7 +14411,12 @@ fun InputCapsule(
      * 24.8dp wide of where the reference puts it and its left edge nearly
      * touched the column rule.
      */
-    Box(modifier.fillMaxWidth().padding(start = 36.8.dp, end = 13.2.dp, top = 8.dp, bottom = 16.4.dp)) {
+    Box(
+        modifier
+            .fillMaxWidth()
+            .padding(start = 0.dp, end = 0.dp, top = 8.dp, bottom = 16.4.dp),
+        contentAlignment = Alignment.Center,
+    ) {
         /*
          * The @ menu, over the box exactly where the slash menu sits: a file
          * named and chosen here goes into the words as its relative path, which
@@ -14389,8 +14510,20 @@ fun InputCapsule(
          * The bar and the card in one column inside the floating Box: the slash
          * menu is the Box's other child and must stay absolutely placed above
          * the whole block rather than pushing it down.
+         *
+         * The width cap is on this column, not on the card. A `fillMaxWidth`
+         * column was the real reason the composer never centred: the card inside
+         * it carried an 812dp cap of its own, but the column around it still
+         * filled the pane, so the card was laid out from the column's left edge
+         * instead of on the pane's centre line - measured x 900..2929 against a
+         * transcript centred on 1139. Putting the cap on the container moves the
+         * whole block (goal bar, slash menu, card) as one.
          */
-        Column(Modifier.fillMaxWidth()) {
+        Column(
+            Modifier
+                .widthIn(max = COMPOSER_MAX_WIDTH)
+                .fillMaxWidth(),
+        ) {
         /*
          * 追求目标: MiMo's bar, above the card and inside the same inset, so the
          * goal and the words that set it read as one block. The desktop has had
@@ -14444,15 +14577,7 @@ fun InputCapsule(
              * rather than as a wall, and it is the last thing on the page to
              * look wrong when everything else has been matched.
              */
-            modifier = Modifier
-                .fillMaxWidth()
-                /*
-                 * 78.4 / 78.0, not 130.4 / 106.8: a second inset already sits
-                 * between the pane and this card - measured, the card landed at
-                 * 182.4 from the seam against the reference's 130.4, so 52 of
-                 * the intended inset was being applied twice.
-                 */
-                .padding(start = 78.4.dp, end = 78.dp),
+            modifier = Modifier.fillMaxWidth(),
         ) {
             /*
              * 8 of inset at each side, 7.6 under the control row.
