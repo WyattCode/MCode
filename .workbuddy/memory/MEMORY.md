@@ -9,8 +9,10 @@
 - **`binaries/` 会被清空**（第 78 轮整个 JDK/SDK/Gradle 全没了）。构建报 JAVA_HOME 或 sdk.dir 先查这里，不是代码坏了。装回来的位置：`binaries/jdk21/jdk-21.0.12.1+1`、`binaries/gradle/gradle-8.7`、`binaries/android-sdk`。`android/gradle.properties` **不许**写 `org.gradle.java.home`（在版本控制里，绝对路径换机就崩）。
 - **打包必须带 `--config.electronDist=node_modules/electron/dist`**：这台机器下不动 Electron 二进制，默认流程 600s 超时。手动压 zip 进 `~/AppData/Local/electron/Cache` 无效（官方 SHA 对不上，反而触发重下）。
 - **`npm run build` 会被 WorkBuddy 的 safe-delete shim 拦**（vite 要清空 out/）：加 `CODEBUDDY_SAFE_DELETE_ENABLED=0`。
-- adb 在 `binaries/android-sdk/platform-tools/adb.exe`；bash 下带 `/sdcard` 路径要 `MSYS_NO_PATHCONV=1`。**每跑一次 adb 都会重启 daemon**（`daemon not running`），别当异常。
-- `gh` 已装已认证：`C://Program Files\GitHub CLI\gh.exe`（不在 PATH）。仓库无 CI，质量靠本地 7900 条 smoke + 132 个安卓单测 + 真机实测。
+- adb 在 `binaries/android-sdk/platform-tools/adb.exe`；bash 下带 `/sdcard` 路径要 `MSYS_NO_PATHCONV=1`。**每跑一次 adb 都会重启 daemon**（`daemon not running`），别当异常；无线连接因此常断，写重试循环且**设备名不能缓存**（每次重新 `adb devices | awk`）。
+- **判断平板连没连上要查两端**：桌面 `netstat` 显示 `ESTABLISHED` 可能是僵死连接，要同时看平板 `/proc/net/tcp` 有没有到 7900 的连接。僵死时「断线提示」还会消失，看着像连着其实发不出去，重启应用才恢复。
+- 桌面端在沙箱里起不来：启动时调 `reg.exe` 被安全策略拦 → 应用几秒后自行退出（Crashpad 无转储）。需人手动双击启动，`Start-Process` 也绕不过。
+- `gh` 已装已认证：`C://Program Files\GitHub CLI\gh.exe`（不在 PATH）。仓库无 CI，质量靠本地 7900 条 smoke + 160 个安卓单测 + 真机实测。
 - 锁屏期间 Electron GPU 起不来（`GPU process isn't usable`），等解锁。
 - PowerShell 有 HTTP_PROXY 大小写重复键 → PS 5.1 `Start-Process` 抛字典冲突；启 GUI 用 bash 后台。
 - 网络被识别成 **Public** 时 Windows 防火墙拦入站（平板 ping 不通主机）。改 Private 要管理员，本机被组策略挡住。
@@ -33,6 +35,7 @@
 - **凭据只认 `storage/credentials.json` 的 `keys.<providerId>`**，写 `customProviders[].apiKey` 无效。明文 `{keys:{...}}` 程序接受（重启后自动加密）；`{sealed:...}` 无法用明文合并。
 - **配自定义模型前先查 `/v1/models`**：服务端真实 id 常与手抄不同（`DeepSeek-V4.1-Flash-1017` → 实际 `deepseek-v4.1-flash`），照手抄写会 404。
 - `CustomModel.thinking`：`efforts` 只放服务端接受的档，`canOff` 表示接受 `none`，`default` 是 app 档位不在列表时的落点。
+- **手动测网关**：令牌走 **subprotocol**（`mcode.remote.<token>`）不放 URL，帧必须带 `kind:"request"`（`{kind,id,request:{type}}`），否则网关**静默丢弃**。welcome 是 `{kind:"remote.welcome"}`。
 
 ## Compose 硬知识
 
@@ -56,6 +59,9 @@
 - 校准一次改到位：测量 → 算差值 → 直接加减。圆角不能按算术推（26px÷2.5=10.4dp 画出来只有 18px）。
 - 私有仓库连首页都 404，**那次 404 什么也证明不了**；验 URL 形状要拿公开仓库的真/假分支各测一次。
 - 代码注释常比代码准，注释带具体数字就核对代码。改共享 token 前先 grep 谁在用。
+- **「未解析的引用」而符号明明存在 → 先怀疑括号失衡**，别去搜定义。判据：括号统计为正、且深层符号全报找不到、定义在同一文件后半部分。定位用探针法：临时在顶级声明前按缺口数补 `}`，编译，让它报出真正的语义错误（`Unexpected tokens` / `Conflicting declarations`），修一处再探一次，行号单调前进。
+- **合并冲突常留「双版本并排」**：新版 `runCatching{}.onFailure{}` 未闭合，旧版 `try{}catch{}` 接在下面，旧版花括号刚好凑平新版的缺——文件末尾平衡但深度少一层。视觉特征是**缩进突然变浅 8 格以上**，且上一行是 `}`。这类位置用缩进排查比数括号准。
+- **Compose 自绘控件 uiautomator 抓不到**：发送按钮不在元素树里，要从 `clickable="true"` 的 bounds 列表按顺序找（与相邻的语音键只差 60px）。
 
 ## 工作流
 
