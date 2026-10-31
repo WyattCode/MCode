@@ -2,21 +2,19 @@ package com.mcode.remote
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The chrome's numbers, locked so a later pass cannot quietly drift them.
+ * The chrome's numbers, locked to the desktop's tokens.
  *
- * These used to hold values sampled off Claude's screenshots, and the palette it
- * produced was warm: every one had red above blue, from +2 in the page to +12 in
- * the rule. That is cream paper, and it read as a copy because it was one.
+ * These held Claude's values once, sampled off screenshots of a different app,
+ * and they made the pad a different product from the PC. The desktop runs MiMo's
+ * token set (`src/renderer/src/styles/tokens.css`), so these are that file's
+ * values under this app's names - the same page, the same ink, the same ladder.
  *
- * The mark is a black M in brushed silver on white and it has no hue at all -
- * sampled across the icon every pixel satisfies R == G == B. So the palette is a
- * neutral ladder now, and these tests hold it that way: the numbers below are
- * ours, and the neutrality check at the bottom is the one that matters most,
- * because a warm value creeping back in is exactly how the last theme drifted.
+ * The point of locking them is not that these numbers are sacred. It is that
+ * both halves of one product have to agree, and the only way that stays true
+ * across a rename or a "quick fix" is a test that fails when one side drifts.
  *
  * The constants are `const val`, so the compiler inlines them and this test
  * needs no Android SDK and no Compose runtime - pure JVM JUnit.
@@ -38,34 +36,37 @@ class RemoteChromeTest {
     }
 
     @Test
-    fun darkCodeFenceIsTheNeutralSet() {
-        // The head is the pill's own value, the body one step above it, the
-        // label ink the muted ink, and the expand sheet the card.
-        assertEquals(0xFF242424L, RemoteChrome.CodeHeadDark)
-        assertEquals(0xFF2A2A2AL, RemoteChrome.CodeBodyDark)
-        assertEquals(0xFF8A8A8AL, RemoteChrome.CodeInkDark)
-        assertEquals(0xFF1A1A1AL, RemoteChrome.CodeExpandDark)
+    fun darkCodeFenceIsTheDesktopLadder() {
+        // Head is the pill (--surface-raised-hover), body the line
+        // (--border-weak), label ink the body text (--text-base), expand sheet
+        // the raised surface (--surface-raised).
+        assertEquals(0xFF1F1F1FL, RemoteChrome.CodeHeadDark)
+        assertEquals(0xFF2E2E2EL, RemoteChrome.CodeBodyDark)
+        assertEquals(0xFFB8B8B8L, RemoteChrome.CodeInkDark)
+        assertEquals(0xFF181818L, RemoteChrome.CodeExpandDark)
     }
 
     @Test
-    fun lightCodeFenceIsTheNeutralSet() {
-        assertEquals(0xFFF0F0F0L, RemoteChrome.CodeHeadLight)
-        assertEquals(0xFFF5F5F5L, RemoteChrome.CodeBodyLight)
-        assertEquals(0xFF7A7A7AL, RemoteChrome.CodeInkLight)
+    fun lightCodeFenceIsTheDesktopLadder() {
+        // --surface-hover, --surface-layer, --icon-base, --surface-raised.
+        assertEquals(0xFFF1F0ECL, RemoteChrome.CodeHeadLight)
+        assertEquals(0xFFF2F2F2L, RemoteChrome.CodeBodyLight)
+        assertEquals(0xFF5C5C57L, RemoteChrome.CodeInkLight)
         assertEquals(0xFFFFFFFFL, RemoteChrome.CodeExpandLight)
     }
 
     @Test
     fun darkSummarySheetIsElevatedOverThePage() {
-        // The page is #0D0D0D; a sheet has to sit above it or it has no edge.
-        assertEquals(0xFF1A1A1AL, RemoteChrome.SheetDark)
-        assertNotEquals(0xFF0D0D0DL, RemoteChrome.SheetDark)
+        // The page is --surface-base #141414; the sheet is --surface-raised
+        // #181818. Four steps, which is what puts an edge on it.
+        assertEquals(0xFF181818L, RemoteChrome.SheetDark)
+        assertNotEquals(0xFF141414L, RemoteChrome.SheetDark)
     }
 
     @Test
     fun darkToolMarkIsLegibleOnTheDarkPage() {
-        // #383835 is a light-theme value and all but vanishes on #0D0D0D.
-        assertEquals(0xFF8A8A8AL, RemoteChrome.DarkToolMark)
+        // --text-base; the light-theme mark (#383835) vanishes on #141414.
+        assertEquals(0xFFB8B8B8L, RemoteChrome.DarkToolMark)
     }
 
     @Test
@@ -85,50 +86,23 @@ class RemoteChromeTest {
 
     @Test
     fun sheetGrabberAndLinkShareTheHairline() {
-        assertEquals(0xFF2A2A2AL, RemoteChrome.SheetGrabberDark)
-        assertEquals(0xFF2A2A2AL, RemoteChrome.SheetLinkDark)
-        assertEquals(0xFFD4D4D4L, RemoteChrome.SheetGrabberLight)
-        assertEquals(0xFFD4D4D4L, RemoteChrome.SheetLinkLight)
+        // --border-weak in dark, --border-button in light: the grabber and the
+        // connector between tool rows are the same hairline.
+        assertEquals(0xFF2E2E2EL, RemoteChrome.SheetGrabberDark)
+        assertEquals(0xFF2E2E2EL, RemoteChrome.SheetLinkDark)
+        assertEquals(0xFFE3E3E0L, RemoteChrome.SheetGrabberLight)
+        assertEquals(0xFFE3E3E0L, RemoteChrome.SheetLinkLight)
     }
 
     /**
-     * The palette is neutral, and this is what keeps it that way.
+     * A title is read, so it is the strongest ink the scheme has.
      *
-     * A warm theme does not arrive all at once - it arrives one value at a time,
-     * each one justified by the screenshot it was read from, until the page is
-     * cream and nobody remembers choosing it. Every chrome value must therefore
-     * satisfy |R - B| <= 2, which is the tolerance of an anti-aliased sample and
-     * nothing more.
-     *
-     * The diff washes are exempt and deliberately so: they encode added and
-     * removed, and a neutral green is not a green.
+     * `--text-strong` is #151c13 in light and #ffffff in dark. Anything less on
+     * a sheet is a title that looks like a label.
      */
     @Test
-    fun everyChromeValueIsNeutral() {
-        val chrome = mapOf(
-            "CodeHeadLight" to RemoteChrome.CodeHeadLight,
-            "CodeBodyLight" to RemoteChrome.CodeBodyLight,
-            "CodeInkLight" to RemoteChrome.CodeInkLight,
-            "CodeHeadDark" to RemoteChrome.CodeHeadDark,
-            "CodeBodyDark" to RemoteChrome.CodeBodyDark,
-            "CodeInkDark" to RemoteChrome.CodeInkDark,
-            "CodeExpandDark" to RemoteChrome.CodeExpandDark,
-            "SheetDark" to RemoteChrome.SheetDark,
-            "SheetGrabberDark" to RemoteChrome.SheetGrabberDark,
-            "SheetGrabberLight" to RemoteChrome.SheetGrabberLight,
-            "SheetLinkDark" to RemoteChrome.SheetLinkDark,
-            "SheetLinkLight" to RemoteChrome.SheetLinkLight,
-            "SheetTitleDark" to RemoteChrome.SheetTitleDark,
-            "SheetTitleLight" to RemoteChrome.SheetTitleLight,
-            "DarkToolMark" to RemoteChrome.DarkToolMark,
-        )
-        for ((name, argb) in chrome) {
-            val r = ((argb shr 16) and 0xFF).toInt()
-            val b = (argb and 0xFF).toInt()
-            assertTrue(
-                "$name is not neutral: R=$r B=$b, off by ${r - b}",
-                kotlin.math.abs(r - b) <= 2,
-            )
-        }
+    fun sheetTitleIsTheStrongestInk() {
+        assertEquals(0xFF131313L, RemoteChrome.SheetTitleLight)
+        assertEquals(0xFFFFFFFFL, RemoteChrome.SheetTitleDark)
     }
 }

@@ -134,48 +134,47 @@ import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 /* ------------------------------------------------------------------ */
-/* Palette - MCode's own neutral grey, drawn from the mark              */
+/* Palette - the desktop's own tokens, by name                         */
 /* ------------------------------------------------------------------ */
 /*
- * These are ours, not Claude's.
+ * These are `src/renderer/src/styles/tokens.css`, value for value.
  *
- * The old values were sampled off Claude screenshots and they carried its
- * warmth: every one had red above blue, from +2 in the page to +12 in the rule
- * and +9 in the muted ink. That is a cream paper theme, and it read as a copy
- * because it was one.
+ * The two halves of this product had two different colour systems: the desktop
+ * runs MiMo's tokens (surface-base #fffefd, text-strong #151c13, interactive
+ * blue), while this file had been carrying Claude's cream - every value sampled
+ * off a screenshot of a different app, every one warm. A reader moving between
+ * the pad and the PC was looking at two products.
  *
- * The mark is a black M in brushed silver on white, and it has no hue at all -
- * sampled across the icon, every colour satisfies R == G == B. So the theme is
- * built the same way: a pure neutral ladder, darker and lighter rather than
- * warmer and cooler. The eye reads a neutral grey as "no colour chosen", which
- * is what lets a single accent do all the signalling.
+ * An earlier pass this session made the pad neutral grey instead. That fixed
+ * the copying but made the gap wider, not narrower, because the desktop is not
+ * neutral either - it is MiMo's. So the pad now takes the desktop's numbers:
+ * same page, same ink, same blue, same ladder. One product, two screens.
  *
- * Light ladder (page -> card -> field), 250 / 255 apart so a card lifts off the
- * page by one perceptible step and no more:
+ * The mark still governs: it is a black M on white with no hue of its own, which
+ * is exactly why it survives on this page and on the desktop's, and why neither
+ * needs its palette to match the logo. A wordmark is not a theme.
  *
- *   page   #FAFAFA   the sheet everything sits on
- *   card   #FFFFFF   a conversation, a composer - pure white, the mark's ground
- *   pill   #F0F0F0   a pressed or selected surface
- *   rule   #E5E5E5   hairlines; one step, never a drawn border
- *
- * Dark ladder, near-black rather than charcoal, so the mark's black belongs to
- * the same family:
- *
- *   page   #0D0D0D
- *   card   #1A1A1A
- *   pill   #242424
- *   rule   #2A2A2A
+ * Light:
+ *   page   --surface-base    #fffefd
+ *   card   --surface-raised  #ffffff
+ *   pill   --surface-hover   #f1f0ec
+ *   rule   --border-button   #e3e3e0
+ *   ink    --text-strong     #151c13
+ *   muted  --text-weak       #151c13 at 66%
+ *   send   --button-primary  #151c13
+ *   link   --interactive     #2f6fed
  */
-private val Cream = Color(0xFFFAFAFA)
+private val Cream = Color(0xFFFFFEFD)
 private val CreamSurface = Color(0xFFFFFFFF)
-private val CreamPill = Color(0xFFF0F0F0)
+private val CreamPill = Color(0xFFF1F0EC)
 
-/* The search field's hairline: one step darker than the pill, so the field has
- * an edge against white without reading as a drawn box. */
-private val FieldLine = Color(0xFFDDDDDD)
-private val CreamLine = Color(0xFFE5E5E5)
-private val Ink = Color(0xFF1A1A1A)
-private val InkMuted = Color(0xFF8A8A8A)
+/* `--border-input` is #151c130f - a hairline of the ink at 6%, not a grey. A
+ * flat #DDD read as a drawn box; at 6% of the ink it reads as the field's own
+ * edge and sits correctly on both the page and a white card. */
+private val FieldLine = Color(0x1F151C13)
+private val CreamLine = Color(0xFFE3E3E0)
+private val Ink = Color(0xFF151C13)
+private val InkMuted = Color(0xFF5C5C57)
 /*
  * The lighter half of a tool row: what the call acted on, not what it did.
  *
@@ -188,13 +187,13 @@ private val InkMuted = Color(0xFF8A8A8A)
  * Dark values are the same relationship, lifted so they stay legible on the
  * near-black page.
  */
-private val ToolWhat = Color(0xFF8A8A8A)
+private val ToolWhat = Color(0xFF5C5C57)
 /*
  * A finished tool row's own ink, dark: (151,149,142) sampled off the reference's
  * reply - the same warm grey it gives a timestamp, not the neutral (154,154,150)
  * this carried. In light the row is (123,121,116), which is the same relationship.
  */
-private val DarkToolWhat = Color(0xFF8A8A8A)
+private val DarkToolWhat = Color(0xFF5C5C57)
 /* The mark before the verb: (56,56,53) on the reference, between the verb's 19
  * and the target's 123. It was `LocalMuted` (107,104,99), which drew the icon
  * as light as the words it introduces and lost the three-step rhythm. */
@@ -230,21 +229,25 @@ private val DarkDiffAddFg = Color(0xFF8FCB8C)
 private val DarkDiffDelBg = Color(0xFF3A2530)
 private val DarkDiffDelFg = Color(0xFFE0A0B4)
 /*
- * The accent is not a colour.
+ * Two accents, and they are not the same job.
  *
- * This was Claude's terracotta (204,124,94), and it was the loudest thing on
- * every screen - the one value that made the app read as someone else's. The
- * mark has no hue in it at all: it is black and brushed silver, and the
- * strongest signal that identity can give is contrast, not pigment.
+ * `Accent*` is `--button-primary`: the send disc, which is ink on paper in light
+ * and paper on ink in dark. It is the loudest thing in the composer and it is
+ * deliberately colourless, because a button that is the colour of the brand
+ * competes with the text it is asking you to send.
  *
- * So "active" is drawn in the theme's own ink pushed to its extreme - near-black
- * on the light page, near-white on the dark one. It reads louder than a tint
- * does (full contrast instead of a mid-tone), it costs no hue budget, and it
- * keeps the one place a real colour appears - the running dot - meaning
- * something specific.
+ * `Interactive*` is `--interactive`, the blue: #2f6fed light, #5a9cff dark. It
+ * marks the things that respond to a touch - the selected conversation, a filter
+ * that is on, the folder in a tool row - and it is the only hue the interface
+ * spends anywhere.
+ *
+ * This blue is not the mark's colour. The mark has none. It is the desktop's,
+ * and the pad matches the desktop.
  */
-private val AccentLight = Color(0xFF1A1A1A)
-private val AccentDark = Color(0xFFF5F5F5)
+private val AccentLight = Color(0xFF151C13)
+private val AccentDark = Color(0xFFECECEC)
+private val InteractiveLight = Color(0xFF2F6FED)
+private val InteractiveDark = Color(0xFF5A9CFF)
 
 /*
  * A patch's sides are not coloured text.
@@ -351,29 +354,29 @@ private val DotBlue = Color(0xFF4A7FD4)
 private val DotGrey = Color(0xFF9A9A9A)
 
 /*
- * The dark ladder, near-black.
+ * The dark ladder - the desktop's values.
  *
  * `DarkBg` doubles as the test every surface asks ("is this the dark theme?",
- * 66 call sites), so it keeps its name while its value moves. It is #0D0D0D now:
- * the mark is black, and a page at #151515 sat in a charcoal range that neither
- * matched the mark nor read as a true night surface.
+ * 66 call sites), so it keeps its name while its value follows `--surface-base`
+ * in the dark block: #141414. An earlier pass this session took it to #0D0D0D
+ * chasing a neutral palette; the desktop is not neutral, it is MiMo's, and a pad
+ * on #0D0D0D beside a PC on #141414 is two products.
  */
-private val DarkBg = Color(0xFF0D0D0D)
-private val DarkSurface = Color(0xFF1A1A1A)
-private val DarkPill = Color(0xFF242424)
-private val DarkField = Color(0xFF141414)
-private val DarkFieldLine = Color(0xFF333333)
-private val DarkLine = Color(0xFF2A2A2A)
-private val DarkText = Color(0xFFF5F5F5)
-private val DarkMuted = Color(0xFF8A8A8A)
+private val DarkBg = Color(0xFF141414)
+private val DarkSurface = Color(0xFF181818)
+private val DarkPill = Color(0xFF1F1F1F)
+private val DarkField = Color(0xFF181818)
+private val DarkFieldLine = Color(0x1FFFFFFF)
+private val DarkLine = Color(0xFF2E2E2E)
+private val DarkText = Color(0xFFFFFFFF)
+private val DarkMuted = Color(0xFFB8B8B8)
 /*
  * The third step of the ink ladder: placeholders, and the marks that sit in them.
  *
- * Fainter than body ink and than a timestamp, but still readable - the light
- * theme needs it darker than the dark theme does, since ink on white loses
- * contrast faster than the reverse.
+ * `--text-weaker` is #5a5a5a in dark, but that is a value for text on a raised
+ * surface, not a placeholder on the page. This is the desktop's own reading.
  */
-private val Faint = Color(0xFFB0B0B0)
+private val Faint = Color(0xFFBBBBB6)
 
 val LocalBg = staticCompositionLocalOf { Cream }
 val LocalSurface = staticCompositionLocalOf { CreamSurface }
@@ -384,6 +387,8 @@ val LocalMuted = staticCompositionLocalOf { InkMuted }
 val LocalFaint = staticCompositionLocalOf { Faint }
 /** The "this control is on" ink: full contrast, no hue. See [AccentLight]. */
 val LocalAccent = staticCompositionLocalOf { AccentLight }
+/** The interactive blue - selected rows, active filters. See [InteractiveLight]. */
+val LocalInteractive = staticCompositionLocalOf { InteractiveLight }
 val LocalPill = staticCompositionLocalOf { CreamPill }
 /** The user's own turn: a shade under the page in dark (13,13,13 on the pad), not above it. */
 val LocalBubble = staticCompositionLocalOf { CreamPill }
@@ -403,7 +408,7 @@ val LocalFieldLine = staticCompositionLocalOf { FieldLine }
  */
 val LocalCard = staticCompositionLocalOf { Color(0xFFFFFFFF) }
 val LocalCardOpen = staticCompositionLocalOf { Color(0xFFFFFFFF) }
-val LocalCardLine = staticCompositionLocalOf { Color(0xFFE5E5E5) }
+val LocalCardLine = staticCompositionLocalOf { Color(0xFFE3E3E0) }
 
 /**
  * The card's own edge, one step lighter than [LocalCardLine].
@@ -412,8 +417,8 @@ val LocalCardLine = staticCompositionLocalOf { Color(0xFFE5E5E5) }
  * an outline at all, and where one row the reader is looking at begins. Sharing
  * one value made the row's edge disappear into the card's.
  */
-val LocalCardHairline = staticCompositionLocalOf { Color(0xFFEFEFEF) }
-val LocalCardTile = staticCompositionLocalOf { Color(0xFFF5F5F5) }
+val LocalCardHairline = staticCompositionLocalOf { Color(0xFFF1F1F1) }
+val LocalCardTile = staticCompositionLocalOf { Color(0xFFF2F2F2) }
 
 /* ------------------------------------------------------------------ */
 /* Model                                                               */
@@ -1138,6 +1143,7 @@ fun MCodeTheme(content: @Composable () -> Unit) {
         LocalMuted provides muted,
         LocalFaint provides (if (dark) Color(0xFF666666) else Faint),
         LocalAccent provides (if (dark) AccentDark else AccentLight),
+        LocalInteractive provides (if (dark) InteractiveDark else InteractiveLight),
         LocalPill provides pill,
         // In dark the reader's turn sits *under* the page, not on paper: a plate one
         // step below #0D0D0D would be black, so it goes the other way and takes
@@ -1160,8 +1166,8 @@ fun MCodeTheme(content: @Composable () -> Unit) {
          * the same "barely lighter than the page" relationship the light theme
          * has. The tile is #2A2A29.
          */
-        LocalCard provides (if (dark) Color(0xFF1A1A1A) else Color(0xFFFFFFFF)),
-        LocalCardOpen provides (if (dark) Color(0xFF242424) else Color(0xFFFFFFFF)),
+        LocalCard provides (if (dark) Color(0xFF181818) else Color(0xFFFFFFFF)),
+        LocalCardOpen provides (if (dark) Color(0xFF1F1F1F) else Color(0xFFFFFFFF)),
         /*
          * Two different hairlines, and they are not interchangeable.
          *
@@ -1171,12 +1177,12 @@ fun MCodeTheme(content: @Composable () -> Unit) {
          * page. One value for both made the capsule lose its outline the moment
          * the card's edge was softened.
          */
-        LocalCardLine provides (if (dark) Color(0xFF2A2A2A) else Color(0xFFE5E5E5)),
+        LocalCardLine provides (if (dark) Color(0xFF2E2E2E) else Color(0xFFE3E3E0)),
         /*
          * The card's near-invisible edge. See LocalCardLine above.
          */
-        LocalCardHairline provides (if (dark) Color(0xFF333333) else Color(0xFFEFEFEF)),
-        LocalCardTile provides (if (dark) Color(0xFF242424) else Color(0xFFF5F5F5)),
+        LocalCardHairline provides (if (dark) Color(0xFF2E2E2E) else Color(0xFFF1F1F1)),
+        LocalCardTile provides (if (dark) Color(0xFF2E2E2E) else Color(0xFFF2F2F2)),
         /*
          * The selection tint, which this app had never set.
          *
@@ -5042,7 +5048,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                     .padding(start = 10.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Icon(Icons.Outlined.Folder, contentDescription = null, tint = LocalAccent.current, modifier = Modifier.size(13.dp))
+                                Icon(Icons.Outlined.Folder, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(13.dp))
                                 Spacer(Modifier.width(5.dp))
                                 Text(
                                     projectNames[projectFilter] ?: (projectFilter ?: "").substringAfterLast('\\').substringAfterLast('/'),
@@ -5523,9 +5529,9 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                     val r = 1.9f * density
                                     val cy = size.height / 2f
                                     val gap = size.width / 4f
-                                    drawCircle(Color(0xFF1A1A1A), radius = r, center = androidx.compose.ui.geometry.Offset(gap, cy))
-                                    drawCircle(Color(0xFF1A1A1A), radius = r, center = androidx.compose.ui.geometry.Offset(gap * 2f, cy))
-                                    drawCircle(Color(0xFF1A1A1A), radius = r, center = androidx.compose.ui.geometry.Offset(gap * 3f, cy))
+                                    drawCircle(Color(0xFF151C13), radius = r, center = androidx.compose.ui.geometry.Offset(gap, cy))
+                                    drawCircle(Color(0xFF151C13), radius = r, center = androidx.compose.ui.geometry.Offset(gap * 2f, cy))
+                                    drawCircle(Color(0xFF151C13), radius = r, center = androidx.compose.ui.geometry.Offset(gap * 3f, cy))
                                 }
                                 DropdownMenu(expanded = headerMenu, onDismissRequest = { headerMenu = false }) {
                                     MenuRow(
@@ -7266,7 +7272,7 @@ fun SettingsScreen(
     var page by remember { mutableStateOf(SetPage.General) }
     val muted = LocalMuted.current
     val ink = LocalText.current
-    val hairline = if (LocalBg.current == DarkBg) Color(0xFF2C2C2B) else Color(0xFFE5E5E5)
+    val hairline = if (LocalBg.current == DarkBg) Color(0xFF2C2C2B) else Color(0xFFE3E3E0)
     fun str(key: String, fallback: String = "") = config?.optString(key, fallback) ?: fallback
     fun num(key: String, fallback: Double = 1.0) = config?.optDouble(key, fallback) ?: fallback
     fun flag(key: String, fallback: Boolean) = config?.let { if (it.has(key)) it.optBoolean(key, fallback) else fallback } ?: fallback
@@ -7704,7 +7710,7 @@ fun OfflineStrip() {
                 Modifier
                     .size(5.dp)
                     .background(
-                        if (night) Color(0xFF8A8A8A) else Color(0xFFB0B0B0),
+                        if (night) Color(0xFF5C5C57) else Color(0xFFB0B0B0),
                         CircleShape,
                     ),
             )
@@ -7726,7 +7732,7 @@ fun OfflineStrip() {
             Modifier
                 .fillMaxWidth()
                 .height(1.dp)
-                .background(if (night) Color(0xFF2A2A2A) else Color(0xFFE5E5E5)),
+                .background(if (night) Color(0xFF2A2A2A) else Color(0xFFE3E3E0)),
         )
     }
 }
@@ -7826,7 +7832,7 @@ fun AppTopBar(
                     Modifier.size(40.dp).clickable { onFilter() },
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(Icons.Outlined.Tune, contentDescription = "只看运行中", tint = LocalAccent.current, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Outlined.Tune, contentDescription = "只看运行中", tint = LocalInteractive.current, modifier = Modifier.size(18.dp))
                 }
             }
             // Ctrl+F's magnifier, the same one the wide header carries.
@@ -7837,7 +7843,7 @@ fun AppTopBar(
                 Icon(
                     Icons.Outlined.Search,
                     contentDescription = if (findOpen) "关闭查找" else "在对话中查找",
-                    tint = if (findOpen) LocalAccent.current else LocalText.current,
+                    tint = if (findOpen) LocalInteractive.current else LocalText.current,
                     modifier = Modifier.size(18.dp),
                 )
             }
@@ -7855,7 +7861,7 @@ fun AppTopBar(
                     "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 11v5.5M12 7.6h.01",
                     modifier = Modifier.size(18.dp),
                     strokeWidth = 1.7f,
-                    tint = if (infoOpen) LocalAccent.current else LocalText.current,
+                    tint = if (infoOpen) LocalInteractive.current else LocalText.current,
                 )
             }
             Box(
@@ -7886,7 +7892,7 @@ fun AppTopBar(
  */
 @Composable
 fun GhostGlyph(active: Boolean, size: androidx.compose.ui.unit.Dp) {
-    val tint = if (active) LocalAccent.current else LocalText.current
+    val tint = if (active) LocalInteractive.current else LocalText.current
     androidx.compose.foundation.Canvas(Modifier.size(size)) {
         val w = this.size.width
         val h = this.size.height
@@ -8634,7 +8640,7 @@ fun FindCard(
         modifier
             .clip(RoundedCornerShape(10.dp))
             .background(if (dark) Color(0xFF181818) else Color(0xFFFFFEFD))
-            .border(1.dp, if (dark) Color(0xFF2C2C2B) else Color(0xFFE5E5E5), RoundedCornerShape(10.dp))
+            .border(1.dp, if (dark) Color(0xFF2C2C2B) else Color(0xFFE3E3E0), RoundedCornerShape(10.dp))
             .padding(horizontal = 10.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -10494,14 +10500,14 @@ private fun DiffFoldBar(skipped: Int, modifier: Modifier = Modifier) {
                 "M6 15l6-6 6 6",
                 modifier = Modifier.size(20.dp),
                 strokeWidth = 1.6f,
-                tint = if (dark) DarkMuted else Color(0xFF8A8A8A),
+                tint = if (dark) DarkMuted else Color(0xFF5C5C57),
             )
         }
         Spacer(Modifier.width(22.4.dp))
         Text(
             "+$skipped 行",
             fontSize = 13.2.sp,
-            color = if (dark) DarkMuted else Color(0xFF8A8A8A),
+            color = if (dark) DarkMuted else Color(0xFF5C5C57),
         )
     }
 }
@@ -10604,7 +10610,7 @@ private fun DiffLines(
              */
             val gutterInk = when {
                 line.side == 1 || line.side == 2 -> if (dark) Color(0xFFE6E6E4) else Color(0xFF131313)
-                else -> if (dark) Color(0xFF6F7378) else Color(0xFF8A8A8A)
+                else -> if (dark) Color(0xFF6F7378) else Color(0xFF5C5C57)
             }
             Row(
                 Modifier
@@ -11765,7 +11771,7 @@ fun DrawerItem(
                 if (active) {
                     Modifier
                         .background(
-                            if (LocalBg.current == DarkBg) Color(0xFF2B2B2A) else Color(0xFFF0F0F0),
+                            if (LocalBg.current == DarkBg) Color(0xFF2B2B2A) else Color(0xFFF1F0EC),
                             RoundedCornerShape(13.6.dp),
                         )
                 } else {
@@ -11980,7 +11986,7 @@ fun PluginsScreen(
                             .padding(bottom = 6.dp)
                             .clip(RoundedCornerShape(12.dp))
                             .background(MaterialTheme.colorScheme.surface)
-                            .border(1.dp, if (LocalBg.current == DarkBg) Color(0xFF2C2C2B) else Color(0xFFE5E5E5), RoundedCornerShape(12.dp))
+                            .border(1.dp, if (LocalBg.current == DarkBg) Color(0xFF2C2C2B) else Color(0xFFE3E3E0), RoundedCornerShape(12.dp))
                             .padding(horizontal = 12.dp, vertical = 11.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -12017,7 +12023,7 @@ fun PluginsScreen(
                             .padding(bottom = 6.dp)
                             .clip(RoundedCornerShape(12.dp))
                             .background(MaterialTheme.colorScheme.surface)
-                            .border(1.dp, if (LocalBg.current == DarkBg) Color(0xFF2C2C2B) else Color(0xFFE5E5E5), RoundedCornerShape(12.dp))
+                            .border(1.dp, if (LocalBg.current == DarkBg) Color(0xFF2C2C2B) else Color(0xFFE3E3E0), RoundedCornerShape(12.dp))
                             .padding(horizontal = 12.dp, vertical = 11.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -13860,7 +13866,7 @@ fun ContextRing(used: Int, limit: Int, size: androidx.compose.ui.unit.Dp = 18.dp
         // desktop's own clamp.
         if (used > limit) 0 else maxOf(1, Math.round(share))
     }
-    val track = if (LocalBg.current == DarkBg) Color(0xFF2E2E2E) else Color(0xFFE5E5E5)
+    val track = if (LocalBg.current == DarkBg) Color(0xFF2E2E2E) else Color(0xFFE3E3E0)
     val arc = LocalMuted.current
     Canvas(Modifier.size(size)) {
         val k = this.size.width / 16f
@@ -14382,10 +14388,10 @@ fun InputCapsule(
              * text field's.
              */
             shape = RoundedCornerShape(16.dp),
-            color = if (LocalBg.current == DarkBg) Color(0xFF1A1A1A) else Color(0xFFFFFFFF),
+            color = if (LocalBg.current == DarkBg) Color(0xFF151C13) else Color(0xFFFFFFFF),
             border = androidx.compose.foundation.BorderStroke(
                 1.dp,
-                if (LocalBg.current == DarkBg) Color(0xFF2A2A2A) else Color(0xFFE5E5E5),
+                if (LocalBg.current == DarkBg) Color(0xFF2A2A2A) else Color(0xFFE3E3E0),
             ),
             shadowElevation = 0.dp,
             /*
@@ -14574,7 +14580,7 @@ fun InputCapsule(
                         ) {
                             // Read outside the draw scope: `Local…current` is a
                             // composable call and a Canvas lambda is not.
-                            val phInk = if (LocalBg.current == DarkBg) DarkMuted else Color(0xFF8A8A8A)
+                            val phInk = if (LocalBg.current == DarkBg) DarkMuted else Color(0xFF5C5C57)
                             // `requiredSize`, not `size`: inside a Row the canvas was being
                             // measured against the row's own width and drew 30.4
                             // dp of mark where 15.2 was asked for.
@@ -14656,7 +14662,7 @@ fun InputCapsule(
                                 },
                                 fontSize = 16.sp,
                                 lineHeight = 23.6.sp,
-                                color = if (LocalBg.current == DarkBg) DarkMuted else Color(0xFF8A8A8A),
+                                color = if (LocalBg.current == DarkBg) DarkMuted else Color(0xFF5C5C57),
                             )
                         }
                     }
@@ -15665,7 +15671,7 @@ fun ScheduledScreen(
                     Modifier
                         .size(64.dp)
                         .clip(androidx.compose.foundation.shape.CircleShape)
-                        .background(if (LocalBg.current == DarkBg) Color(0xFF2A2A29) else Color(0xFFF0F0F0)),
+                        .background(if (LocalBg.current == DarkBg) Color(0xFF2A2A29) else Color(0xFFF1F0EC)),
                     contentAlignment = Alignment.Center,
                 ) {
                     MiIcon(
@@ -15740,7 +15746,7 @@ fun ScheduledScreen(
                             .padding(bottom = 6.dp)
                             .clip(RoundedCornerShape(12.dp))
                             .background(MaterialTheme.colorScheme.surface)
-                            .border(1.dp, if (LocalBg.current == DarkBg) Color(0xFF2C2C2B) else Color(0xFFE5E5E5), RoundedCornerShape(12.dp))
+                            .border(1.dp, if (LocalBg.current == DarkBg) Color(0xFF2C2C2B) else Color(0xFFE3E3E0), RoundedCornerShape(12.dp))
                             .padding(horizontal = 14.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -16024,7 +16030,7 @@ fun DeliveredCards(files: List<DeliveredFile>, root: String, onOpen: (String, St
                 .background(MaterialTheme.colorScheme.surface)
                 .border(
                     1.dp,
-                    if (LocalBg.current == DarkBg) Color(0xFF2C2C2B) else Color(0xFFE5E5E5),
+                    if (LocalBg.current == DarkBg) Color(0xFF2C2C2B) else Color(0xFFE3E3E0),
                     RoundedCornerShape(12.dp),
                 )
                 .clickable {
@@ -16281,7 +16287,7 @@ private fun TurnActions(
      * both a shade too far from the page, so a capsule read as a smudge rather
      * than as an outlined object, and its edge disappeared at a glance.
      */
-    val plate = if (dark) Color(0xFF1A1A1A) else Color(0xFFFFFFFF)
+    val plate = if (dark) Color(0xFF181818) else Color(0xFFFFFFFF)
     val ink = if (dark) Color(0xFFF2F2F0) else Color(0xFF131313)
     val addInk = if (dark) Color(0xFF6FB055) else Color(0xFF296118)
     val delInk = if (dark) Color(0xFFC4685F) else Color(0xFF832E2B)
@@ -16398,7 +16404,7 @@ private fun DiffSheet(
 ) {
     val dark = LocalBg.current == DarkBg
     val ink = RemoteChrome.c(if (dark) RemoteChrome.SheetTitleDark else RemoteChrome.SheetTitleLight)
-    val muted = if (dark) DarkMuted else Color(0xFF8A8A8A)
+    val muted = if (dark) DarkMuted else Color(0xFF5C5C57)
     val hair = if (dark) Color(0xFF2E2E2E) else Color(0xFFECECEA)
     /* File rows: a hair above the elevated sheet plate in dark (#20201F → #262625). */
     val rowBg = if (dark) Color(0xFF262625) else Color(0xFFFDFDFB)
@@ -16716,7 +16722,7 @@ fun EditedCard(
     if (files.isEmpty()) return
     val dark = LocalBg.current == DarkBg
     val surface = if (dark) Color(0xFF181818) else Color(0xFFFFFEFD)
-    val line = if (dark) Color(0xFF2E2E2E) else Color(0xFFF0F0F0)
+    val line = if (dark) Color(0xFF2E2E2E) else Color(0xFFF1F0EC)
     val plate = if (dark) Color(0xFF2E2E2E) else Color(0xFFF0F0F2)
     val statMuted = if (dark) Color(0xFFB8B8B8) else Color(0x99151C13)
     /*
@@ -17091,7 +17097,7 @@ fun InfoCard(
 ) {
     val dark = LocalBg.current == DarkBg
     val surface = if (dark) Color(0xFF181818) else Color(0xFFFFFEFD)
-    val line = if (dark) Color(0xFF2E2E2E) else Color(0xFFF0F0F0)
+    val line = if (dark) Color(0xFF2E2E2E) else Color(0xFFF1F0EC)
     var outputsOpen by remember { mutableStateOf(true) }
     var sourcesOpen by remember { mutableStateOf(false) }
     /*
