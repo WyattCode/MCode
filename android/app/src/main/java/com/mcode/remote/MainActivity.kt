@@ -11434,7 +11434,29 @@ fun SessionList(
                         if (!compact) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    s.title.ifEmpty { s.id }.take(26),
+                                    /*
+                                     * The whole title; the width decides where it
+                                     * ends.
+                                     *
+                                     * This was `take(26)` - a hard cut at a
+                                     * character count, which knows nothing about
+                                     * the space it has. Measured with a 50-char
+                                     * title on the pad: the row offered 293dp and
+                                     * the title stopped at 282, leaving 62dp of
+                                     * empty line beside a name that had already
+                                     * been shortened. A wide pane truncated early;
+                                     * a narrow one truncated twice, because 26 CJK
+                                     * characters are roughly twice as wide as 26
+                                     * latin ones and the ellipsis then cut again.
+                                     *
+                                     * `overflow = TextOverflow.Ellipsis` and
+                                     * `maxLines = 1` below already do this
+                                     * properly - by measure, not by count - so the
+                                     * take only ever did harm. Its commit has no
+                                     * note explaining it; it was a guard written
+                                     * before the ellipsis was there.
+                                     */
+                                    s.title.ifEmpty { s.id },
                                     /*
                                      * 18sp, which the comment here already said.
                                      *
