@@ -712,9 +712,21 @@ const shownMarks = computed(() => {
 })
 
 watch(
-  () => [annotations.byScope, batch.byFile, props.path, fx.annotatedIds.value, mainAnnotationScope.value],
+  () => [annotations.byScope, batch.byFile, props.path, fx.annotatedIds.value, fx.phase.value, mainAnnotationScope.value],
   () => refreshMarks(),
-  { deep: true },
+  /*
+   * No `deep: true`, and the reason is in the stores.
+   *
+   * These five sources are all replaced wholesale rather than mutated in place:
+   * `byScope` and `byFile` are written as `byScope.value = { ...byScope.value, ... }`
+   * in their stores, `annotatedIds` as `annotatedIds.value = [...]` in
+   * annotation-fx, and the other two are props and a plain string. A reference
+   * comparison catches every one of those changes.
+   *
+   * The deep traversal was walking every annotation in the document - on every
+   * redraw of the panel - to discover what the new top-level object had already
+   * announced.
+   */
 )
 
 function badgeAt(rect: Box) {

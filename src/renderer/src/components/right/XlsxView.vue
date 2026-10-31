@@ -774,7 +774,14 @@ function placeMarks() {
   fxBoxes.value = boxes
 }
 
-watch(() => [annotations.byScope, batch.byFile, props.path, fx.annotatedIds.value, fx.phase.value, mainAnnotationScope.value], placeMarks, { deep: true })
+/*
+ * No `deep: true`: every source is replaced wholesale, never mutated in place
+ * (the stores write `byScope.value = { ...byScope.value, ... }` and
+ * `annotatedIds.value = [...]`). A reference comparison catches all of them; the
+ * deep walk was traversing every annotation in the document to learn what the
+ * new top-level object already said.
+ */
+watch(() => [annotations.byScope, batch.byFile, props.path, fx.annotatedIds.value, fx.phase.value, mainAnnotationScope.value], placeMarks)
 
 const layerStyle = (z: number) => {
   const box = markBox.value
