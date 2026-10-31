@@ -11463,7 +11463,30 @@ fun SessionList(
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.weight(1f, fill = false),
                                 )
-                                Spacer(Modifier.weight(1f))
+                                /*
+                                 * Only the cards need a spacer here.
+                                 *
+                                 * This was unconditional, and since both its
+                                 * weight and the title's were 1f the two split
+                                 * the line in half - so a flat row spent 50% of
+                                 * its width on an empty Spacer and truncated the
+                                 * title at half the space it had. Measured on
+                                 * the pad in portrait: the row's inner width is
+                                 * 428px and 「New session」 was given 214, which
+                                 * is exactly half, and it read `New se…`.
+                                 *
+                                 * The spacer exists to push the timestamp to the
+                                 * row's trailing end, and that timestamp is drawn
+                                 * by the `!flat` branch below. On a flat row the
+                                 * time lives under the title instead, so there is
+                                 * nothing to push and the spacer was pure loss.
+                                 *
+                                 * Not a portrait-only bug: the same halving cut
+                                 * long titles short in landscape too - 360dp of
+                                 * column gave the title 151 where it could use
+                                 * 302.
+                                 */
+                                if (!flat) Spacer(Modifier.weight(1f))
                                 /*
                                  * Cards put the time at the row's trailing end;
                                  * flat rows put it under the title instead.
