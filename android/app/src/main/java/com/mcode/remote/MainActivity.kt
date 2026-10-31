@@ -9686,12 +9686,12 @@ fun Timeline(
                                      */
                                     Row(
                                         Modifier.padding(top = 15.6.dp, start = 0.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(16.2.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(0.dp),
                                         verticalAlignment = Alignment.CenterVertically,
                                     ) {
                                         // Copy.
                                         Box(
-                                            Modifier.size(20.dp).clickable {
+                                            Modifier.size(44.dp).clickable {
                                                 val board = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                                                 board.setPrimaryClip(android.content.ClipData.newPlainText("MCode", item.text))
                                                 copied = true
@@ -9718,7 +9718,7 @@ fun Timeline(
                                          * lie about the interface.
                                          */
                                         Box(
-                                            Modifier.size(20.dp).clickable {
+                                            Modifier.size(44.dp).clickable {
                                                 val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
                                                     type = "text/plain"
                                                     putExtra(android.content.Intent.EXTRA_TEXT, item.text)
@@ -9744,7 +9744,7 @@ fun Timeline(
                                          * for the words.
                                          */
                                         Box(
-                                            Modifier.size(20.dp).clickable { onMessage(item) },
+                                            Modifier.size(44.dp).clickable { onMessage(item) },
                                             contentAlignment = Alignment.Center,
                                         ) {
                                             Icon(
