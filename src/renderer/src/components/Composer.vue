@@ -1901,12 +1901,33 @@ const draftKey = computed(() =>
   props.fresh ? "home" : `${props.side ? "side" : "main"}:${sessionID.value ?? ""}`,
 )
 
+/*
+ * Which conversations exist, as a set.
+ *
+ * `saveDraft` runs on every keystroke - it is called from the draft watch below,
+ * which fires on each character - and it used to ask the question with
+ * `app.sessions.some(...)`: two linear scans of every conversation in the app,
+ * per key, just to decide whether the draft it was about to keep belonged to a
+ * session that had been deleted. On a long list that is thousands of comparisons
+ * between one frame and the next.
+ *
+ * A computed set answers the same question in constant time and is rebuilt only
+ * when the session lists themselves change. `known` is the merge of both, because
+ * a side conversation is a real one for this purpose and the two never overlap.
+ */
+const knownSessions = computed(() => {
+  const out = new Set<string>()
+  for (const entry of app.sessions) out.add(entry.id)
+  for (const entry of app.sideSessions) out.add(entry.id)
+  return out
+})
+
 function saveDraft(key: string) {
   // A deleted session's draft was already forgotten by the store; writing this
   // box's stale contents back would resurrect an orphan that is saved to disk
   // and never shown again. Side conversations live in sideSessions, not sessions.
   const id = key.startsWith("main:") || key.startsWith("side:") ? key.slice(key.indexOf(":") + 1) : undefined
-  if (id && !app.sessions.some((entry) => entry.id === id) && !app.sideSessions.some((entry) => entry.id === id)) return
+  if (id && !knownSessions.value.has(id)) return
   if (text.value || attachments.value.length || skills.value.length) {
     drafts.set(key, {
       text: text.value,
@@ -1950,7 +1971,16 @@ watch(
     saveDraft(draftKey.value)
     scheduleDraftSave()
   },
-  { deep: true },
+  /*
+   * No `deep: true`.
+   *
+   * All four sources are replaced wholesale rather than mutated - `text` is a
+   * string, and every site that changes the other three assigns a new array or a
+   * new Set (`attachments.value = [...]`, `mentioned.value = new Set(...)`), never
+   * pushes into the old one. So a reference comparison already catches every
+   * change, and the deep traversal was walking the attachment list and the two
+   * chip collections on every keystroke to discover nothing.
+   */
 )
 
 watch(
