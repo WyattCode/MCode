@@ -5635,13 +5635,29 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                  * and the only visible difference at this size
                                  * between the two headers' right ends.
                                  */
+                                /*
+                                 * The theme's ink, not a literal.
+                                 *
+                                 * This was hard-coded to #151C13 - the light
+                                 * ink - so in dark the three dots were drawn at
+                                 * (21,28,19) on a (20,20,20) page and measured
+                                 * 56 at their brightest: 2.8:1, below the 3:1
+                                 * floor for a non-text mark and far below the
+                                 * 4.5:1 a control wants. The menu stayed
+                                 * tappable, which is worse than gone - there
+                                 * was nothing on screen to say where.
+                                 *
+                                 * Read outside the Canvas: a draw lambda is not
+                                 * composable and cannot touch a CompositionLocal.
+                                 */
+                                val dotInk = LocalText.current
                                 Canvas(Modifier.size(18.4.dp)) {
                                     val r = 1.9f * density
                                     val cy = size.height / 2f
                                     val gap = size.width / 4f
-                                    drawCircle(Color(0xFF151C13), radius = r, center = androidx.compose.ui.geometry.Offset(gap, cy))
-                                    drawCircle(Color(0xFF151C13), radius = r, center = androidx.compose.ui.geometry.Offset(gap * 2f, cy))
-                                    drawCircle(Color(0xFF151C13), radius = r, center = androidx.compose.ui.geometry.Offset(gap * 3f, cy))
+                                    drawCircle(dotInk, radius = r, center = androidx.compose.ui.geometry.Offset(gap, cy))
+                                    drawCircle(dotInk, radius = r, center = androidx.compose.ui.geometry.Offset(gap * 2f, cy))
+                                    drawCircle(dotInk, radius = r, center = androidx.compose.ui.geometry.Offset(gap * 3f, cy))
                                 }
                                 DropdownMenu(
                                     expanded = headerMenu,
@@ -14560,7 +14576,7 @@ fun InputCapsule(
              * text field's.
              */
             shape = RoundedCornerShape(16.dp),
-            color = if (LocalBg.current == DarkBg) Color(0xFF151C13) else Color(0xFFFFFFFF),
+            color = if (LocalBg.current == DarkBg) Color(0xFF181818) else Color(0xFFFFFFFF),
             border = androidx.compose.foundation.BorderStroke(
                 1.dp,
                 if (LocalBg.current == DarkBg) Color(0xFF2A2A2A) else Color(0xFFE3E3E0),
