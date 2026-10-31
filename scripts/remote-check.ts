@@ -399,6 +399,9 @@ let phone: WebSocket
   send(again, { kind: "remote.resume", cursor: missedCursor })
   const replayed = await nextFrame(again, (f) => f.kind === "remote.event" && f.event?.type === "session.updated" && f.event?.session?.title === "missed while away")
   check("events missed while offline are replayed by remote.resume", replayed.eventId > missedCursor, replayed.eventId)
+  // Detached here, not left to the end: the cap below counts the group.
+  again.close()
+  await new Promise((resolve) => setTimeout(resolve, 300))
 }
 
 // 6. a phone that stops answering is dropped by the sweep
@@ -419,7 +422,6 @@ let phone: WebSocket
   const silent = net.connect(gateway.port, "127.0.0.1")
   const key = crypto.randomBytes(16).toString("base64")
   const opened = new Promise<boolean>((resolve) => {
-    let upgraded = false
     silent.once("connect", () => {
       silent.write(
         `GET / HTTP/1.1\r\nHost: 127.0.0.1:${gateway.port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n` +
@@ -436,13 +438,28 @@ let phone: WebSocket
      * difference between "a connected phone that went silent" and "a socket that
      * never joined".
      */
-    silent.once("data", () => {
-      if (upgraded) return
-      upgraded = true
+    /*
+     * Wait for the 101 before going quiet.
+     *
+     * Pausing straight after the write can drop the response that completes the
+     * upgrade, and then the server never treats this as a phone at all - the
+     * test would pass on the wrong reason. Watching for the status line is the
+     * difference between "a connected phone that went silent" and "a socket that
+     * never joined".
+     *
+     * `on`, not `once`: the 101 and the welcome frame can arrive in separate
+     * segments, and a `once` handler that fires on the first one detaches before
+     * the upgrade is confirmed. The guard makes repeated calls harmless.
+     */
+    let settled = false
+    const arrive = () => {
+      if (settled) return
+      settled = true
       resolve(true)
       // Answer the handshake, then read nothing more: no pong can follow.
-      setTimeout(() => silent.pause(), 80)
-    })
+      setTimeout(() => silent.pause(), 120)
+    }
+    silent.on("data", arrive)
     silent.once("error", () => resolve(false))
   })
   const connected = await opened
@@ -465,6 +482,38 @@ let phone: WebSocket
   })
   check("a phone that stops answering pong is dropped by the sweep", closed)
   silent.destroy()
+}
+
+// 7. the fan-out group has a ceiling
+//
+// `phones` is a broadcast group: every event goes to every socket in it, and
+// nothing else bounded it. This opens nine and expects the ninth to be refused
+// with a policy close rather than silently joining. Eight is the shipped cap;
+// the assertion is written against that number rather than a constant so a
+// change to it has to be a change here too.
+{
+  // Start from an empty group: `phone` from the earlier sections is still
+  // attached and would be counted against the cap.
+  phone.close()
+  await new Promise((resolve) => setTimeout(resolve, 400))
+
+  const attached: WebSocket[] = []
+  for (let i = 0; i < 8; i++) {
+    const ws = await connect(TOKEN)
+    await nextFrame(ws, (f) => f.kind === "remote.welcome")
+    attached.push(ws)
+  }
+  check("eight phones can attach at once", attached.length === 8)
+
+  const ninth = new WebSocket(url, ["mcode", `mcode.remote.${TOKEN}`])
+  const refused = await new Promise<number | null>((resolve) => {
+    ninth.once("close", (code) => resolve(code))
+    setTimeout(() => resolve(null), 2000)
+  })
+  check("the ninth is refused with a policy close", refused === 1008, refused)
+  ninth.terminate()
+  for (const ws of attached) ws.close()
+  await new Promise((resolve) => setTimeout(resolve, 400))
 }
 
 await gateway.close()

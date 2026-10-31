@@ -42,6 +42,16 @@ const REMOTE_SHELL_OWNER = { remote: true }
 /** Events kept so a reconnecting phone can resume. Oldest dropped past this. */
 const BUFFER_LIMIT = 2000
 
+/**
+ * How many phones may be attached at once.
+ *
+ * Every event frame fans out to every socket here, and the ways the set can fill
+ * are not all deliberate - a pad retrying faster than the sweep reaps, a browser
+ * tab left on the pairing URL, a machine still retrying after the reader moved
+ * on. See the refusal in the connection handler for why this number.
+ */
+const MAX_PHONES = 8
+
 /** Frames a phone may send past the standard request envelope. */
 interface RemoteResume {
   kind: "remote.resume"
@@ -175,6 +185,26 @@ export async function startRemoteGateway(runtime: Runtime, options: RemoteGatewa
   }
 
   wss.on("connection", (socket: WebSocket) => {
+    /*
+     * A cap, because `phones` is a broadcast group and has no other bound.
+     *
+     * Every frame goes to every socket in it, so an unbounded set is both a
+     * memory risk and a fan-out cost - and the ways it can fill are not all
+     * deliberate: a pad that reconnects faster than the sweep can reap, a
+     * browser tab left open on the pairing URL, a machine that keeps retrying
+     * after the reader has moved on. None of those are attacks and all of them
+     * accumulate.
+     *
+     * 8 is well above what this is for. A household pairs a pad and maybe a
+     * phone; the wide layout itself only draws one conversation. Refusing the
+     * ninth keeps the useful case untouched and makes the failure visible
+     * (`1008` policy violation, logged) instead of degrading quietly.
+     */
+    if (phones.size >= MAX_PHONES) {
+      console.warn(`[remote] refused a phone: ${phones.size} already connected, which is the cap`)
+      socket.close(1008, "too many connected devices")
+      return
+    }
     phones.add(socket)
     confirmed.set(socket, lastEventId)
     /*
@@ -283,7 +313,19 @@ export async function startRemoteGateway(runtime: Runtime, options: RemoteGatewa
       }
     }
   }, options.sweepIntervalMs ?? 30_000)
-  if (typeof sweep.unref === "function") sweep.unref()
+  /*
+   * Deliberately NOT `unref`'d.
+   *
+   * Unref looks right - a housekeeping timer should not be the reason a process
+   * stays alive - and it broke the sweep in a way that took a diagnostic to
+   * find. With the timer unref'd, a round that has nothing else to wake the loop
+   * is skipped: the check below showed two rounds running and then nothing, with
+   * a silent phone attached and waiting to be reaped. In production that is a
+   * gateway whose phones have all gone quiet - exactly the state this is meant
+   * to clean up.
+   *
+   * `close()` clears it, so nothing outlives the gateway.
+   */
 
   await new Promise<void>((resolve, reject) => {
     http.once("error", reject)
