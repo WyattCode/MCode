@@ -4075,29 +4075,36 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 // plain prompt or the server ignores the message outright.
                 // send is only enabled with a conversation open, but the
                 // composer can be rebuilt after it closes; leave rather than
-                // throw if that has happened.
-                val sid = currentSession ?: return@InputCapsule
-                val req = JSONObject().put("type", "session.prompt").put("sessionID", sid).put("text", text)
-                if (atts.isNotEmpty()) req.put("attachments", org.json.JSONArray(atts.toList()))
-                if (sessions.find { it.id == sid }?.running == true) req.put("delivery", "steer")
-                /*
-                 * 追求目标: with the switch on, what was typed becomes the goal
-                 * the turn is judged against - the words as typed, which is
-                 * what `session.prompt`'s own `goal` field takes.
-                 */
-                if (goalMode && text.isNotBlank()) req.put("goal", text.trim())
-                request(req)
-                // The round button turns into stop the moment the prompt
-                // leaves, the way Claude's does, rather than waiting for the
-                // first reply part to come back.
-                setRunning(sid, true)
-                attachments.clear()
-                // The files went out with the prompt; nothing left to restore.
-                attachmentStash.remove(sid)
-                // A sent message is no longer a draft; without this the words
-                // came back in the box on the next visit.
-                drafts.remove(sid)
-                draftStore.edit().remove("draft.$sid").apply()
+                // throw if that has happened - and say so, because a tap that
+                // silently does nothing reads as a broken button.
+                val sid = currentSession
+                if (sid == null) {
+                    Toast.makeText(context, "先新建一个会话再发送", Toast.LENGTH_SHORT).show()
+                    false
+                } else {
+                    val req = JSONObject().put("type", "session.prompt").put("sessionID", sid).put("text", text)
+                    if (atts.isNotEmpty()) req.put("attachments", org.json.JSONArray(atts.toList()))
+                    if (sessions.find { it.id == sid }?.running == true) req.put("delivery", "steer")
+                    /*
+                     * 追求目标: with the switch on, what was typed becomes the goal
+                     * the turn is judged against - the words as typed, which is
+                     * what `session.prompt`'s own `goal` field takes.
+                     */
+                    if (goalMode && text.isNotBlank()) req.put("goal", text.trim())
+                    request(req)
+                    // The round button turns into stop the moment the prompt
+                    // leaves, the way Claude's does, rather than waiting for the
+                    // first reply part to come back.
+                    setRunning(sid, true)
+                    attachments.clear()
+                    // The files went out with the prompt; nothing left to restore.
+                    attachmentStash.remove(sid)
+                    // A sent message is no longer a draft; without this the words
+                    // came back in the box on the next visit.
+                    drafts.remove(sid)
+                    draftStore.edit().remove("draft.$sid").apply()
+                    true
+                }
             },
             onStop = {
                 currentSession?.let { sid ->
@@ -13952,7 +13959,7 @@ fun InputCapsule(
     /** What the last turn spent, and the model's window - the desktop's ring. */
     contextUsed: Int = 0,
     contextLimit: Int = 0,
-    onSend: (String, List<JSONObject>) -> Unit,
+    onSend: (String, List<JSONObject>) -> Boolean,
     onStop: () -> Unit,
     modifier: Modifier = Modifier,
     onMic: () -> Unit = {},
@@ -14801,8 +14808,14 @@ fun InputCapsule(
                             else if (text.isNotBlank() || attachments.isNotEmpty()) {
                                 sending = true
                                 try {
-                                    onSend(text, attachments)
-                                    text = ""
+                                    /*
+                                     * Clear the box only if the prompt actually
+                                     * went out. onSend declines when there is no
+                                     * conversation open, and the words used to
+                                     * vanish anyway - the tap looked like it had
+                                     * sent and the message was nowhere.
+                                     */
+                                    if (onSend(text, attachments)) text = ""
                                 } finally {
                                     sending = false
                                 }
