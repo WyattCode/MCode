@@ -120,6 +120,21 @@ for (const node of parseNodes(xmlPath)) {
   if (!node.text || node.text.trim().length < 2 || !node.box) continue
   const { l, t, r, b } = node.box
   if (r <= l || b <= t) continue
+  /*
+   * Skip boxes too short to hold a line.
+   *
+   * Compose's semantics tree sometimes reports the same text twice with the
+   * bounds interleaved - on the Artifacts header, "Artifacts" came back as
+   * y 131..146 and again as 146..206, and the burger and the search field did
+   * the same. Only the 60-tall pair is what is drawn; the 15-tall ones are
+   * artefacts of measurement, and sampling one lands on empty page between the
+   * glyphs, which reads as ink == ground and reports 1.00:1 on text that is
+   * perfectly visible.
+   *
+   * A real line of 11sp at this density is about 34px, so anything under 20
+   * cannot be type.
+   */
+  if (b - t < 20) continue
 
   // The ink is whichever extreme inside the box is furthest from the page behind
   // it - text darker than its ground in light, lighter in dark, and both cases
