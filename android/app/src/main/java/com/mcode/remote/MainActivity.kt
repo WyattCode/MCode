@@ -7504,9 +7504,33 @@ fun SettingsScreen(
             }
         }
         Box(Modifier.width(1.dp).fillMaxHeight().background(hairline))
-        Column(
+        Box(
             Modifier.weight(1f).fillMaxHeight()
-                .windowInsetsPadding(WindowInsets.statusBars)
+                .windowInsetsPadding(WindowInsets.statusBars),
+            contentAlignment = Alignment.TopCenter,
+        ) {
+        Column(
+            /*
+             * A reading width, like the transcript's.
+             *
+             * This filled the pane: on the pad the page's heading measured 2605
+             * px wide with its body text starting at x 623 and ending at 1811,
+             * so 1600 px of the right pane was empty while every row was also
+             * stretched across a metre of screen. A settings page is a column of
+             * short labels; letting it fill a 1363dp screen does not use the
+             * space, it makes each line unreadable.
+             *
+             * 640 is the desktop's settings measure.
+             *
+             * The order is the same one the transcript needed - `widthIn` first,
+             * then the fill - and for the same reason: a fill pins min = max to
+             * the parent's width and the cap after it can then do nothing. With
+             * them the other way round the column drew 1600px from the pane's
+             * left edge, 309px left of centre.
+             */
+            Modifier
+                .widthIn(max = 640.dp)
+                .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 28.dp, vertical = 16.dp),
         ) {
@@ -7672,6 +7696,7 @@ fun SettingsScreen(
                 }
             }
             Spacer(Modifier.height(40.dp))
+        }
         }
     }
 }
