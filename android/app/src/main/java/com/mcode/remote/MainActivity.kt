@@ -5381,6 +5381,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 unseen = unseen.toList(),
                                 awaiting = pendingPerms.filterValues { it.isNotEmpty() }.keys.toList(),
                                 live = connected,
+                                runningOnly = runningOnly,
                             )
                         }
                         /*
@@ -11085,6 +11086,16 @@ fun SessionList(
     awaiting: List<String> = emptyList(),
     /** False while the link is down, so an empty list is not read as an empty machine. */
     live: Boolean = true,
+    /**
+     * True while the header's filter is narrow to running turns.
+     *
+     * The caller has already dropped the idle rows by the time this list sees
+     * them, so an empty `sessions` here cannot tell "this machine has no
+     * conversations" from "all of them are idle". Without this the filter showed
+     * 「还没有对话」 over a machine holding two - the same wrong sentence the
+     * comment below was written to avoid for a dropped link.
+     */
+    runningOnly: Boolean = false,
 ) {
     val filtered = sessions.filter { it.title.contains(query, true) || it.id.contains(query, true) }
     if (filtered.isEmpty()) {
@@ -11105,9 +11116,19 @@ fun SessionList(
          * eighteen. 「连接已断开」 is the banner's job to shout about; here the
          * line only has to not contradict it.
          */
+        /*
+         * Four emptinesses, not three.
+         *
+         * The filter joined the search box: 「只看运行中」 empties this list on a
+         * machine that has conversations, and the line said 「还没有对话」 over
+         * two of them. 「没有运行中的对话」 says which narrow is in force, and
+         * names it in the same words the toggle does so the reader can connect
+         * the two without going back to the header.
+         */
         Text(
             when {
                 !live -> "连接断开，暂时读不到会话"
+                runningOnly -> "没有运行中的对话"
                 query.isBlank() -> "还没有对话"
                 else -> "没有匹配的会话"
             },
