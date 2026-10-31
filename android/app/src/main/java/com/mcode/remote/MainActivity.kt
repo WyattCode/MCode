@@ -1510,6 +1510,24 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * 设备 panel.
      */
     val isListPage = leftMode == LeftMode.Recent || leftMode == LeftMode.Sessions
+    /*
+     * The pages that are the whole screen on a pad.
+     *
+     * 项目, 定时任务, Artifacts and 插件 are reached from the drawer, and on the
+     * pad they were pinned to the 26.4% column with the pane beside them left
+     * empty: measured on the device, 0 elements in the 2508px to their right.
+     * The note in the body says the split exists so the conversation stays
+     * visible beside the page - which holds when there *is* a conversation, but
+     * these four are browsing surfaces, not something you read while talking.
+     *
+     * They take the full width now and draw their own header, so the empty pane
+     * is gone. Recent and Code keep the split, because there the right pane is
+     * the conversation and it is the point of the layout.
+     */
+    val isFullScreenPage = leftMode == LeftMode.Projects ||
+        leftMode == LeftMode.Scheduled ||
+        leftMode == LeftMode.Artifacts ||
+        leftMode == LeftMode.Plugins
     var projectAdding by remember { mutableStateOf(false) }
     /** Bumped to re-read the project list after one is added. */
     var refreshCommandsTick by remember { mutableStateOf(0) }
@@ -4362,7 +4380,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                  * and no rule runs between them; only the composer's white card
                  * marks where the conversation begins.
                  */
-                Column(Modifier.weight(leftFraction).fillMaxHeight()) {
+                Column(Modifier.weight(if (isFullScreenPage) 1f else leftFraction).fillMaxHeight()) {
                     Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
                     // The wide layout's own header, so both notices have to be
                     // hung here as well as under `AppTopBar`.
@@ -5424,7 +5442,17 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                      * was also the thing that blocked taps on the list whenever
                      * a drag was in flight.
                      */
-                    Column(Modifier.weight(1f - leftFraction).fillMaxHeight()) {
+                    /*
+                     * The right pane does not exist on the full-screen pages.
+                     *
+                     * It used to be drawn and left empty: a 2508px black field
+                     * beside a 900px list, with nothing in it at all. The two
+                     * panes are siblings in a Row, so the only way to give the
+                     * left one the width it needs is to not draw this one -
+                     * a `weight(1f - leftFraction)` column cannot collapse to
+                     * zero and would still claim its share.
+                     */
+                    if (!isFullScreenPage) Column(Modifier.weight(1f - leftFraction).fillMaxHeight()) {
                         Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
                         /*
                          * The pane is blank on the pages that own the left column.
