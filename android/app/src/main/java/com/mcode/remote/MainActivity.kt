@@ -89,6 +89,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
@@ -401,12 +402,18 @@ private val DotGrey = Color(0xFF9A9A9A)
  * 812 is the desktop's reading column at this density, which is why the number
  * is this one and not the pane's width.
  */
-private val COMPOSER_MAX_WIDTH = 812.dp
+/* 766.0 - the reference's card runs x 1226..3141, which is 766dp at 2.5 px per
+ * dp. This carried 812 from an earlier reading of the same screen. */
+private val COMPOSER_MAX_WIDTH = 766.dp
 
-private val DarkBg = Color(0xFF141414)
-private val DarkSurface = Color(0xFF181818)
+/* Claude Code's own page colour, measured off its dark screen: (21,21,21)
+ * across both panes, with no second tone and no seam between them. */
+private val DarkBg = Color(0xFF151515)
+/** (32,32,31) - the reference gives a bubble the composer's own plate. */
+private val DarkSurface = Color(0xFF202020)
 private val DarkPill = Color(0xFF1F1F1F)
-private val DarkField = Color(0xFF181818)
+/** (32,32,31), the composer card, sampled off the reference. */
+private val DarkField = Color(0xFF20201F)
 private val DarkFieldLine = Color(0x1FFFFFFF)
 private val DarkLine = Color(0xFF2E2E2E)
 private val DarkText = Color(0xFFFFFFFF)
@@ -4408,7 +4415,27 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                  * and no rule runs between them; only the composer's white card
                  * marks where the conversation begins.
                  */
-                Column(Modifier.weight(if (isFullScreenPage) 1f else leftFraction).fillMaxHeight()) {
+                    /*
+                     * The list column, wrapped in a Box so the drag handle can be
+                     * pinned to its right edge.
+                     *
+                     * The handle cannot be a Row child of its own: the two columns
+                     * are `weight`ed, so a third child would take width from the
+                     * right pane rather than sit on the boundary - measured, it
+                     * landed at x 461 of a 900-wide column, a mark floating in the
+                     * middle of the list.
+                     */
+                    /*
+                     * Hidden entirely at fraction 0.
+                     *
+                     * `weight(0f)` is not zero-width in Compose - a Column still
+                     * measures at least a pixel, and the drag handle pinned to this
+                     * box's right edge would leave a 20dp strip on the left of a
+                     * full-width conversation. Not drawing the column removes the
+                     * strip along with it.
+                     */
+                    if (isFullScreenPage || leftFraction > 0f) Box(Modifier.weight(if (isFullScreenPage) 1f else leftFraction).fillMaxHeight()) {
+                    Column(Modifier.fillMaxSize()) {
                     Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
                     // The wide layout's own header, so both notices have to be
                     // hung here as well as under `AppTopBar`.
@@ -5435,42 +5462,81 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                          * drawer already carries its own 新建会话, so nothing is
                          * lost by dropping this one while it is up.
                          */
-                        if (isListPage && !drawerOpen) FootCapsule(
-                            /*
-                             * The desktop's capsule reads 新建任务 and makes a
-                             * conversation wherever the list is showing; it is
-                             * one row with one job, not a menu whose words change.
-                             */
-                            label = "+ 新建会话",
-                            /*
-                             * Against the column's right edge, 16.4 off it.
-                             *
-                             * Re-measured on the reference's own column, which is
-                             * 900 px wide, not 925: its capsule runs
-                             * x 552.0..859.0, i.e. 16.4 dp from the seam. The
-                             * 26.4 here came from measuring against 925 - a
-                             * width this column never has - and put the button
-                             * 10 dp inboard of where the reference sits.
-                             */
-                            modifier = Modifier.align(Alignment.End).padding(end = 16.4.dp),
-                            onClick = { newSession() },
-                        )
+                        /*
+                         * No foot capsule, because Claude Code has none.
+                         *
+                         * Its list runs to the bottom of the window with nothing on
+                         * its floor - sampled at y=1400 and y=2050 across the full
+                         * width. This drew a white 「+ 新建会话」 pill against that
+                         * floor, which then had to be aligned, re-aligned and
+                         * measured across three rounds for a control the reference
+                         * does not have at all.
+                         *
+                         * New conversations come from the drawer, where this app
+                         * already keeps its own 新建会话 row.
+                         */
                     }
                     /*
-                     * No divider handle between the panes.
+                     * The drag handle, pinned to the column's right edge.
                      *
-                     * The handle came from Claude's Code screen, which has one
-                     * because that screen lets you trade width between a device
-                     * list and a session. Its chat screen does not: the two
-                     * panes share the page colour, the split is fixed, and
-                     * nothing is drawn in the seam at all.
+                     * Off Claude's own dark screen: 3.6dp wide, 47.6 tall, at
+                     * (52,51,50), centred on y 1157 - a short grip, not a rule
+                     * running the height of the window. It is inside this Box so
+                     * `align` can put it on the boundary; as a Row child it took
+                     * width from the right pane and drew mid-list.
                      *
-                     * On the phone the handle was the loudest mark in the
-                     * chrome - a 32dp grab target with grip lines, sitting
-                     * between two columns that otherwise have no edge - and it
-                     * was also the thing that blocked taps on the list whenever
-                     * a drag was in flight.
+                     * The target is 20dp wide against a 3.6dp mark, because the
+                     * mark is not something a thumb can aim at.
                      */
+                    if (!isFullScreenPage) Box(
+                        Modifier
+                            .align(Alignment.CenterEnd)
+                            .width(20.dp)
+                            .fillMaxHeight()
+                            .pointerInput(Unit) {
+                                detectDragGestures(
+                                    onDrag = { change, drag ->
+                                        change.consume()
+                                        val pane = paneWidthPx.toFloat()
+                                        if (pane > 0f) {
+                                            val next = leftFraction + drag.x / pane
+                                            /*
+                                             * Down to zero, not to 140dp.
+                                             *
+                                             * The list collapses all the way - dragged
+                                             * to the left edge it disappears and the
+                                             * conversation takes the whole width. A
+                                             * 0.14 floor left a 126dp sliver of list
+                                             * that nothing could reclaim.
+                                             *
+                                             * Snapped rather than continuous: within
+                                             * 4% of either end it commits to that
+                                             * end, so a drag that stops a few pixels
+                                             * short still lands closed instead of
+                                             * leaving a 12dp stripe.
+                                             */
+                                            val raw = next.coerceIn(0f, 0.62f)
+                                            leftFraction = when {
+                                                raw < 0.04f -> 0f
+                                                else -> raw
+                                            }
+                                        }
+                                    },
+                                )
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            Modifier
+                                .width(3.6.dp)
+                                .height(47.6.dp)
+                                .background(
+                                    if (LocalBg.current == DarkBg) Color(0xFF343332) else Color(0xFFD8D8D6),
+                                    RoundedCornerShape(2.dp),
+                                ),
+                        )
+                    }
+                    }
                     /*
                      * The right pane does not exist on the full-screen pages.
                      *
@@ -5481,6 +5547,36 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                      * a `weight(1f - leftFraction)` column cannot collapse to
                      * zero and would still claim its share.
                      */
+                    /*
+                     * The drag handle lives inside the left column, pinned to
+                     * its right edge - see the `Box` wrapping it below.
+                     */
+                    /*
+                     * With the list collapsed, the only way back is the left edge.
+                     *
+                     * The handle lives on the list's right edge, so at fraction 0
+                     * it went away with the list - the conversation filled the
+                     * window and there was nothing to grab. This is a 16dp strip
+                     * down the window's left edge while collapsed; dragging it
+                     * right brings the list back in proportion to the distance.
+                     */
+                    if (!isFullScreenPage && leftFraction <= 0f) Box(
+                        Modifier
+                            .width(16.dp)
+                            .fillMaxHeight()
+                            .pointerInput(Unit) {
+                                detectDragGestures(
+                                    onDrag = { change, drag ->
+                                        change.consume()
+                                        val pane = paneWidthPx.toFloat()
+                                        if (pane > 0f) {
+                                            leftFraction = (leftFraction + drag.x / pane)
+                                                .coerceIn(0f, 0.62f)
+                                        }
+                                    },
+                                )
+                            },
+                    )
                     if (!isFullScreenPage) Column(Modifier.weight(1f - leftFraction).fillMaxHeight()) {
                         Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
                         /*
@@ -5884,7 +5980,18 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                             modifier = Modifier.align(Alignment.TopEnd).padding(top = 9.dp, end = 20.dp),
                                         )
                                     }
-                                    inputBar()
+                                    /*
+                                     * 16dp more of air under the composer.
+                                     *
+                                     * The reference's card ends 82px off the
+                                     * window's bottom edge; this one measured 42.
+                                     * The missing 40 (16dp at 2.5 px per dp) is
+                                     * taken here rather than inside
+                                     * `InputCapsule`, where adding to the padding
+                                     * only grew that block and left the card where
+                                     * it was.
+                                     */
+                                    Box(Modifier.padding(bottom = 16.dp)) { inputBar() }
                                 }
                             }
                         }
@@ -14691,7 +14798,16 @@ fun InputCapsule(
     Box(
         modifier
             .fillMaxWidth()
-            .padding(start = 0.dp, end = 0.dp, top = 8.dp, bottom = 16.4.dp),
+            /*
+             * 15.2 under the card, as it was.
+             *
+             * 31.2 measured 122px of gap where the reference has 82 - this
+             * padding sits inside the block that the card is measured from, so
+             * adding to it grew the composer's own box instead of lifting the
+             * card. The remaining 40px is taken off at the call site, where the
+             * block is actually placed.
+             */
+            .padding(start = 0.dp, end = 0.dp, top = 8.dp, bottom = 15.2.dp),
         contentAlignment = Alignment.Center,
     ) {
         /*
@@ -14837,10 +14953,19 @@ fun InputCapsule(
              * text field's.
              */
             shape = RoundedCornerShape(16.dp),
-            color = if (LocalBg.current == DarkBg) Color(0xFF181818) else Color(0xFFFFFFFF),
+            /*
+             * `DarkField`, not a literal.
+             *
+             * This was hard-coded (24,24,24), so edits to `DarkField` never
+             * reached the card that carries it - the palette said 32,32,31 and the
+             * screen kept drawing 24. The reference measures (32,32,31) for the
+             * card's fill and (61,60,58) for its 1dp edge, which is what the
+             * border takes now.
+             */
+            color = if (LocalBg.current == DarkBg) DarkField else Color(0xFFFFFFFF),
             border = androidx.compose.foundation.BorderStroke(
                 1.dp,
-                if (LocalBg.current == DarkBg) Color(0xFF2A2A2A) else Color(0xFFE3E3E0),
+                if (LocalBg.current == DarkBg) Color(0xFF3D3C3A) else Color(0xFFE3E3E0),
             ),
             shadowElevation = 0.dp,
             /*
@@ -15393,6 +15518,8 @@ fun InputCapsule(
                                     sending = false
                                 }
                             }
+                            /* Nothing typed: the disc is the microphone. */
+                            else onMic()
                         },
                         contentAlignment = Alignment.Center,
                     ) {
@@ -15432,43 +15559,43 @@ fun InputCapsule(
                             // MiMo's live capsule: the button becomes the stop
                             // square while a recording is in flight.
                             Box(Modifier.size(16.dp).background(sendFg, RoundedCornerShape(3.dp)))
+                        } else if (hasWords) {
+                            /*
+                             * An arrow, because with words in the box this button
+                             * sends them.
+                             *
+                             * It drew the five-bar waveform in both states, on a
+                             * reading that the reference keeps its voice mark
+                             * whether or not there is text. Whatever the reference
+                             * does, the result here was that typing 「hi」 left a
+                             * waveform on the one disc that would send it, next to
+                             * a microphone circle that was also 35.2 and also a
+                             * glyph - two audio-looking targets and no visible
+                             * action. An arrow on a filled disc is the one shape
+                             * that means send, and it cannot be confused with the
+                             * mic beside it.
+                             */
+                            Icon(
+                                Icons.Filled.ArrowUpward,
+                                contentDescription = "发送",
+                                tint = sendFg,
+                                modifier = Modifier.size(18.dp),
+                            )
                         } else {
                             /*
-                             * The same five bars in both states.
+                             * Empty box: a microphone, and it acts like one.
                              *
-                             * This used to be an arrow once there were words to
-                             * send, and a waveform only while the box was empty.
-                             * Claude's disc carries the waveform whatever is in
-                             * the box - measured on its own composer with text
-                             * typed, and on its chat screen with the box empty:
-                             * eight white runs, two of which are the disc's own
-                             * rim, leaving five bars.
-                             *
-                             * Their heights, in dp, at a 3.2 pitch: 4.0, 8.0,
-                             * 13.6, 12.0, 4.0. Not symmetric, and not the four
-                             * I had drawn; the middle bar is the tallest and the
-                             * fourth is a shade shorter, which is what makes it
-                             * read as a voice rather than as an equaliser.
+                             * With nothing typed the disc kept the waveform and did
+                             * nothing - the tap fell through every branch above.
+                             * This calls the same `onMic` the circle beside it does,
+                             * so the glyph and the behaviour agree.
                              */
-                            Canvas(Modifier.size(17.6.dp)) {
-                                val barW = 0.8.dp.toPx()
-                                val h = size.height
-                                // Each bar's own fraction of the 13.6dp tallest,
-                                // centred on the disc's middle.
-                                val bars = floatArrayOf(4.0f / 17.6f, 8.0f / 17.6f, 13.6f / 17.6f, 12.0f / 17.6f, 4.0f / 17.6f)
-                                val pitch = size.width / 5f
-                                bars.forEachIndexed { i, frac ->
-                                    val barH = h * frac
-                                    val cx = pitch * (i + 0.5f)
-                                    drawLine(
-                                        sendFg,
-                                        androidx.compose.ui.geometry.Offset(cx, (h - barH) / 2),
-                                        androidx.compose.ui.geometry.Offset(cx, (h + barH) / 2),
-                                        strokeWidth = barW,
-                                        cap = androidx.compose.ui.graphics.StrokeCap.Round,
-                                    )
-                                }
-                            }
+                            Icon(
+                                Icons.Outlined.Mic,
+                                contentDescription = "语音输入",
+                                tint = sendFg,
+                                modifier = Modifier.size(18.dp),
+                            )
                         }
                         }
                     }
