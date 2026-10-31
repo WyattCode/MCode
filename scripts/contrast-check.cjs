@@ -136,44 +136,83 @@ for (const node of parseNodes(xmlPath)) {
    */
   if (b - t < 20) continue
 
-  // The ink is whichever extreme inside the box is furthest from the page behind
-  // it - text darker than its ground in light, lighter in dark, and both cases
-  // fall out of the same comparison.
-  let brightest = -1
-  let darkest = 2
-  let brightRgb = null
-  let darkRgb = null
+  /*
+   * The ink is the extreme that is *rare* in the box, not simply the extreme.
+   *
+   * Taking the brightest-or-darkest pixel treats any large field inside the box
+   * as ink. 「已编辑」 sits in a rounded card whose ground fills most of its
+   * bounds; the brightest pixel there is the card, not the glyph, and the row
+   * measured 2.07:1 against a white that was never drawn. Text is a minority of
+   * its own box - roughly a fifth for CJK, less for latin - so the histogram is
+   * what tells the two apart.
+   *
+   * Bucket the luminances, then read the ink from the far end of the distribution
+   * where a bucket holds only a thin slice of the pixels.
+   */
+  const buckets = new Array(64).fill(0)
+  let total = 0
   for (let y = Math.max(0, t); y < Math.min(height, b); y += 2) {
     for (let x = Math.max(0, l); x < Math.min(width, r); x += 2) {
       const rgb = px(x, y)
       const L = luminance(rgb[0], rgb[1], rgb[2])
-      if (L > brightest) { brightest = L; brightRgb = rgb }
-      if (L < darkest) { darkest = L; darkRgb = rgb }
+      buckets[Math.min(63, Math.floor(L * 64))] += 1
+      total += 1
     }
   }
 
-  // The ground: just outside the box, on the text's own baseline.
-  const bgX = Math.min(width - 1, r + 8)
-  const bgY = Math.min(height - 1, Math.round((t + b) / 2))
-  const bg = px(bgX, bgY)
-  const bgL = luminance(bg[0], bg[1], bg[2])
+  /*
+   * The ground is the box's own most common luminance, not a sample outside it.
+   *
+   * Sampling 8px to the right lands on whatever is beside the text - a card's
+   * border, a neighbouring capsule, the page - and 「已编辑」 sits in a card whose
+   * inside is white while the pixel just outside its bounds is the grey edge. That
+   * made white look like the ink and reported 2.04:1 on dark glyphs.
+   *
+   * The mode of the box is its ground by definition: text is a minority of the
+   * rectangle it lives in.
+   */
+  let bgBucket = 0
+  for (let i = 0; i < 64; i++) if (buckets[i] > buckets[bgBucket]) bgBucket = i
+  const bgL = (bgBucket + 0.5) / 64
+  const bg = px(Math.min(width - 1, Math.max(0, l + 2)), Math.min(height - 1, Math.max(0, t + 2)))
 
-  const useBright = Math.abs(brightest - bgL) > Math.abs(darkest - bgL)
-  const ink = useBright ? brightRgb : darkRgb
-  const ratio = ratioOf(ink, bg)
+  /*
+   * Walk in from each end until the pixels stop being the ground. What is left
+   * at the tail is the glyph; a box that is all ground returns the ground and
+   * the ratio comes out 1:1, which is honest for a box with no ink in it.
+   */
+  let inkL = bgL
+  for (let i = 63; i >= 0; i--) {
+    if (buckets[i] === 0) continue
+    if (Math.abs(i - bgBucket) <= 1) continue
+    if (buckets[i] / total > 0.25) continue
+    inkL = (i + 0.5) / 64
+    break
+  }
+  let darkL = bgL
+  for (let i = 0; i < 64; i++) {
+    if (buckets[i] === 0) continue
+    if (Math.abs(i - bgBucket) <= 1) continue
+    if (buckets[i] / total > 0.25) continue
+    darkL = (i + 0.5) / 64
+    break
+  }
+  const useBright = Math.abs(inkL - bgL) > Math.abs(darkL - bgL)
+  const chosenL = useBright ? inkL : darkL
 
-  rows.push({ text: node.text, y: t, ink, bg, ratio })
+  const ratio = (Math.max(chosenL, bgL) + 0.05) / (Math.min(chosenL, bgL) + 0.05)
+
+  rows.push({ text: node.text, y: t, ink: [chosenL, bgL], bg, ratio })
 }
 
 rows.sort((a, b) => a.ratio - b.ratio)
 
-console.log('元素'.padEnd(28) + '前景'.padStart(14) + '背景'.padStart(14) + '对比度'.padStart(9))
+console.log('元素'.padEnd(28) + '墨/底亮度'.padStart(16) + '对比度'.padStart(9))
 for (const row of rows) {
   const mark = row.ratio < 3 ? '  << 低于 3' : row.ratio < 4.5 ? '  < 低于 4.5' : ''
   console.log(
     (row.text.slice(0, 12) + ' @y' + row.y).padEnd(28) +
-      ('(' + row.ink.join(',') + ')').padStart(14) +
-      ('(' + row.bg.join(',') + ')').padStart(14) +
+      (row.ink[0].toFixed(3) + ' / ' + row.ink[1].toFixed(3)).padStart(16) +
       row.ratio.toFixed(2).padStart(9) +
       mark,
   )
