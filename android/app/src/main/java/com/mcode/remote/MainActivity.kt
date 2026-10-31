@@ -5470,7 +5470,24 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             leftMode != LeftMode.Artifacts &&
                             leftMode != LeftMode.Plugins
                         ) {
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        /*
+                         * 63.2, the same bar the list header beside it uses.
+                         *
+                         * This had no height, so its 44dp targets plus the 4dp
+                         * vertical padding settled it at 52 - and since the two
+                         * panes are siblings in a Row, that put the two headers
+                         * on different lines: measured, the back arrow and the
+                         * overflow centred on y 147 while 「最近记录」 and its two
+                         * glyphs beside them centred on 161. Fourteen px, 5.6dp,
+                         * enough to read as a step as your eye crosses the seam.
+                         *
+                         * The list header's 63.2 is the measured number - it hangs
+                         * its marks from 57.6 so their centres land on 64.4, which
+                         * is where the reference puts them. The right pane is the
+                         * one that was wrong, so it is the one that moves; the
+                         * unexplained 52 was just what fell out of the padding.
+                         */
+                        Row(Modifier.fillMaxWidth().height(63.2.dp).padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                             /*
                              * Claude's conversation header: a back arrow at the
                              * pane's left edge, the title centred with what the
