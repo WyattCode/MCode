@@ -4649,7 +4649,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                          */
                         if (leftMode == LeftMode.Recent) {
                             Box(
-                                Modifier.size(40.dp).clickable(
+                                Modifier.size(48.dp).clickable(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = null,
                                 ) { runningOnly = !runningOnly },
@@ -4702,7 +4702,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 )
                             }
                             Box(
-                                Modifier.size(40.dp).clickable(
+                                Modifier.size(48.dp).clickable(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = null,
                                 ) { },
@@ -4729,7 +4729,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             }
                         } else {
                             Box(
-                                Modifier.size(40.dp).clickable(
+                                Modifier.size(48.dp).clickable(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = null,
                                 ) { leftMode = LeftMode.Scheduled },
@@ -11656,20 +11656,41 @@ fun SessionList(
                                 Modifier.padding(top = 3.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
+                                /*
+                                 * The status green, per theme, like the two
+                                 * add-ink sites further down already were.
+                                 *
+                                 * `0xFF296118` is measured off the reference
+                                 * and is right on its page - 7.40:1 on cream.
+                                 * On the dark page it is 2.47:1, so 「已连接」
+                                 * and the laptop mark beside it were the
+                                 * faintest thing on a card whose whole purpose
+                                 * is to say whether the link is up - and the
+                                 * disconnected state, which uses `LocalMuted`,
+                                 * was easier to read than the connected one.
+                                 *
+                                 * #6FB055 is the value `addInk` already uses in
+                                 * dark at two other sites; reusing it keeps one
+                                 * green rather than introducing a third. 7.03:1.
+                                 */
                                 MiIcon(
                                     "M5.6 7.4h12.8a1.2 1.2 0 0 1 1.2 1.2v7.4H4.4V8.6a1.2 1.2 0 0 1 1.2-1.2zM3.2 16h17.6v2a1 1 0 0 1-1 1H4.2a1 1 0 0 1-1-1z",
                                     contentDescription = null,
                                     modifier = Modifier.size(11.2.dp),
                                     viewBox = 24f,
                                     strokeWidth = 1.7f,
-                                    tint = if (live) Color(0xFF296118) else LocalMuted.current,
+                                    tint = if (live) {
+                                        if (LocalBg.current == DarkBg) Color(0xFF6FB055) else Color(0xFF296118)
+                                    } else LocalMuted.current,
                                 )
                                 Spacer(Modifier.width(5.dp))
                                 Text(
                                     if (live) "已连接" else "已断开",
                                     fontSize = 12.sp,
                                     lineHeight = 15.sp,
-                                    color = if (live) Color(0xFF296118) else LocalMuted.current,
+                                    color = if (live) {
+                                        if (LocalBg.current == DarkBg) Color(0xFF6FB055) else Color(0xFF296118)
+                                    } else LocalMuted.current,
                                 )
                                 Text(
                                     /*

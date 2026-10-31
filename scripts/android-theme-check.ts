@@ -127,6 +127,41 @@ if (page === undefined || darkPage === undefined) {
   }
 }
 
+// 3. Inline colours in a live branch that have no dark twin.
+/*
+ * The one that got away. 「已连接」 was drawn `if (live) Color(0xFF296118)` inline -
+ * no constant to inspect, so nothing above saw it. That green is 7.40:1 on cream
+ * and 2.47:1 on the dark page, which made the connected state fainter than the
+ * disconnected one on the same row.
+ *
+ * Scanning every literal would flood the output with diff washes and brand marks
+ * that are deliberately one value in both themes. What is worth flagging is a
+ * literal that appears once, in a `live`/`enabled`/`running`-ish branch, with no
+ * `dark` test near it. Those are the state colours, and they are the ones that
+ * carry meaning a reader has to see.
+ */
+for (const file of files) {
+  const source = fs.readFileSync(file, "utf8")
+  const lines = source.split("\n")
+  lines.forEach((line, i) => {
+    if (!/\bif \((?:live|enabled|on|ok|running|connected)\b/.test(line)) return
+    const inline = /Color\((0x[0-9A-Fa-f]{8})\)/.exec(line)
+    if (!inline) return
+    // A theme test on the same line, or a named pair, is fine.
+    if (/DarkBg|dark\b|if \(dark\)/.test(line)) return
+    const value = Number(inline[1])
+    const onCream = ratio(value, byName.get("Cream")!.value)
+    const onDark = ratio(value, byName.get("DarkBg")!.value)
+    // Only a problem when it reads on one page and not the other.
+    if (Math.min(onCream, onDark) < 4.5 && Math.max(onCream, onDark) >= 4.5) {
+      problems.push(
+        `${path.basename(file)}:${i + 1}  inline ${inline[1]} in a state branch has no theme twin: ` +
+          `${onCream.toFixed(2)}:1 on Cream, ${onDark.toFixed(2)}:1 on DarkBg`,
+      )
+    }
+  })
+}
+
 if (problems.length) {
   console.error(`${problems.length} problem(s) in the Android palette:\n`)
   for (const p of problems) console.error(`  ${p}`)
