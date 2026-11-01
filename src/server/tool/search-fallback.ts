@@ -68,10 +68,32 @@ export function lineText(text: string): string {
   return plain.length > MAX_LINE_LENGTH + 1 ? plain.slice(0, MAX_LINE_LENGTH + 1) : plain
 }
 
+export async function mtimeOf(file: string): Promise<number | undefined> {
+  const stat = await fs.stat(file).catch(() => undefined)
+  return stat && !stat.isDirectory() ? stat.mtimeMs : undefined
+}
+
+/**
+ * The matches as the tool shows them: files that are gone dropped, the most
+ * recently changed file first (rows keep their order within a file), the total
+ * counted, and only the first LIMIT kept. Done where the rows were found, so a
+ * broad pattern does not carry every match across the thread boundary just for
+ * the tool to cut it to a hundred.
+ */
+export async function rankMatches(rows: Row[]): Promise<{ rows: Row[]; total: number }> {
+  const times = new Map<string, number>()
+  for (const file of new Set(rows.map((row) => row.path))) {
+    const mtime = await mtimeOf(file)
+    if (mtime !== undefined) times.set(file, mtime)
+  }
+  const matches = rows.filter((row) => times.has(row.path)).sort((a, b) => times.get(b.path)! - times.get(a.path)!)
+  return { rows: matches.slice(0, LIMIT), total: matches.length }
+}
+
 /** Files the stand-in reads whole; a larger one is read in slices so a huge log never sits in memory at once. */
 const WHOLE_FILE_BYTES = 8 * 1024 * 1024
 
-async function grepWithWalk(target: string, isFile: boolean, pattern: string, include: string | undefined, signal: AbortSignal) {
+async function grepWithWalk(target: string, isFile: boolean, pattern: string, include: string | undefined, signal: AbortSignal, deadline?: number): Promise<GrepOutcome> {
   let regex: RegExp
   try {
     regex = fallbackRegex(pattern)
@@ -130,24 +152,43 @@ async function grepWithWalk(target: string, isFile: boolean, pattern: string, in
       await handle.close()
     }
   }
+  let timedOut = false
   if (isFile) await search(target, true)
-  else await walkFiles(target, (file) => search(file, false), signal, include ? overrideMatcher(include) : undefined)
-  return { rows, partial }
+  else
+    await walkFiles(
+      target,
+      async (file) => {
+        // Out of time before this file: stop with what there is, and say so.
+        if (deadline !== undefined && Date.now() >= deadline) {
+          timedOut = true
+          return true
+        }
+        await search(file, false)
+      },
+      signal,
+      include ? overrideMatcher(include) : undefined,
+    )
+  return { ...(await rankMatches(rows)), partial, ...(timedOut ? { timedOut } : {}) }
 }
 
 /** The files a glob matches through the JS walk, in the order they were found, at most `limit`. */
-async function globWithWalk(root: string, pattern: string, limit: number, signal: AbortSignal): Promise<string[]> {
+async function globWithWalk(root: string, pattern: string, limit: number, signal: AbortSignal, deadline?: number): Promise<GlobOutcome> {
   const found: string[] = []
+  let timedOut = false
   await walkFiles(
     root,
     (absolute) => {
+      if (deadline !== undefined && Date.now() >= deadline) {
+        timedOut = true
+        return true
+      }
       found.push(absolute)
       return found.length >= limit
     },
     signal,
     overrideMatcher(pattern),
   )
-  return found
+  return { paths: found, ...(timedOut ? { timedOut } : {}) }
 }
 
 export interface GrepJob {
@@ -156,6 +197,8 @@ export interface GrepJob {
   isFile: boolean
   pattern: string
   include?: string
+  /** When to stop walking and answer with what was found (epoch ms); the hard kill is the main thread's. */
+  deadline?: number
 }
 
 export interface GlobJob {
@@ -163,22 +206,29 @@ export interface GlobJob {
   root: string
   pattern: string
   limit: number
+  deadline?: number
 }
 
 export type FallbackJob = GrepJob | GlobJob
 
 export interface GrepOutcome {
+  /** The first LIMIT matches, newest file first. */
   rows: Row[]
+  /** How many matched in all. */
+  total: number
   partial: boolean
+  /** The search ran out of time before covering every file. */
+  timedOut?: boolean
 }
 
 export interface GlobOutcome {
   paths: string[]
+  timedOut?: boolean
 }
 
 export function runFallbackJob(job: GrepJob, signal: AbortSignal): Promise<GrepOutcome>
 export function runFallbackJob(job: GlobJob, signal: AbortSignal): Promise<GlobOutcome>
 export function runFallbackJob(job: FallbackJob, signal: AbortSignal): Promise<GrepOutcome | GlobOutcome>
 export async function runFallbackJob(job: FallbackJob, signal: AbortSignal): Promise<GrepOutcome | GlobOutcome> {
-  return job.kind === "grep" ? grepWithWalk(job.target, job.isFile, job.pattern, job.include, signal) : { paths: await globWithWalk(job.root, job.pattern, job.limit, signal) }
+  return job.kind === "grep" ? grepWithWalk(job.target, job.isFile, job.pattern, job.include, signal, job.deadline) : globWithWalk(job.root, job.pattern, job.limit, signal, job.deadline)
 }

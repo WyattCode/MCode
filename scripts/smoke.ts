@@ -25,8 +25,9 @@ import { commandRisk } from "../src/server/command-risk"
 import { isSummary } from "../src/server/session/summary"
 import { modelVariants } from "../src/server/provider/variants"
 import { reasoningRequest } from "../src/server/provider/anthropic"
-import { runFallback } from "../src/server/tool/search-run"
-import { runFallbackJob } from "../src/server/tool/search-fallback"
+import { idleWorkers, runFallback } from "../src/server/tool/search-run"
+import { rankMatches, runFallbackJob } from "../src/server/tool/search-fallback"
+import { alreadyAsked, buildStamp, sendQuery } from "../src/main/local-network-core"
 import { ToolError } from "../src/server/tool/types"
 import { normalizeChord, retireKeybinds, RETIRED_DEFAULTS } from "../src/shared/chord"
 
@@ -213,10 +214,36 @@ section("A second look at #18: none that thinks, a marker that outlived its answ
   check("xhigh takes the largest, the nearest level the budget model has", budget("xhigh") === budget("max"))
   check("a built-in model's high and max are unchanged", budget("high") === 16_000 && budget("max") === 31_999)
 
-  const network = await read("src/main/local-network.ts")
-  check("the Local Network marker names the build, so a rebuilt app is asked again", /function build\(\)/.test(network) && network.includes("app.getVersion()") && network.includes("mtimeMs") && /readFileSync\(marker, "utf8"\)\.trim\(\) === current/.test(network))
-  check("and is written only once the packet went out", /send\(serviceQuery\(\)[^\n]*\(error\) => \{\s*done\(\)\s*if \(error\) return\s*try \{[\s\S]*?writeFileSync\(marker, current/.test(network))
-  check("a send that throws is closed, not left open", /\} catch \{\s*done\(\)\s*\}\s*\}\s*$/.test(network.trim()))
+  const stamp = buildStamp("1.0.1", 1761993123456.5)
+  check("the Local Network marker is for one build: the same asks no more", alreadyAsked(stamp + "\n", stamp) === true)
+  check("a rebuilt app (new mtime) or a new version is asked again", alreadyAsked(stamp, buildStamp("1.0.1", 1761993999999.5)) === false && alreadyAsked(stamp, buildStamp("1.0.2", 1761993123456.5)) === false)
+  check("no marker, or an old timestamp-only one, is asked again", alreadyAsked(undefined, stamp) === false && alreadyAsked("2026-09-24T15:35:03.000Z", stamp) === false)
+  const fakeSocket = (outcome: "ok" | "error" | "throws") => {
+    const log: string[] = []
+    const listeners: Record<string, () => void> = {}
+    return {
+      log,
+      listeners,
+      socket: {
+        once: (event: string, listener: () => void) => void (listeners[event] = listener),
+        close: () => void log.push("close"),
+        send: (_message: unknown, _port: number, _address: string, callback: (error: Error | null) => void) => {
+          if (outcome === "throws") throw new Error("send failed")
+          callback(outcome === "error" ? new Error("EHOSTUNREACH") : null)
+        },
+      },
+    }
+  }
+  for (const [outcome, recorded] of [["ok", true], ["error", false], ["throws", false]] as const) {
+    const fake = fakeSocket(outcome)
+    let sent = 0
+    sendQuery(fake.socket as never, () => void sent++)
+    check(`a send that ${outcome === "ok" ? "went out" : outcome === "error" ? "failed" : "threw"} ${recorded ? "is recorded" : "is not recorded, so the next launch asks again"}, and the socket is closed`, (sent === 1) === recorded && fake.log.includes("close"), { sent, log: fake.log })
+  }
+  const erroring = fakeSocket("ok")
+  sendQuery({ ...erroring.socket, send: () => undefined } as never, () => undefined)
+  erroring.listeners.error?.()
+  check("a socket error closes the socket", erroring.log.includes("close"))
 
   const { willSign } = createRequire(path.join(root, "package.json"))("./scripts/mac-adhoc-sign.cjs") as { willSign: (options: { identity?: string | null }, env: Record<string, string>, listing: string) => boolean }
   const listing = (name: string) => `  1) 0123456789ABCDEF "${name}"\n     1 valid identities found`
@@ -246,6 +273,36 @@ section("A second look at #18: none that thinks, a marker that outlived its answ
     const stopped = await grep("(a+)+$", 600).then(() => undefined, (error: unknown) => error)
     check("a runaway pattern is stopped at the deadline", stopped instanceof ToolError, String(stopped))
     check("and the search after it does not land on the worker that was killed", (await grep("needle")).rows.length === 2)
+
+    // A dead worker in the idle list: its exit has not been heard when the next search takes it.
+    await grep("needle")
+    for (const worker of idleWorkers()) void worker.terminate()
+    const afterDeath = await grep("needle").then((outcome) => outcome.rows.length, (error: unknown) => String(error))
+    check("a worker that died while idle costs the next search a retry, not a failure", afterDeath === 2, afterDeath)
+
+    // The count and the order are decided where the rows were found.
+    const old = path.join(dir, "old.log")
+    const fresh = path.join(dir, "fresh.log")
+    await fs.writeFile(old, "hit\n".repeat(150))
+    await fs.writeFile(fresh, "hit\nmiss\n")
+    const past = new Date(Date.now() - 3_600_000)
+    await fs.utimes(old, past, past)
+    const ranked = await runFallback({ kind: "grep", target: dir, isFile: false, pattern: "^hit$" }, new AbortController().signal)
+    check("every match is counted, but only a hundred rows cross over", ranked.total === 151 && ranked.rows.length === 100, [ranked.total, ranked.rows.length])
+    check("the newest file's matches come first", path.basename(ranked.rows[0]!.path) === "fresh.log" && ranked.rows.slice(1).every((row) => path.basename(row.path) === "old.log"), ranked.rows.slice(0, 2))
+    const gone = await rankMatches([{ path: path.join(dir, "vanished.txt"), line: 1, text: "x" }, { path: fresh, line: 1, text: "hit" }])
+    check("a file that is gone is dropped from the count", gone.total === 1 && gone.rows.length === 1)
+
+    // A walk that is out of time answers with what it has and says so; only the regex that never returns is killed.
+    const late = await runFallbackJob({ kind: "grep", target: dir, isFile: false, pattern: "hit", deadline: Date.now() - 1 }, new AbortController().signal)
+    check("a grep past its deadline stops early and says so", late.timedOut === true && late.total === 0, [late.timedOut, late.total])
+    const lateGlob = await runFallbackJob({ kind: "glob", root: dir, pattern: "*.log", limit: 10, deadline: Date.now() - 1 }, new AbortController().signal)
+    check("so does a glob", lateGlob.timedOut === true && lateGlob.paths.length === 0, [lateGlob.timedOut, lateGlob.paths.length])
+    const onTime = await runFallbackJob({ kind: "grep", target: dir, isFile: false, pattern: "hit", deadline: Date.now() + 60_000 }, new AbortController().signal)
+    check("a walk that finishes in time does not claim to have run out", onTime.timedOut === undefined && onTime.total === 151)
+
+    const hard = await grep("(a+)+$", 600).then(() => undefined, (error: unknown) => String(error))
+    check("the hard stop names both causes, the pattern and the size of the search", /nested quantifiers/.test(hard ?? "") && /narrow the path/.test(hard ?? ""), hard)
   } finally {
     await fs.rm(dir, { recursive: true, force: true })
   }
