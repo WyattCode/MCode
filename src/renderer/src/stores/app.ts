@@ -1440,12 +1440,16 @@ export const useApp = defineStore("app", () => {
    * 在新对话中继续; `here` is the reply's own toast, 已从此处创建分支, where the
    * others say they branched the current conversation. A failure says so.
    */
-  async function forkFrom(messageID: string, how: { titleSuffix?: boolean; here?: boolean } = {}) {
-    if (!currentID.value) return undefined
+  async function forkFrom(
+    messageID: string,
+    how: { titleSuffix?: boolean; here?: boolean; sessionID?: string } = {},
+  ) {
+    const target = how.sessionID ?? currentID.value
+    if (!target) return undefined
     const result = await api()
       .request({
         type: "session.fork",
-        sessionID: currentID.value,
+        sessionID: target,
         messageID,
         ...(how.titleSuffix ? { titleSuffix: true } : {}),
       })

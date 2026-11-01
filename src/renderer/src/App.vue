@@ -1557,8 +1557,9 @@ const ROW_ACTIONS: Record<string, (sessionID: string, header: boolean) => void |
   },
   "row.continue": async (sessionID) => {
     if (app.currentID !== sessionID) await app.open(sessionID)
+    if (app.currentID !== sessionID) return
     const last = app.messages[app.messages.length - 1]
-    if (last) await app.forkFrom(last.id)
+    if (last) await app.forkFrom(last.id, { sessionID })
     else notifyFailure(t("stream.forkNeedsMessage"))
   },
   "row.batch": (sessionID) => {
@@ -3089,9 +3090,10 @@ const bindableCommands = computed((): AppCommand[] => {
       title: t("key.label.fork-chat"),
       enabled: hasSession,
       run: () => {
+        const target = app.currentID
         const last = app.messages[app.messages.length - 1]
         if (!last) notifyFailure(t("stream.forkNeedsMessage"))
-        else void app.forkFrom(last.id, { titleSuffix: true })
+        else void app.forkFrom(last.id, { titleSuffix: true, sessionID: target })
       },
     },
     {

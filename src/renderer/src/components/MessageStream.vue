@@ -985,7 +985,9 @@ onBeforeUnmount(() => {
  */
 async function branchReply(turn: Turn) {
   if (!turn.last?.id) return
-  await app.forkFrom(turn.last.id, { titleSuffix: true, here: true })
+  const target = shownID.value
+  if (!target) return
+  await app.forkFrom(turn.last.id, { titleSuffix: true, here: true, sessionID: target })
 }
 
 /* The fork marker's link: back to the conversation this one came from, if it is still there. */
