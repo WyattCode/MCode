@@ -5397,6 +5397,11 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   outline: none;
 }
 
+.model-menu:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
 .model-menu .rule {
   margin: 4px 6px;
   background: var(--border-weak);
@@ -6021,6 +6026,11 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 
 .access-menu:focus {
   outline: none;
+}
+
+.access-menu:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 .access-menu.up {
