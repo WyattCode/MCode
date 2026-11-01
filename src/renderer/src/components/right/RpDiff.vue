@@ -121,9 +121,14 @@ const rows = computed(() => reviewRows(props.diff))
   color: #cf222e;
 }
 
-/* The diff-marks setting: colour alone blanks the sign but keeps its column; signs alone drop the tint. */
+/*
+ * The diff-marks setting: colour alone blanks the sign but keeps its column;
+ * signs alone drop the tint. The sign is faded rather than hidden - `opacity`
+ * leaves it in the accessibility tree, so a screen reader still hears the +
+ * or - that colour alone would otherwise be the only carrier of.
+ */
 html[data-diff-marks="color"] .sign {
-  visibility: hidden;
+  opacity: 0;
 }
 
 html[data-diff-marks="signs"] .row.add,

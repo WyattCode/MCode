@@ -673,6 +673,11 @@ function onError(event: Event) {
   background: #f1f0ec;
 }
 
+.text .md-video-card:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
 .text .md-video-play {
   flex-shrink: 0;
   color: #ff6a2b;
@@ -1022,6 +1027,11 @@ function onError(event: Event) {
 
 .text .md-img-remote:hover {
   background: #f1f0ec;
+}
+
+.text .md-img-remote:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 .text .md-img-remote-icon {

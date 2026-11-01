@@ -16,6 +16,7 @@ defineProps<{ box: FxBox; phase: FxPhase; absolute?: boolean }>()
     class="annot-fx"
     :class="{ ignite: phase === 'ignite', finish: phase === 'finish' || phase === 'out', out: phase === 'out' }"
     data-annot-fx
+    aria-hidden="true"
     :style="{
       position: absolute ? 'absolute' : 'fixed',
       left: `${box.left}px`,

@@ -671,9 +671,13 @@ defineExpose({ reveal })
   border-radius: 0.2em;
 }
 
-/* The diff-marks setting, as MiMo reads it: colour alone keeps the prefix's room but blanks it. */
+/*
+ * The diff-marks setting, as MiMo reads it: colour alone keeps the prefix's
+ * room but fades it. Faded rather than hidden, so the + or - stays in the
+ * accessibility tree instead of colour being the only carrier of add/del.
+ */
 html[data-diff-marks="color"] .db-prefix {
-  visibility: hidden;
+  opacity: 0;
 }
 
 /* Signs alone: the lines go plain and only the gutter keeps the colour. */
