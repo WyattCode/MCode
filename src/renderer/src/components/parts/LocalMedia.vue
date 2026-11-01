@@ -9,7 +9,7 @@ let playingAudio: HTMLAudioElement | undefined
 </script>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue"
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { t } from "../../lib/i18n"
 import { openImagePreview } from "../../lib/image-preview"
 import { audioBubbleWidth, audioClock } from "../../lib/media-card"
@@ -33,6 +33,8 @@ const entry = ref(served.get(key.value))
 const state = ref<State>(entry.value ? (loaded.has(entry.value.url) ? "ok" : "loading") : "resolving")
 const svgText = ref(entry.value ? svgTexts.get(entry.value.url) : undefined)
 const name = computed(() => (entry.value?.file ?? props.path).split(/[\\/]/).pop() || props.path)
+// Bumped on every resolve/broken and on unmount so a stale result cannot write.
+let generation = 0
 
 /* MiMo reads the file's text for the card; if that fails the plain picture card stays. */
 async function readSvg(url: string) {
@@ -53,21 +55,27 @@ async function readSvg(url: string) {
 }
 
 async function resolve(): Promise<void> {
-  const found = await window.mcode.resolveExistingPath(pathCandidates(props.path, props.directory)).catch(() => null)
+  const mine = ++generation
+  const mineKey = key.value
+  const heldPath = props.path
+  const heldDirectory = props.directory
+  const found = await window.mcode.resolveExistingPath(pathCandidates(heldPath, heldDirectory)).catch(() => null)
+  if (mine !== generation) return
   if (!found || found.directory) {
-    served.delete(key.value)
+    served.delete(mineKey)
     entry.value = undefined
     state.value = "missing"
     return
   }
   const address = await window.mcode.officeServe(found.path).catch(() => null)
+  if (mine !== generation) return
   if (!address?.ok) {
     entry.value = { file: found.path, url: "" }
     state.value = "error"
     return
   }
   entry.value = { file: found.path, url: address.url }
-  served.set(key.value, entry.value)
+  served.set(mineKey, entry.value)
   state.value = loaded.has(address.url) ? "ok" : "loading"
   if (props.kind === "image" && isSvgFile(found.path)) void readSvg(address.url)
 }
@@ -77,6 +85,21 @@ onMounted(() => {
   else if (props.kind === "image" && entry.value?.url && isSvgFile(entry.value.file) && svgText.value === undefined) void readSvg(entry.value.url)
 })
 
+/* A reused instance whose path changes adopts the new key's cache or resolves it. */
+watch(key, () => {
+  generation += 1
+  const cached = served.get(key.value)
+  entry.value = cached
+  svgText.value = cached ? svgTexts.get(cached.url) : undefined
+  if (cached) {
+    state.value = loaded.has(cached.url) ? "ok" : "loading"
+    if (props.kind === "image" && isSvgFile(cached.file) && svgText.value === undefined) void readSvg(cached.url)
+  } else {
+    state.value = "resolving"
+    void resolve()
+  }
+})
+
 function ready() {
   if (entry.value?.url) loaded.add(entry.value.url)
   state.value = "ok"
@@ -84,10 +107,15 @@ function ready() {
 
 /* A load that fails is checked again: a deleted file becomes plain code, anything else the open button. */
 async function broken() {
+  const mine = ++generation
+  const mineKey = key.value
+  const heldPath = props.path
+  const heldDirectory = props.directory
   if (entry.value?.url) loaded.delete(entry.value.url)
-  const found = await window.mcode.resolveExistingPath(pathCandidates(props.path, props.directory)).catch(() => null)
+  const found = await window.mcode.resolveExistingPath(pathCandidates(heldPath, heldDirectory)).catch(() => null)
+  if (mine !== generation) return
   state.value = found ? "error" : "missing"
-  if (!found) served.delete(key.value)
+  if (!found) served.delete(mineKey)
 }
 
 function svgMissing() {
@@ -184,6 +212,7 @@ function openMore(event: MouseEvent) {
 }
 
 onBeforeUnmount(() => {
+  generation++
   if (playingAudio && playingAudio === audio.value) playingAudio = undefined
 })
 </script>
