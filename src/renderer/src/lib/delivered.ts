@@ -109,7 +109,7 @@ export function relativeInside(directory: string, file: string): string {
  * conversation opened later, opens nothing it did not see happen.
  */
 
-type Pending = { kind: "delivered"; item: Delivered } | { kind: "pdf"; path: string }
+type Pending = { kind: "delivered"; item: Delivered } | { kind: "pdf"; path: string; snippet: string; page?: number }
 
 /** Opens held for a conversation until it is on show; the latest one wins, as MiMo keeps one. */
 const pending = new Map<string, Pending>()
@@ -163,6 +163,8 @@ export function deliveryShown(sessionID: string | undefined): void {
   const action = pending.get(sessionID)
   if (!action || !shownCheck(sessionID)) return
   pending.delete(sessionID)
+  // A held locate pulses with its deferred open, so the highlight lands in this conversation's viewer.
+  if (action.kind === "pdf") requestPdfLocate({ path: action.path, snippet: action.snippet, page: action.page })
   void perform(action, directoryOf(sessionID)).catch(() => undefined)
 }
 
@@ -175,8 +177,9 @@ async function locate(sessionID: string, part: ToolPart): Promise<void> {
   // MiMo ignores a path that is not on disk.
   const found = await window.mcode.resolveExistingPath([file]).catch(() => null)
   if (!found || found.directory) return
-  requestPdfLocate({ path: found.path, snippet, page })
-  openOrHold(sessionID, { kind: "pdf", path: found.path })
+  // Hold the locate with the open until the conversation is on show, so it never pulses another conversation's viewer.
+  if (shownCheck(sessionID)) requestPdfLocate({ path: found.path, snippet, page })
+  openOrHold(sessionID, { kind: "pdf", path: found.path, snippet, page })
 }
 
 /** Every message update the window receives, from any conversation. */
