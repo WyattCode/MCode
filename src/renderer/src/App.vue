@@ -3798,10 +3798,9 @@ async function cycleEffort() {
   const target = app.currentID
   const variants = findModel(app.providers, app.shownModel(app.current?.model) ?? app.config?.model)?.variants ?? []
   const next = cycleVariant(variants, app.current?.effort ?? app.config?.effort)
-  if (next) await app.setEffort(next, target)
   if (!next) return
   try {
-    await app.setEffort(next)
+    await app.setEffort(next, target)
   } catch (err) {
     notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
   }
@@ -3816,10 +3815,9 @@ async function stepEffort(by: 1 | -1) {
   const current = app.current?.effort ?? app.config?.effort
   const at = current ? variants.indexOf(current) : -1
   const next = at === -1 ? variants[0] : variants[at + by]
-  if (next && next !== current) await app.setEffort(next, target)
   if (!next || next === current) return
   try {
-    await app.setEffort(next)
+    await app.setEffort(next, target)
   } catch (err) {
     notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
   }
