@@ -98,6 +98,7 @@ watch(input, (element) => props.find.setInput(element))
       ref="input"
       class="needle"
       :placeholder="t('stream.find.placeholder')"
+      :aria-label="t('stream.find.placeholder')"
       :value="find.query.value"
       @input="find.setQuery(($event.target as HTMLInputElement).value)"
       @keydown="find.onInputKeydown($event)"
@@ -174,6 +175,12 @@ watch(input, (element) => props.find.setInput(element))
   background: transparent;
   border: none;
   outline: none;
+}
+
+.needle:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 .needle::placeholder {

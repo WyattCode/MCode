@@ -329,6 +329,7 @@ defineExpose({ close })
           ref="field"
           v-model="query"
           :placeholder="t('searchOverlay.placeholder')"
+          :aria-label="t('searchOverlay.placeholder')"
           spellcheck="false"
           autocomplete="off"
         />
@@ -443,6 +444,12 @@ defineExpose({ close })
   outline: none;
   font: inherit;
   font-size: calc(14px * var(--ui-font-scale, 1));
+}
+
+.search-bar input:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 .search-bar input::placeholder {
