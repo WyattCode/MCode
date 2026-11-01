@@ -141,6 +141,7 @@ watch(
       data-confirm-dock
       tabindex="-1"
       role="alertdialog"
+      aria-modal="true"
       :aria-labelledby="LABELLED_BY.join(' ')"
       :aria-describedby="DESCRIBED_BY.join(' ')"
       @keydown="onDockKey"
@@ -228,6 +229,11 @@ watch(
   border-radius: 20px;
   box-shadow: 0 2px 10px #0000000a;
   outline: none;
+}
+
+.confirm-dock:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 .perm-guide {
