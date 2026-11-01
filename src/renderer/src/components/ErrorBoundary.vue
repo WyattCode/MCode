@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onErrorCaptured, ref, watch } from "vue"
 import { t } from "../lib/i18n"
+import { writeText } from "../lib/clipboard"
 
 /**
  * MiMo's per-region error boundary.
@@ -17,6 +18,17 @@ import { t } from "../lib/i18n"
 const props = defineProps<{ resetKey?: string }>()
 
 const failure = ref<string>()
+const copied = ref(false)
+
+async function copyDetail() {
+  try {
+    await writeText(failure.value || "")
+    copied.value = true
+    setTimeout(() => (copied.value = false), 1500)
+  } catch {
+    copied.value = false
+  }
+}
 
 /* Vue names the source in development and gives a runtime code in production: 0 setup, 1 render. */
 const RENDER = /render|setup|hook|#runtime-[01]$/
@@ -38,9 +50,13 @@ watch(
 
 <template>
   <div v-if="failure !== undefined" class="render-error" role="alert" data-render-error>
-    <span class="label">{{ t("errorBoundary.inlineError") }}</span>
-    <span v-if="failure" class="detail" :title="failure">{{ failure }}</span>
-    <button type="button" class="retry" data-error-retry @click="failure = undefined">{{ t("common.retry") }}</button>
+    <div class="strip">
+      <span class="label">{{ t("errorBoundary.inlineError") }}</span>
+      <span v-if="failure" class="detail" :title="failure">{{ failure }}</span>
+      <button type="button" class="copy" data-error-copy @click="copyDetail">{{ copied ? t("code.copied") : t("code.copy") }}</button>
+      <button type="button" class="retry" data-error-retry @click="failure = undefined">{{ t("common.retry") }}</button>
+    </div>
+    <pre v-if="failure && failure.length > 80" class="detail-full">{{ failure }}</pre>
   </div>
   <slot v-else />
 </template>
@@ -53,13 +69,47 @@ watch(
  */
 .render-error {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
   min-width: 0;
   padding: 8px 12px;
   background: #fef2f2;
   border: 1px solid #fca5a5;
   border-radius: 8px;
+}
+
+.strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.detail-full {
+  margin: 0;
+  overflow: auto;
+  max-height: 160px;
+  color: rgb(239 68 68 / 0.7);
+  font-family: var(--font-mono, monospace);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.copy {
+  flex: none;
+  margin-inline-start: auto;
+  padding: 2px 8px;
+  color: #dc2626;
+  background: #ffffff;
+  border: 1px solid #fca5a5;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+
+.copy:hover {
+  background: #fee2e2;
 }
 
 .label {
@@ -80,7 +130,6 @@ watch(
 /* MiMo's retry: at the strip's end, 6 round on the same red line over white. */
 .retry {
   flex: none;
-  margin-inline-start: auto;
   padding: 2px 8px;
   color: #dc2626;
   background: #ffffff;
@@ -117,6 +166,20 @@ watch(
   background: rgb(127 29 29 / 0.5);
 }
 
+:root[data-theme="dark"] .copy {
+  color: #f87171;
+  background: rgb(127 29 29 / 0.3);
+  border-color: #b91c1c;
+}
+
+:root[data-theme="dark"] .copy:hover {
+  background: rgb(127 29 29 / 0.5);
+}
+
+:root[data-theme="dark"] .detail-full {
+  color: rgb(248 113 113 / 0.7);
+}
+
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .render-error {
     background: rgb(69 10 10 / 0.3);
@@ -139,6 +202,20 @@ watch(
 
   :root:not([data-theme="light"]) .retry:hover {
     background: rgb(127 29 29 / 0.5);
+  }
+
+  :root:not([data-theme="light"]) .copy {
+    color: #f87171;
+    background: rgb(127 29 29 / 0.3);
+    border-color: #b91c1c;
+  }
+
+  :root:not([data-theme="light"]) .copy:hover {
+    background: rgb(127 29 29 / 0.5);
+  }
+
+  :root:not([data-theme="light"]) .detail-full {
+    color: rgb(248 113 113 / 0.7);
   }
 }
 </style>
