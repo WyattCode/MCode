@@ -61,7 +61,7 @@ const pills = computed(() => {
 </script>
 
 <template>
-  <div class="subagent-activity" data-subagent-activity :data-subagent-status="status" :data-subagent-notice="notices?.length ? '' : undefined">
+  <div class="subagent-activity" role="group" data-subagent-activity :data-subagent-status="status" :data-subagent-notice="notices?.length ? '' : undefined">
     <div class="subagent-pill-list">
       <button
         v-for="pill in pills"
@@ -79,7 +79,7 @@ const pills = computed(() => {
         <span>{{ pill.name }}</span>
       </button>
     </div>
-    <span class="subagent-activity-state" :class="{ failed: status === 'failed' }">{{ statusText }}</span>
+    <span class="subagent-activity-state" role="status" aria-live="polite" :class="{ failed: status === 'failed' }">{{ statusText }}</span>
   </div>
 </template>
 

@@ -922,6 +922,8 @@ const noteInside = (target: Node) => Boolean(wrap.value?.contains(target))
     ref="wrap"
     class="pptx-view"
     data-pptx-view
+    role="region"
+    :aria-label="name"
     :data-reload-nonce="reloadNonce"
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
@@ -936,6 +938,7 @@ const noteInside = (target: Node) => Boolean(wrap.value?.contains(target))
       v-if="highlight"
       class="pptx-highlight"
       data-pptx-highlight="1"
+      aria-hidden="true"
       :style="{ left: `${highlight.left}px`, top: `${highlight.top}px`, width: `${highlight.w}px`, height: `${highlight.h}px` }"
     />
     <div
@@ -943,6 +946,7 @@ const noteInside = (target: Node) => Boolean(wrap.value?.contains(target))
       :key="at"
       class="pptx-sel-rect"
       data-sel-rect
+      aria-hidden="true"
       :style="{ left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.w}px`, height: `${rect.h}px` }"
     />
 
@@ -967,7 +971,7 @@ const noteInside = (target: Node) => Boolean(wrap.value?.contains(target))
 
     <!-- MiMo 26.920's footer line under every document view. -->
     <ViewerAiNote viewer="pptx" />
-    <div v-if="(loading && !restoring) || error" class="pptx-note" :data-pptx-failed="error ? '' : undefined">{{ error || t("office.loadingConvert") }}</div>
+    <div v-if="(loading && !restoring) || error" class="pptx-note" :role="error ? 'alert' : 'status'" aria-live="polite" :data-pptx-failed="error ? '' : undefined">{{ error || t("office.loadingConvert") }}</div>
 
     <PptxPresent v-if="present" :viewer="present.viewer" :bytes="present.bytes" :start-index="present.startIndex" @close="present = null" />
   </div>

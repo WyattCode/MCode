@@ -12,7 +12,7 @@ defineProps<{ viewer: "pdf" | "docx" | "xlsx" | "pptx" | "html" }>()
 </script>
 
 <template>
-  <p class="viewer-ai-note" data-viewer-ai-note :data-viewer="viewer">{{ t("composer.aiNote") }}</p>
+  <p class="viewer-ai-note" role="note" data-viewer-ai-note :data-viewer="viewer">{{ t("composer.aiNote") }}</p>
 </template>
 
 <style scoped>
