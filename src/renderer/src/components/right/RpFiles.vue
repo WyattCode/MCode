@@ -543,6 +543,21 @@ function onWindowKey(event: KeyboardEvent) {
 /* Find closes when the conversation changes, as MiMo's does on a switch. */
 watch(() => app.currentID, () => closeFind())
 
+/*
+ * Home-screen project switches keep the same conversation scope, so currentID
+ * does not change while root does. Drop the previous project's tree filter and
+ * in-file find; reroot already cleared viewFile.
+ */
+watch(
+  () => root.value,
+  (directory, before) => {
+    if (before === undefined || before === directory) return
+    filter.value = ""
+    query.value = ""
+    closeFind()
+  },
+)
+
 /* ---------------------------------------------------------------- reading again */
 
 /* The agent's edits: one to the open file reads it again, any finished edit re-lists the tree. */
