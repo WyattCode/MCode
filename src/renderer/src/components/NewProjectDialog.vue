@@ -67,7 +67,7 @@ onMounted(() => {
 
 <template>
   <div class="scrim" @mousedown.self="emit('close')">
-    <div v-modal class="card" data-new-project-dialog role="dialog" aria-labelledby="np-title">
+    <div v-modal class="card" data-new-project-dialog role="dialog" aria-modal="true" aria-labelledby="np-title">
       <div class="head">
         <div>
           <div class="icon" data-np-icon aria-hidden="true">

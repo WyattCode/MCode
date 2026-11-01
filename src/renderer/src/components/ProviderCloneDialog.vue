@@ -48,7 +48,7 @@ onMounted(() => {
 
 <template>
   <div class="scrim" @mousedown.self="emit('close')">
-    <div v-modal class="dialog" data-clone-provider-dialog role="dialog" aria-labelledby="clone-provider-title">
+    <div v-modal class="dialog" data-clone-provider-dialog role="dialog" aria-modal="true" aria-labelledby="clone-provider-title">
       <h2 id="clone-provider-title">{{ t("set.models.cloneProvider") }}</h2>
       <p class="body">{{ t("set.models.cloneDesc") }}</p>
       <input

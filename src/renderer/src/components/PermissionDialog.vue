@@ -193,6 +193,7 @@ function onReasonKey(event: KeyboardEvent) {
         v-model="reason"
         type="text"
         class="reason-input"
+        :aria-label="t('perm.reasonPlaceholder')"
         :placeholder="t('perm.reasonPlaceholder')"
         :disabled="busy"
         @keydown="onReasonKey"
@@ -399,5 +400,10 @@ function onReasonKey(event: KeyboardEvent) {
 
 .reason-input:focus {
   border-color: var(--interactive);
+}
+
+.reason-input:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 </style>
