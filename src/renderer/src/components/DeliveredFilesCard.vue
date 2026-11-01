@@ -186,6 +186,7 @@ async function pick(key: string) {
       role="button"
       tabindex="0"
       class="dl-card"
+      :aria-label="meta(item) ? `${item.name} · ${meta(item)}` : item.name"
       :data-delivered-card="deliveredCard(item)"
       :data-office-artifact-card="deliveredCard(item) === 'office' ? '' : undefined"
       :data-html-file-card="deliveredCard(item) === 'html' ? '' : undefined"

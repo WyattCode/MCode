@@ -324,6 +324,7 @@ watch(
         :disabled="!state?.branch || switching || busy"
         aria-haspopup="menu"
         :aria-expanded="pickerOpen"
+        :aria-controls="pickerOpen ? 'info-branch-menu' : undefined"
         data-info-commit-branch
         @click="togglePicker"
       >
