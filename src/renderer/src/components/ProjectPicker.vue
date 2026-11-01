@@ -325,6 +325,11 @@ svg path {
   background: var(--surface-hover);
 }
 
+.chip:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
 .chip .i {
   flex: none;
   width: 15px;
@@ -466,10 +471,14 @@ svg path {
 }
 
 .row:hover,
-.row:focus-visible,
 .sub-trigger.on {
   background: var(--surface-hover);
-  outline: none;
+}
+
+.row:focus-visible {
+  background: var(--surface-hover);
+  outline: 2px solid var(--interactive);
+  outline-offset: -2px;
 }
 
 /* MiMo's --color-icon: #5c5c57 on light, #d0d0d0 on dark (below). */

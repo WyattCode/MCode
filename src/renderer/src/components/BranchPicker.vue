@@ -336,6 +336,11 @@ svg circle {
   background: var(--surface-hover);
 }
 
+.chip:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
 .chip .i {
   flex: none;
   width: 17px;
@@ -446,10 +451,14 @@ svg circle {
   cursor: default;
 }
 
-.row:hover,
+.row:hover {
+  background: var(--surface-hover);
+}
+
 .row:focus-visible {
   background: var(--surface-hover);
-  outline: none;
+  outline: 2px solid var(--interactive);
+  outline-offset: -2px;
 }
 
 /* MiMo's --color-icon: #5c5c57 on light, #d0d0d0 on dark (below). */
