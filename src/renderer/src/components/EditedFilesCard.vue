@@ -93,8 +93,13 @@ async function revert() {
   }
   if (reverting.value) return
   reverting.value = true
+  // Hold the turn's identity: props may be reused for another turn mid-flight.
+  const heldSessionId = props.sessionId
+  const heldMessageIds = props.messageIds
+  const heldKey = heldMessageIds.join("\n")
   try {
-    const result = await app.revertTurn(props.sessionId, props.messageIds)
+    const result = await app.revertTurn(heldSessionId, heldMessageIds)
+    if (props.sessionId !== heldSessionId || props.messageIds.join("\n") !== heldKey) return
 
     const done = result.restored + result.removed
     if (done === 0) {
@@ -112,6 +117,7 @@ async function revert() {
     confirming.value = false
     notify(extra ? t("stream.revertedWithExtra", { n: done, extra }) : t("stream.revertedCard", { n: done }))
   } catch (err) {
+    if (props.sessionId !== heldSessionId || props.messageIds.join("\n") !== heldKey) return
     notifyFailure(t("stream.revertFailed"), err instanceof Error ? err.message : String(err))
   } finally {
     reverting.value = false
@@ -131,18 +137,33 @@ const reviewing = ref(false)
 async function review() {
   if (reviewing.value) return
   reviewing.value = true
+  // Hold the turn's identity: props may be reused for another turn mid-flight.
+  const heldSessionId = props.sessionId
+  const heldDirectory = props.directory
+  const heldMessageIds = props.messageIds
+  const heldKey = heldMessageIds.join("\n")
+  const heldParts = props.parts
+  const heldPaths = files.value.map((file) => file.path)
+  const same = () =>
+    props.sessionId === heldSessionId &&
+    props.directory === heldDirectory &&
+    props.messageIds.join("\n") === heldKey &&
+    (heldSessionId === undefined || app.currentID === heldSessionId)
   try {
     let patch = ""
-    if (props.directory) {
-      const answer = await app.turnDiff(props.directory, files.value.map((file) => file.path), true).catch(() => undefined)
+    if (heldDirectory) {
+      const answer = await app.turnDiff(heldDirectory, heldPaths, true).catch(() => undefined)
+      if (!same()) return
       keep(answer)
       if (answer?.repo) patch = answer.files.map((entry) => entry.patch).filter(changes).join("\n")
     }
-    if (!changes(patch)) patch = recordedPatch(props.parts)
+    if (!changes(patch)) patch = recordedPatch(heldParts)
     if (!changes(patch)) {
+      if (!same()) return
       notify(t("stream.noDiff"))
       return
     }
+    if (!same()) return
     rp.openDiff(t("stream.reviewFiles"), patch)
   } finally {
     reviewing.value = false
