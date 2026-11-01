@@ -1951,6 +1951,7 @@ defineExpose({ stepMessage, scroller })
             </div>
             <div class="retry-row">
               <button
+                type="button"
                 class="retry-icon"
                 data-retry
                 :aria-label="t('stream.retry')"
@@ -3096,6 +3097,11 @@ defineExpose({ stepMessage, scroller })
 .retry-icon:hover {
   color: var(--text-strong);
   background: var(--surface-hover);
+}
+
+.retry-icon:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 /* A search result arrived at: a soft tint over the message that fades over MiMo's 1.6s. */

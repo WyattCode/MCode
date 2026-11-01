@@ -36,8 +36,8 @@ onMounted(() => {
       <h2 id="confirm-title">{{ title }}</h2>
       <p class="body">{{ body }}</p>
       <footer>
-        <button class="ghost" @click="emit('close')">{{ t("common.cancel") }}</button>
-        <button ref="confirmButton" class="confirm" :class="{ danger }" data-confirm @click="emit('confirm')">{{ confirmLabel }}</button>
+        <button type="button" class="ghost" @click="emit('close')">{{ t("common.cancel") }}</button>
+        <button type="button" ref="confirmButton" class="confirm" :class="{ danger }" data-confirm @click="emit('confirm')">{{ confirmLabel }}</button>
       </footer>
     </div>
   </div>

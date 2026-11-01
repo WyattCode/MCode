@@ -313,10 +313,10 @@ function startResize(event: PointerEvent) {
         </div>
 
         <!-- MiMo's: a bare plus in the muted colour, named by the platform's own tooltip. -->
-        <button class="add" :title="t('term.new')" :aria-label="t('term.new')" @click="add()">+</button>
+        <button type="button" class="add" :title="t('term.new')" :aria-label="t('term.new')" @click="add()">+</button>
 
         <span class="gap" />
-        <button class="icon-btn hide" :title="t('term.closePanel')" :aria-label="t('term.closePanel')" @click="emit('close')">
+        <button type="button" class="icon-btn hide" :title="t('term.closePanel')" :aria-label="t('term.closePanel')" @click="emit('close')">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true">
             <path d="M18 6 6 18M6 6l12 12" />
           </svg>
@@ -494,6 +494,11 @@ function startResize(event: PointerEvent) {
   color: var(--text-body);
 }
 
+.add:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
 /*
  * Putting the panel away is MiMo's 26px icon-btn xs at the far end of the bar:
  * a 16px glyph, muted, on its menu-hover fill when pointed at. `flex-shrink`
@@ -503,6 +508,11 @@ function startResize(event: PointerEvent) {
   flex-shrink: 0;
   width: 26px;
   height: 26px;
+}
+
+.head .icon-btn.hide:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 /* MiMo's close mark: a 13px ×, always there, muted, on a 4px corner. */
@@ -518,6 +528,11 @@ function startResize(event: PointerEvent) {
 .tab-close:hover {
   color: var(--text-body);
   background: var(--overlay-hover);
+}
+
+.tab-close:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 .gap {

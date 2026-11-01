@@ -210,7 +210,7 @@ function openMenu(event: MouseEvent) {
         The buttons at the other end drive the panels, which are not the
         conversation.
       -->
-      <button class="ico options" v-tip="{ label: t('header.moreTip'), disabled: menuOpen }" @click="openMenu">
+      <button type="button" class="ico options" v-tip="{ label: t('header.moreTip'), disabled: menuOpen }" @click="openMenu">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
           <circle cx="5" cy="12" r="1.7" />
           <circle cx="12" cy="12" r="1.7" />
@@ -227,6 +227,7 @@ function openMenu(event: MouseEvent) {
       -->
       <div v-if="openShown && directory" class="open-with">
         <button
+          type="button"
           class="open-face"
           :aria-label="t('header.openDirTip', { name: openLabel })"
           v-tip="t('header.openDirTip', { name: openLabel })"
@@ -244,6 +245,7 @@ function openMenu(event: MouseEvent) {
           <span>{{ t("header.openLocation") }}</span>
         </button>
         <button
+          type="button"
           class="open-caret"
           :aria-label="t('header.pickApp')"
           v-tip="{ label: t('header.pickApp'), disabled: Boolean(appMenu) }"
@@ -258,6 +260,7 @@ function openMenu(event: MouseEvent) {
       <!-- The info card beside the conversation; lit while it is up, as MiMo's toggle is. -->
       <button
         v-if="hasContent"
+        type="button"
         class="ico info"
         :aria-pressed="Boolean(infoOpen)"
         :aria-label="t('info.tip')"
@@ -275,6 +278,7 @@ function openMenu(event: MouseEvent) {
         lives in the composer, where MiMo keeps it.
       -->
       <button
+        type="button"
         class="ico bottom"
         :aria-pressed="Boolean(bottomOpen)"
         :aria-label="t('key.bottomPanel')"
