@@ -1091,18 +1091,18 @@ const noteInside = (target: Node) => Boolean(rootEl.value?.contains(target))
     </div>
 
     <div v-if="!loading && !failure && count > 0" class="pdf-toolbar" data-pdf-toolbar>
-      <button type="button" class="pdf-tool" data-pdf-zoom-out :title="t('rp.pdf.zoomOut')" @click="setZoom(zoom - 0.1)">
+      <button type="button" class="pdf-tool" data-pdf-zoom-out :title="t('rp.pdf.zoomOut')" :aria-label="t('rp.pdf.zoomOut')" @click="setZoom(zoom - 0.1)">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35M8 11h6" /></svg>
       </button>
-      <span class="pdf-zoom" data-pdf-zoom>{{ Math.round(zoom * 100) }}%</span>
-      <button type="button" class="pdf-tool" data-pdf-zoom-in :title="t('rp.pdf.zoomIn')" @click="setZoom(zoom + 0.1)">
+      <span class="pdf-zoom" data-pdf-zoom role="status">{{ Math.round(zoom * 100) }}%</span>
+      <button type="button" class="pdf-tool" data-pdf-zoom-in :title="t('rp.pdf.zoomIn')" :aria-label="t('rp.pdf.zoomIn')" @click="setZoom(zoom + 0.1)">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35M11 8v6M8 11h6" /></svg>
       </button>
-      <button type="button" class="pdf-tool" data-pdf-fit :title="t('rp.pdf.fitWidth')" @click="zoom = 1">
+      <button type="button" class="pdf-tool" data-pdf-fit :title="t('rp.pdf.fitWidth')" :aria-label="t('rp.pdf.fitWidth')" @click="zoom = 1">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12h20M18 8l4 4-4 4M6 8l-4 4 4 4" /></svg>
       </button>
       <span class="pdf-rule" aria-hidden="true" />
-      <span data-pdf-page-indicator>{{ current }} / {{ count }}</span>
+      <span data-pdf-page-indicator role="status">{{ current }} / {{ count }}</span>
     </div>
 
     <CellAffordance
@@ -1118,7 +1118,7 @@ const noteInside = (target: Node) => Boolean(rootEl.value?.contains(target))
 
     <!-- MiMo 26.920's footer line under every document view. -->
     <ViewerAiNote viewer="pdf" />
-    <div v-if="(loading && !restoring) || failure" class="pdf-note" :data-pdf-failed="failure ? '' : undefined">
+    <div v-if="(loading && !restoring) || failure" class="pdf-note" :data-pdf-failed="failure ? '' : undefined" :role="failure ? 'alert' : 'status'">
       {{ failure || t("rp.pdf.loading") }}
     </div>
   </div>
@@ -1265,6 +1265,11 @@ const noteInside = (target: Node) => Boolean(rootEl.value?.contains(target))
   background: transparent;
   border: none;
   border-radius: 6px;
+}
+
+.pdf-tool:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: -2px;
 }
 
 .pdf-zoom {
