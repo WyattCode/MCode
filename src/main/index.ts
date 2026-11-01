@@ -708,9 +708,16 @@ function refreshTray(enabled: boolean): void {
     if (!closing) activate(raise)
   }
   if (!tray) {
-    tray = new Tray(image)
-    tray.on("click", open)
-    tray.on("double-click", open)
+    try {
+      tray = new Tray(image)
+      tray.on("click", open)
+      tray.on("double-click", open)
+    } catch (err) {
+      // Linux panels without StatusNotifier/AppIndicator throw here; leave tray off rather than crash refresh.
+      console.error("[mcode] system tray unavailable:", err)
+      tray = undefined
+      return
+    }
   } else tray.setImage(image)
 
   tray.setToolTip(APP_NAME)

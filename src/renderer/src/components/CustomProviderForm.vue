@@ -856,8 +856,8 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
     </div>
     <button type="button" class="cp-add" @click="addHeader">+ {{ t("provider.custom.headers.add") }}</button>
 
-    <button v-if="standalone" class="cp-submit" type="submit" :disabled="busy || !canSave" data-custom-save>
-      {{ busy ? t("common.saving") : t("common.save") }}
+    <button v-if="standalone" class="cp-submit" type="submit" :disabled="busy || !canSave || (editing && !dirty)" data-custom-save>
+      {{ busy ? t("common.saving") : editing && !dirty ? t("common.saved") : t("common.save") }}
     </button>
 
     <Teleport to="body">

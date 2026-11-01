@@ -1820,6 +1820,7 @@ onBeforeUnmount(() => {
         data-account-menu
         :aria-expanded="Boolean(footMenu)"
         aria-haspopup="menu"
+        v-tip="app.version ? { label: t('side.thisDeviceVersion', { version: app.version }), placement: 'top' } : undefined"
         @click="openFootMenu"
       >
         <span class="account-cell">
