@@ -64,8 +64,8 @@ onMounted(() => {
       />
       <div v-if="error" class="error" data-clone-provider-error>{{ error }}</div>
       <footer>
-        <button class="ghost" data-clone-cancel @click="emit('close')">{{ t("common.cancel") }}</button>
-        <button class="confirm" data-clone-confirm :disabled="Boolean(error)" @click="confirm">{{ t("set.models.cloneConfirm") }}</button>
+        <button type="button" class="ghost" data-clone-cancel @click="emit('close')">{{ t("common.cancel") }}</button>
+        <button type="button" class="confirm" data-clone-confirm :disabled="Boolean(error)" @click="confirm">{{ t("set.models.cloneConfirm") }}</button>
       </footer>
     </div>
   </div>
@@ -177,6 +177,12 @@ footer {
   justify-content: flex-end;
   gap: 10px;
   margin-top: 20px;
+}
+
+footer .ghost:focus-visible,
+footer .confirm:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 .ghost,

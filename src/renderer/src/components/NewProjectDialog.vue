@@ -240,6 +240,13 @@ onMounted(() => {
   background: var(--surface-selected);
 }
 
+.close:focus-visible,
+.source:focus-visible,
+.btn:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
 .source svg {
   flex-shrink: 0;
 }

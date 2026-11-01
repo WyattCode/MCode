@@ -3979,6 +3979,7 @@ onBeforeUnmount(() => {
   <div class="app" :data-platform="app.platform || undefined">
     <!-- MiMo's one title-bar button on the right, on every screen: the side panel. -->
     <button
+      type="button"
       class="side-panel-toggle"
       :class="{ on: rp.open }"
       :aria-pressed="rp.open"
@@ -4053,7 +4054,7 @@ onBeforeUnmount(() => {
         <!-- Boot failures only: a drop after boot keeps the view, and the reconnect notice escalates instead. -->
         <div v-if="app.error" class="boot">
           <p class="boot-msg">{{ app.error }}</p>
-          <button class="boot-retry" @click="retry">{{ t("common.retry") }}</button>
+          <button type="button" class="boot-retry" @click="retry">{{ t("common.retry") }}</button>
         </div>
 
         <ArtifactsView v-else-if="isArtifacts" @open="openFromArtifacts" />
@@ -4175,6 +4176,7 @@ onBeforeUnmount(() => {
         -->
         <button
           v-if="isHome"
+          type="button"
           class="home-bottom"
           :aria-pressed="terminalUp"
           :disabled="!homeShellDirectory"
@@ -4430,6 +4432,11 @@ onBeforeUnmount(() => {
 .boot-retry:hover {
   background: var(--surface-hover);
   border-color: var(--border-strong);
+}
+
+.boot-retry:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 /* The window itself is the darker frame the workspace is set into. */
@@ -4770,6 +4777,16 @@ onBeforeUnmount(() => {
 .home-bottom:hover {
   color: var(--text-strong);
   background: var(--surface-hover);
+}
+
+.side-panel-toggle:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
+.home-bottom:focus-visible:not(:disabled) {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 .side-panel-toggle.on {
