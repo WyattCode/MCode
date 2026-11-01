@@ -139,6 +139,9 @@ const expandable = computed(
   () => (Boolean(output.value) && !webLike.value) || Boolean(bash.value) || Boolean(fullTitle.value) || hasShots.value,
 )
 
+/* The id of the panel the head opens, so the head can point at it. */
+const panelId = computed(() => `tool-part-${props.part.id}`)
+
 /* Lines the step's diff added and removed, counted inside its hunks as MiMo counts them. */
 const diffstat = computed(() => {
   let add = 0
@@ -203,6 +206,7 @@ const avatarSeed = computed(() => {
         :class="{ 'hs-summary': summary }"
         :aria-disabled="expandable ? undefined : 'true'"
         :aria-expanded="expandable ? open : undefined"
+        :aria-controls="expandable ? panelId : undefined"
         data-step-head
         @click="toggle"
         @keydown.enter="onTitleClick"
@@ -236,7 +240,7 @@ const avatarSeed = computed(() => {
         </span>
       </button>
 
-      <StepCollapse :show="open && expandable" :animate="animate">
+      <StepCollapse :id="panelId" :show="open && expandable" :animate="animate">
         <!-- A command: what was run (with the model's description) over what it printed. -->
         <div v-if="bash" class="hs-bash-expand" data-bash-expand>
           <pre class="hs-cell top" data-bash-command><span v-if="bash.desc" class="hs-bash-desc-line">{{ `# ${bash.desc}\n` }}</span><span class="hs-bash-cmd-line">{{ bash.cmd }}</span></pre>

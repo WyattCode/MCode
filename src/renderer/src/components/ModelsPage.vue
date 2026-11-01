@@ -216,7 +216,7 @@ async function confirmClone(id: string) {
     <p class="note">{{ t("set.models.intro") }}</p>
 
     <!-- MiMo 26.920's tab row: refresh, 添加供应商, then one per provider. -->
-    <div class="tabs" data-provider-tabs>
+    <div class="tabs" role="toolbar" :aria-label="t('set.models')" data-provider-tabs>
       <button
         type="button"
         class="tab square"
@@ -230,7 +230,7 @@ async function confirmClone(id: string) {
           <path d="M13 8a5 5 0 1 1-1.5-3.55M13 2.5v2.5h-2.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
       </button>
-      <button type="button" class="tab" :class="{ on: selected === ADD }" data-provider-add @click="selected = ADD">
+      <button type="button" class="tab" :class="{ on: selected === ADD }" :aria-pressed="selected === ADD" data-provider-add @click="selected = ADD">
         + {{ t("set.models.addProvider") }}
       </button>
       <button
@@ -239,6 +239,7 @@ async function confirmClone(id: string) {
         type="button"
         class="tab"
         :class="{ on: selected === provider.id }"
+        :aria-pressed="selected === provider.id"
         :data-provider-tab="provider.id"
         @click="selected = provider.id"
       >
@@ -286,6 +287,7 @@ async function confirmClone(id: string) {
             <input
               :value="endpointValue(current)"
               class="field-in"
+              :aria-label="t('set.baseURL')"
               :placeholder="t('set.baseURL')"
               spellcheck="false"
               data-provider-endpoint
@@ -298,7 +300,7 @@ async function confirmClone(id: string) {
       </div>
       <div class="section">
         {{ t("set.models.fromProvider") }}
-        <span class="count">{{ current.models.length ? t("provider.modelCount", { n: current.models.length }) : t("provider.noModels") }}</span>
+        <span class="count" :role="current.models.length ? 'status' : undefined">{{ current.models.length ? t("provider.modelCount", { n: current.models.length }) : t("provider.noModels") }}</span>
       </div>
       <div v-if="current.models.length" class="card models" data-provider-models>
         <div v-for="model in current.models" :key="model.id" class="model-row">
@@ -878,5 +880,19 @@ h2 {
 .primary:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* Keyboard focus: a ring in the interactive ink, on the control's own corner. */
+.tab:focus-visible,
+.preset:focus-visible,
+.dock-btn:focus-visible,
+.primary:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 1px;
+}
+
+.field-in:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 1px;
 }
 </style>

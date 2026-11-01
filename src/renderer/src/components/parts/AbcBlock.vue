@@ -18,6 +18,11 @@ import { writeText } from "./../../lib/clipboard"
  */
 const props = defineProps<{ code: string }>()
 
+/* Per-instance ids so several ABC blocks on a page keep their panels apart. */
+const uid = Math.random().toString(36).slice(2, 9)
+const scorePanelId = `abc-panel-score-${uid}`
+const codePanelId = `abc-panel-code-${uid}`
+
 const tab = ref<"score" | "code">("score")
 const ready = ref(false)
 const failed = ref(false)
@@ -212,10 +217,29 @@ const lineEnd = (index: number) => (index < lines.value.length - 1 ? "\n" : "")
           <span>{{ playLabel }}</span>
         </button>
         <div class="md-abc-tabs" role="tablist">
-          <button type="button" role="tab" data-abc-tab="score" :aria-selected="showingScore" :class="{ on: showingScore }" :disabled="failed" @click="tab = 'score'">
+          <button
+            type="button"
+            role="tab"
+            data-abc-tab="score"
+            :id="`abc-tab-score-${uid}`"
+            :aria-selected="showingScore"
+            :aria-controls="scorePanelId"
+            :class="{ on: showingScore }"
+            :disabled="failed"
+            @click="tab = 'score'"
+          >
             {{ t("abc.score") }}
           </button>
-          <button type="button" role="tab" data-abc-tab="code" :aria-selected="!showingScore" :class="{ on: !showingScore }" @click="tab = 'code'">
+          <button
+            type="button"
+            role="tab"
+            data-abc-tab="code"
+            :id="`abc-tab-code-${uid}`"
+            :aria-selected="!showingScore"
+            :aria-controls="codePanelId"
+            :class="{ on: !showingScore }"
+            @click="tab = 'code'"
+          >
             {{ t("abc.code") }}
           </button>
         </div>
@@ -233,7 +257,7 @@ const lineEnd = (index: number) => (index < lines.value.length - 1 ? "\n" : "")
       </div>
     </div>
 
-    <div v-show="showingScore" class="md-abc-view">
+    <div v-show="showingScore" :id="scorePanelId" class="md-abc-view" role="tabpanel" :aria-labelledby="`abc-tab-score-${uid}`">
       <div v-if="state === 'playing' || state === 'paused'" class="md-abc-progress" data-abc-progress @pointerdown="seekFrom">
         <div class="md-abc-track">
           <div class="md-abc-fill" :style="{ width: `${progress * 100}%` }" />
@@ -247,8 +271,10 @@ const lineEnd = (index: number) => (index < lines.value.length - 1 ? "\n" : "")
       <div ref="score" class="md-abc-score" data-abc-score @click="onScoreClick" />
     </div>
     <template v-if="!showingScore">
+      <div :id="codePanelId" role="tabpanel" :aria-labelledby="`abc-tab-code-${uid}`">
       <div v-if="failed" class="md-abc-error" data-abc-error>{{ t("abc.parseError") }}</div>
       <pre class="md-code md-lined md-abc-source" data-abc-source><code><template v-for="(line, index) in lines" :key="index"><span class="line">{{ line }}</span>{{ lineEnd(index) }}</template></code></pre>
+      </div>
     </template>
   </div>
 </template>
@@ -300,6 +326,14 @@ const lineEnd = (index: number) => (index < lines.value.length - 1 ? "\n" : "")
 .text .md-abc-tabs button:disabled {
   cursor: not-allowed;
   opacity: 0.4;
+}
+
+.text .md-abc-tabs button:focus-visible,
+.text .md-abc-play:focus-visible,
+.text .md-abc .md-code-copy:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 1px;
+  border-radius: 5px;
 }
 
 .text .md-abc-spin {

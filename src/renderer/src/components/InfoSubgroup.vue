@@ -6,7 +6,7 @@ const emit = defineEmits<{ toggle: [] }>()
 
 <template>
   <div class="subgroup" :data-info-subgroup="name">
-    <button type="button" class="head" :aria-expanded="open" @click="emit('toggle')">
+    <button type="button" class="head" :aria-expanded="open" :aria-controls="`info-sub-${name}`" @click="emit('toggle')">
       <svg v-if="open" class="chev" width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
         <path d="M4.5 6.5 8 10l3.5-3.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
       </svg>
@@ -16,7 +16,7 @@ const emit = defineEmits<{ toggle: [] }>()
       <span class="title">{{ title }}</span>
       <span class="count">{{ count }}</span>
     </button>
-    <div v-if="open" class="body">
+    <div v-if="open" :id="`info-sub-${name}`" class="body">
       <slot />
     </div>
   </div>
@@ -30,6 +30,12 @@ const emit = defineEmits<{ toggle: [] }>()
 
 .subgroup + .subgroup {
   margin-top: 9px;
+}
+
+.head:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 .head {
