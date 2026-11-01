@@ -32,17 +32,20 @@ const lines = computed(() => props.text.replace(/\n+$/, "").split("\n"))
 
 let imageTimer: ReturnType<typeof setTimeout> | undefined
 let codeTimer: ReturnType<typeof setTimeout> | undefined
+let generation = 0
 
 // Another file in the same place starts over, as MiMo resets its card.
 watch(
   () => props.url,
   () => {
+    generation += 1
     tab.value = "diagram"
     image.value = "loading"
   },
 )
 
 onBeforeUnmount(() => {
+  generation += 1
   clearTimeout(imageTimer)
   clearTimeout(codeTimer)
 })
@@ -54,7 +57,10 @@ function loaded() {
 
 /* A picture that will not load is checked again: a deleted file becomes plain code, anything else the open button. */
 async function failed() {
-  const found = await window.mcode.resolveExistingPath([props.file]).catch(() => null)
+  const mine = ++generation
+  const file = props.file
+  const found = await window.mcode.resolveExistingPath([file]).catch(() => null)
+  if (mine !== generation) return
   if (!found) emit("missing")
   else image.value = "error"
 }
