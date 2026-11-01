@@ -19,6 +19,9 @@ const GAP = 4
 const EDGE = 12
 const WIDTH = 240
 
+/* The popover's id, so the trigger can point at it whether it is open or not. */
+const LISTBOX_ID = "language-menu-listbox"
+
 const root = ref<HTMLElement>()
 const pop = ref<HTMLElement>()
 const search = ref<HTMLInputElement>()
@@ -125,7 +128,15 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="root" class="lang-menu">
-    <button class="lang-trigger" type="button" data-language-trigger :aria-expanded="open" aria-haspopup="listbox" @click="toggle">
+    <button
+      class="lang-trigger"
+      type="button"
+      data-language-trigger
+      :aria-expanded="open"
+      aria-haspopup="listbox"
+      :aria-controls="LISTBOX_ID"
+      @click="toggle"
+    >
       <span class="lang-label">{{ label }}</span>
       <svg class="lang-caret" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
         <path d="M5 6.5L8 9.5L11 6.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
@@ -135,6 +146,7 @@ onBeforeUnmount(() => {
     <Teleport to="body">
       <div
         v-if="open"
+        :id="LISTBOX_ID"
         ref="pop"
         class="lang-pop"
         :class="{ flip: box.flip }"
@@ -210,6 +222,11 @@ onBeforeUnmount(() => {
   box-shadow: var(--shadow-xs);
   font-size: calc(14px * var(--ui-font-scale, 1));
   white-space: nowrap;
+}
+
+.lang-trigger:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 .lang-label {
@@ -295,6 +312,12 @@ onBeforeUnmount(() => {
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
+.lang-pop .lang-search-input:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 .lang-pop .lang-list {
   display: flex;
   flex: 1;
@@ -326,6 +349,11 @@ onBeforeUnmount(() => {
   background: var(--surface-hover);
 }
 
+.lang-pop .lang-item:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: -2px;
+}
+
 .lang-pop .lang-check {
   flex-shrink: 0;
   color: var(--button-primary);
@@ -338,3 +366,4 @@ onBeforeUnmount(() => {
   text-align: center;
 }
 </style>
+

@@ -221,11 +221,11 @@ onBeforeUnmount(() => {
         </svg>
         <span class="text">
           <span class="title">{{ toast.title }}</span>
-          <button v-for="link in toast.links" :key="link.label" class="link" @click="follow(toast.id, link)">
+          <button v-for="link in toast.links" :key="link.label" type="button" class="link" @click="follow(toast.id, link)">
             {{ link.label }}
           </button>
         </span>
-        <button v-if="toast.closable" class="close" :aria-label="t('common.close')" @click="dismiss(toast.id)">✕</button>
+        <button v-if="toast.closable" type="button" class="close" :aria-label="t('common.close')" @click="dismiss(toast.id)">✕</button>
       </div>
     </TransitionGroup>
   </div>
@@ -281,6 +281,11 @@ onBeforeUnmount(() => {
   line-height: 1.3;
   pointer-events: auto;
   -webkit-app-region: no-drag;
+}
+
+.notice:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 .notice.success {
@@ -369,6 +374,13 @@ onBeforeUnmount(() => {
   text-decoration: underline;
 }
 
+.link:focus-visible,
+.close:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 :root[data-theme="dark"] .link {
   color: #5a9cff;
 }
@@ -427,3 +439,4 @@ onBeforeUnmount(() => {
   }
 }
 </style>
+
