@@ -38,7 +38,14 @@ function toggle() {
 
 <template>
   <div v-if="changes.files.length > 0" class="live-edit-pill-wrap">
-    <button type="button" class="live-edit-pill" data-live-edit-pill :aria-expanded="expanded" @click="toggle">
+    <button
+      type="button"
+      class="live-edit-pill"
+      data-live-edit-pill
+      :aria-expanded="expanded"
+      :aria-label="`${t('composer.filesChanged', { n: changes.files.length })} +${changes.add} -${changes.del}`"
+      @click="toggle"
+    >
       <span class="live-edit-pill-text">{{ t("composer.filesChanged", { n: changes.files.length }) }}</span>
       <span class="live-edit-pill-stats">
         <span class="live-edit-add">+{{ changes.add }}</span>
@@ -86,6 +93,12 @@ function toggle() {
 
 .live-edit-pill:hover {
   color: var(--text-strong);
+}
+
+.live-edit-pill:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 12px;
 }
 
 .live-edit-pill-text {
