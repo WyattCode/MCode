@@ -92,15 +92,29 @@ export async function openDocument(file: { path: string; name?: string }, direct
      */
     const shown = tab.sourcePath === file.path && tab.filePath !== undefined && tab.filePath !== file.path && !tab.converting
     if (!shown) rp.update(tab.id, { converting: true })
+    /*
+     * The reader may close this tab (or the panel) while LibreOffice works.
+     * Hold the id and path, and after each await only act if that very tab is
+     * still there and still this conversion - a late result for a dismissed
+     * tab must not pop a viewer or touch a newer tab for the same file.
+     */
+    const tabId = tab.id
+    const heldPath = file.path
+    const stillOurs = (): boolean => {
+      const current = rp.tabs.find((entry) => entry.id === tabId)
+      return current !== undefined && current.sourcePath === heldPath
+    }
     const result = await window.mcode.officeConvertLegacy(file.path)
     if (!result.ok) {
-      rp.close([tab.id])
+      if (!stillOurs()) return
+      rp.close([tabId])
       notifyFailure(t("office.convertFailed", { err: result.error }))
       openFileInViewer(file.path, directory)
       return
     }
     const size = await window.mcode.fileSize(result.output).catch(() => 0)
-    rp.update(tab.id, { converting: false, filePath: result.output, sourcePath: file.path, fileType: legacy, size, name })
+    if (!stillOurs()) return
+    rp.update(tabId, { converting: false, filePath: result.output, sourcePath: file.path, fileType: legacy, size, name })
     return
   }
   openFileInViewer(file.path, directory)
