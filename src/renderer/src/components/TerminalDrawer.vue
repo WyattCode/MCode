@@ -457,6 +457,11 @@ function startResize(event: PointerEvent) {
   border-color: #f0ebe5;
 }
 
+.tab:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
 :root[data-theme="dark"] .tab.on {
   background: #181818;
   border-color: #2e2e2e;

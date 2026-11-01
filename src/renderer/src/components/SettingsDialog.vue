@@ -1720,7 +1720,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="overlay" :class="{ closing }" data-settings-overlay data-modal-no-exit @mousedown.self="requestClose">
-    <div ref="dialogEl" v-modal class="dialog" data-modal-keep-focus data-new-task-clears>
+    <div ref="dialogEl" v-modal class="dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title" data-modal-keep-focus data-new-task-clears>
       <!-- 2.0: MiMo's dialog closes from its own corner as well as from Escape
            and the scrim, which a pointer-only reader otherwise has to find. -->
       <button class="close" :aria-label="t('set.close')" data-settings-close @click="requestClose">
@@ -1731,7 +1731,7 @@ onBeforeUnmount(() => {
       <nav class="nav" :class="{ 'mouse-active': pointerMoved }" @pointermove="pointerMoved = true">
         <!-- The title and the search stay put; only the list under them scrolls, as MiMo's does. -->
         <div class="nav-top">
-          <div class="nav-title">{{ t("rail.settings") }}</div>
+          <div id="settings-title" class="nav-title">{{ t("rail.settings") }}</div>
           <input
             v-model="navQuery"
             class="nav-search"
@@ -2140,6 +2140,7 @@ onBeforeUnmount(() => {
                       data-voice-usage-link
                       @click="voiceUsageOpen = true"
                       @keydown.enter.prevent="voiceUsageOpen = true"
+                      @keydown.space.prevent="voiceUsageOpen = true"
                       >{{ t("set.voiceUsageLink") }}</span
                     >
                   </template>
@@ -5885,6 +5886,12 @@ h3 {
   text-decoration: underline;
   text-underline-offset: 2px;
   cursor: pointer;
+}
+
+.usage-link:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+  border-radius: 2px;
 }
 
 /* MiMo's text-blue, shared by 用法详情 and 了解更多. */
