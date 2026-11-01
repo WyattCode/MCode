@@ -2089,6 +2089,7 @@ defineExpose({ stepMessage, scroller })
     -->
     <button
       v-if="showJump && !latest"
+      type="button"
       class="jump"
       data-jump-to-bottom
       :aria-label="t('stream.jumpToBottom')"
@@ -2668,6 +2669,11 @@ defineExpose({ stepMessage, scroller })
 
 .jump:hover {
   color: var(--text-strong);
+}
+
+.jump:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: -2px;
 }
 
 /* Lifted clear of the "files changed" pill while it hangs over the composer. */
