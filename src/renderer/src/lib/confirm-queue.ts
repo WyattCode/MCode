@@ -35,6 +35,20 @@ export function confirmQueue(
   return items.sort((a, b) => a.time - b.time)
 }
 
+/** Whether a conversation (or its subagents) still needs a confirm-dock answer. */
+export function sessionHasConfirm(
+  sessionID: string,
+  permissions: { has(id: string): boolean },
+  questions: Iterable<{ sessionID: string }>,
+  rootOf: (id: string) => string = (id) => id,
+): boolean {
+  if (permissions.has(sessionID)) return true
+  for (const request of questions) {
+    if (rootOf(request.sessionID) === sessionID) return true
+  }
+  return false
+}
+
 /** The permission card answers this id; ignore a different head of the queue. */
 export function permissionTarget(
   requestID: string | undefined,

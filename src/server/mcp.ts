@@ -1350,7 +1350,23 @@ export class McpServers {
     if (!stored) throw new Error(`no MCP server named ${name} is configured`)
     await this.ready(this.viewDirectory())
     const group = this.group()
-    if (!group || group.connections.has(name)) return
+    if (!group) return
+    /*
+     * A failed (or auth-waiting) server already sits in the map. Returning early
+     * left Settings with a red pill and no way to retry without toggling the
+     * switch off and on - and that path still waits for apply-now. Reconnect
+     * those in place; leave a live or in-flight connection alone.
+     */
+    const existing = group.connections.get(name)
+    if (existing) {
+      if (existing.status === "connected" || existing.status === "pending" || existing.status === "disabled") return
+      if (existing.busy()) return
+      await existing.stop()
+      this.publish()
+      await existing.connect()
+      this.publish()
+      return
+    }
     const [entry] = await resolveServers({ servers: { [name]: stored }, configFile: this.configFile(), home: this.home })
     if (!entry) throw new Error(`the MCP server ${name} has no type`)
     if (group.connections.has(name)) return

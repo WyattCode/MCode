@@ -2,7 +2,7 @@ import { computed, ref, watch } from "vue"
 import { defineStore } from "pinia"
 import type { QuestionAnswer, QuestionRequest } from "@shared/protocol"
 import { useApp } from "./app"
-import { composerAnswers, composerTarget, confirmQueue, freshGuide, guideShown, type GuideState } from "../lib/confirm-queue"
+import { composerAnswers, composerTarget, confirmQueue, freshGuide, guideShown, sessionHasConfirm, type GuideState } from "../lib/confirm-queue"
 import { sessionAccess } from "@shared/access"
 import { t } from "../lib/i18n"
 import { notifyFailure } from "../lib/toast"
@@ -41,6 +41,16 @@ export const useQuestions = defineStore("questions", () => {
   })
 
   const busy = computed(() => (requestID: string) => sending.value.has(requestID))
+
+  /** True when this conversation (or a subagent of it) is parked on a question. */
+  function awaiting(sessionID: string): boolean {
+    return sessionHasConfirm(sessionID, { has: () => false }, pending.value.values(), (id) => app.rootOf(id))
+  }
+
+  /** Permissions or questions still need an answer for this conversation. */
+  function needsConfirm(sessionID: string): boolean {
+    return sessionHasConfirm(sessionID, app.pendingPermissions, pending.value.values(), (id) => app.rootOf(id))
+  }
 
   /*
    * What the dock shows: the current session's undecided permissions and
@@ -261,6 +271,8 @@ export const useQuestions = defineStore("questions", () => {
     pending,
     forCall,
     busy,
+    awaiting,
+    needsConfirm,
     queue,
     reply,
     dismiss,

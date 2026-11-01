@@ -9,6 +9,7 @@ import { projectOf } from "../lib/session-project"
 import { subagentsAtWork } from "../lib/subagent-chip"
 import { sidePreview } from "../lib/side-preview"
 import { useApp } from "../stores/app"
+import { useQuestions } from "../stores/questions"
 import { dateIn, language, sessionTitle, t, tn } from "../lib/i18n"
 import { notify, notifyFailure } from "../lib/toast"
 import { RAIL_WIDTH } from "../lib/right-tools"
@@ -85,6 +86,7 @@ const emit = defineEmits<{
 }>()
 
 const app = useApp()
+const questions = useQuestions()
 
 /* MiMo pages Recent fifty at a time. */
 const RECENT_PAGE = 50
@@ -741,7 +743,7 @@ type Attention = "waiting" | "unread" | "active"
 const RANK: Record<Attention, number> = { waiting: 0, unread: 1, active: 2 }
 
 function attentionOf(sessionID: string): Attention | undefined {
-  if (app.pendingPermissions.has(sessionID)) return "waiting"
+  if (questions.needsConfirm(sessionID)) return "waiting"
   if (app.unseen.has(sessionID) || app.failed(sessionID)) return "unread"
   if (working(sessionID)) return "active"
   return undefined
@@ -758,7 +760,7 @@ type RowStatus = "waiting" | "running" | "unread"
 const STATUS_RANK: Record<RowStatus, number> = { waiting: 0, running: 1, unread: 2 }
 
 function statusOf(sessionID: string): RowStatus | undefined {
-  if (app.pendingPermissions.has(sessionID) && app.currentID !== sessionID) return "waiting"
+  if (questions.needsConfirm(sessionID) && app.currentID !== sessionID) return "waiting"
   if (working(sessionID)) return "running"
   if (app.unseen.has(sessionID) || app.failed(sessionID)) return "unread"
   return undefined
