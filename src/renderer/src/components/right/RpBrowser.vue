@@ -282,6 +282,7 @@ defineExpose({
         data-rb-url
         spellcheck="false"
         :placeholder="t('rp.browser.urlPlaceholder')"
+        :aria-label="t('rp.browser.urlPlaceholder')"
         @focus="editing = true"
         @blur="editing = false"
         @keydown="onAddressKey"
@@ -326,6 +327,8 @@ defineExpose({
         class="rb-round"
         data-rb-more
         :aria-label="t('rp.browser.more')"
+        :aria-expanded="menuOpen"
+        aria-haspopup="menu"
         v-tip="{ label: t('rp.browser.more'), disabled: menuOpen }"
         @click="menuOpen ? closeMenu() : openMenu()"
       >
@@ -340,7 +343,7 @@ defineExpose({
           <span class="rb-zoom-label">{{ t("rp.browser.dotMenu.zoom") }}</span>
           <span class="rb-zoom-pill">
             <button type="button" class="rb-step" :disabled="!showingPage || state.zoom <= zoomFloor" :aria-label="t('key.zoomOut')" @click="act('zoomOut')">−</button>
-            <span class="rb-zoom-value">{{ state.zoom }}%</span>
+            <span class="rb-zoom-value" role="status" aria-live="polite">{{ state.zoom }}%</span>
             <button type="button" class="rb-step" :disabled="!showingPage || state.zoom >= zoomCeiling" :aria-label="t('key.zoomIn')" @click="act('zoomIn')">+</button>
           </span>
           <button type="button" class="rb-zoom-reset" :disabled="!showingPage" :aria-label="t('key.zoomReset')" @click="act('zoomReset')">↻</button>
@@ -434,6 +437,11 @@ defineExpose({
 
 .rb-round:disabled {
   opacity: 0.4;
+}
+
+.rb-round:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: -2px;
 }
 
 .rb-url {
@@ -584,6 +592,12 @@ defineExpose({
 .rb-step:disabled,
 .rb-zoom-reset:disabled {
   opacity: 0.4;
+}
+
+.rb-step:focus-visible,
+.rb-zoom-reset:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: -2px;
 }
 
 .rb-rule {
@@ -827,6 +841,11 @@ defineExpose({
 
 .rb-error-retry:hover {
   background: #f1f0ec;
+}
+
+.rb-error-retry:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: -2px;
 }
 
 /* MiMo's dark values, for the explicit choice and for the system's. */

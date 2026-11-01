@@ -763,6 +763,11 @@ body.resizing .right-panel {
   background: var(--surface-hover);
 }
 
+.rpt-close:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: -2px;
+}
+
 /* The plus follows the tabs: 26px, a 16px glyph in --color-mut, --color-txt under the pointer. */
 .rp-add {
   display: grid;
@@ -781,6 +786,11 @@ body.resizing .right-panel {
 .rp-add:hover {
   color: var(--text-body);
   background: var(--surface-hover);
+}
+
+.rp-add:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: -2px;
 }
 
 .rp-head-spacer {
@@ -818,6 +828,11 @@ body.resizing .right-panel {
 
 .launch-card:hover {
   background: var(--surface-hover);
+}
+
+.launch-card:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: -2px;
 }
 
 .lc-icon {
