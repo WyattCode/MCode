@@ -209,7 +209,7 @@ function onEditKey(event: KeyboardEvent) {
     </span>
 
     <Teleport to="body">
-      <div v-if="open && shown.length" class="ann-pop" :data-ann-pop="open" :style="popStyle" @mouseenter="stay" @mouseleave="leave">
+      <div v-if="open && shown.length" class="ann-pop" role="dialog" :aria-label="open === 'notes' ? t('annotations.chip', { count: shown.length }) : t('annotations.refsMore', { count: shown.length })" :data-ann-pop="open" :style="popStyle" @mouseenter="stay" @mouseleave="leave">
         <div v-for="entry in shown" :key="entry.note.id" class="ann-item">
           <span class="ann-go" role="button" tabindex="0" data-ann-go @click="activate(entry.note)" @keydown.enter.space.self.prevent="activate(entry.note)">
           <span class="ann-num ann-num-list">{{ entry.num }}</span>
@@ -334,6 +334,15 @@ function onEditKey(event: KeyboardEvent) {
 .cchip-rm:hover,
 .ann-rm:hover {
   color: #1a1a1a;
+}
+
+.cchip-rm:focus-visible,
+.ann-rm:focus-visible,
+.cchip-go:focus-visible,
+.ann-go:focus-visible,
+.ann-note-edit:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 /* MiMo's number: a 14px accent pill, 9px bold. */

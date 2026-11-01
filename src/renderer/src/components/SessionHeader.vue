@@ -210,7 +210,7 @@ function openMenu(event: MouseEvent) {
         The buttons at the other end drive the panels, which are not the
         conversation.
       -->
-      <button class="ico options" v-tip="{ label: t('header.moreTip'), disabled: menuOpen }" @click="openMenu">
+      <button type="button" class="ico options" :aria-label="t('header.moreTip')" aria-haspopup="menu" :aria-expanded="Boolean(menuOpen)" v-tip="{ label: t('header.moreTip'), disabled: menuOpen }" @click="openMenu">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
           <circle cx="5" cy="12" r="1.7" />
           <circle cx="12" cy="12" r="1.7" />
@@ -362,6 +362,17 @@ function openMenu(event: MouseEvent) {
 .ico:hover {
   color: var(--text-strong);
   background: var(--surface-hover);
+}
+
+.ico:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
+.open-face:focus-visible,
+.open-caret:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 /*
