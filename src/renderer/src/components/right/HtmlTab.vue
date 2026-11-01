@@ -293,6 +293,7 @@ onBeforeUnmount(() => {
           class="fc-btn html-edit"
           data-html-edit-toggle
           :aria-pressed="tab.htmlEdit ? 'true' : 'false'"
+          :aria-label="tab.htmlEdit ? t('html.exitEdit') : t('html.edit')"
           :class="{ on: tab.htmlEdit }"
           v-tip="{ label: tab.htmlEdit ? t('html.exitEdit') : t('html.edit') }"
           @click="rp.toggleHtmlEdit(tab.id)"
@@ -307,6 +308,7 @@ onBeforeUnmount(() => {
           class="fc-btn"
           data-office-undo
           :title="t('office.undo')"
+          :aria-label="t('office.undo')"
           :disabled="!versions.canUndo(path)"
           :style="versions.canUndo(path) ? undefined : { opacity: 0.4 }"
           @click="versions.undo(path)"
@@ -318,20 +320,30 @@ onBeforeUnmount(() => {
           class="fc-btn"
           data-office-redo
           :title="t('office.redo')"
+          :aria-label="t('office.redo')"
           :disabled="!versions.canRedo(path)"
           :style="versions.canRedo(path) ? undefined : { opacity: 0.4 }"
           @click="versions.redo(path)"
         >
           <LucideIcon name="redo-2" :size="15" />
         </button>
-        <button type="button" class="fc-btn" data-office-history :title="t('office.history')" @click="toggleHistory">
+        <button
+          type="button"
+          class="fc-btn"
+          data-office-history
+          :title="t('office.history')"
+          :aria-label="t('office.history')"
+          aria-haspopup="dialog"
+          :aria-expanded="history ? 'true' : 'false'"
+          @click="toggleHistory"
+        >
           <LucideIcon name="history" :size="15" />
         </button>
         <!-- MiMo's button is never disabled: it opens whatever the tab is showing. -->
-        <button type="button" class="fc-btn" data-html-open-browser :title="t('html.openBrowser')" @click="openInBrowser">
+        <button type="button" class="fc-btn" data-html-open-browser :title="t('html.openBrowser')" :aria-label="t('html.openBrowser')" @click="openInBrowser">
           <LucideIcon name="external-link" :size="15" />
         </button>
-        <button type="button" class="fc-btn" data-office-folder :title="t('office.openFolder')" @click="reveal">
+        <button type="button" class="fc-btn" data-office-folder :title="t('office.openFolder')" :aria-label="t('office.openFolder')" @click="reveal">
           <LucideIcon name="folder-open" :size="15" />
         </button>
       </div>
@@ -431,6 +443,11 @@ onBeforeUnmount(() => {
 .fc-btn:disabled {
   opacity: 0.55;
   cursor: default;
+}
+
+.fc-btn:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: -2px;
 }
 
 .fc-btn.html-edit {

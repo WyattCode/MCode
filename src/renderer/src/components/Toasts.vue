@@ -221,11 +221,11 @@ onBeforeUnmount(() => {
         </svg>
         <span class="text">
           <span class="title">{{ toast.title }}</span>
-          <button v-for="link in toast.links" :key="link.label" class="link" @click="follow(toast.id, link)">
+          <button v-for="link in toast.links" :key="link.label" type="button" class="link" @click="follow(toast.id, link)">
             {{ link.label }}
           </button>
         </span>
-        <button v-if="toast.closable" class="close" :aria-label="t('common.close')" @click="dismiss(toast.id)">✕</button>
+        <button v-if="toast.closable" type="button" class="close" :aria-label="t('common.close')" @click="dismiss(toast.id)">✕</button>
       </div>
     </TransitionGroup>
   </div>
@@ -317,6 +317,12 @@ onBeforeUnmount(() => {
 :root[data-theme="dark"] .notice.danger {
   background: #4d100e;
   border-color: #711a16;
+}
+
+.link:focus-visible,
+.close:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: -2px;
 }
 
 @media (prefers-color-scheme: dark) {

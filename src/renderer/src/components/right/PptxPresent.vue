@@ -293,7 +293,7 @@ onBeforeUnmount(() => {
       <button type="button" class="present-exit" :style="{ opacity: controls ? 1 : 0 }" :aria-label="t('office.pptxPresentExit')" @click="emit('close')">
         <LucideIcon name="x" :size="18" />
       </button>
-      <div class="present-count" :style="{ opacity: controls ? 1 : 0 }">{{ index + 1 }} / {{ count }}</div>
+      <div class="present-count" role="status" :style="{ opacity: controls ? 1 : 0 }">{{ index + 1 }} / {{ count }}</div>
     </div>
   </Teleport>
 </template>
@@ -344,6 +344,11 @@ onBeforeUnmount(() => {
   border: none;
   border-radius: 8px;
   transition: opacity 0.2s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.present-exit:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: -2px;
 }
 
 .present-count {

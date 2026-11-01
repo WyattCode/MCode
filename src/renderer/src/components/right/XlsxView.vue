@@ -915,7 +915,7 @@ const keepOpen = () => true
     <div v-if="statusText" class="xlsx-status" :class="{ failed: status === 'error' }" data-xlsx-status>{{ statusText }}</div>
 
     <Teleport to="body">
-      <button v-if="active && pillAt" type="button" class="xlsx-pill" data-cell-affordance :style="pillAt" @click="mode = 'input'">{{ t("office.cellEdit") }}</button>
+      <button v-if="active && pillAt" type="button" class="xlsx-pill" data-cell-affordance :style="pillAt" :aria-label="t('office.cellEdit')" @click="mode = 'input'">{{ t("office.cellEdit") }}</button>
     </Teleport>
 
     <CellAffordance
@@ -996,6 +996,11 @@ const keepOpen = () => true
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
+}
+
+.xlsx-pill:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: -2px;
 }
 
 .xlsx-note {
