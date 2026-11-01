@@ -568,6 +568,15 @@ watch(
   background: var(--surface-hover);
 }
 
+.picker:focus-visible,
+.retry:focus-visible,
+.dirty-go:focus-visible,
+.dirty-cancel:focus-visible,
+.row.actionable:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
 .message {
   width: 100%;
   padding: 4px;
@@ -582,6 +591,11 @@ watch(
 
 .message::placeholder {
   color: var(--text-weak);
+}
+
+.message:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 .row {

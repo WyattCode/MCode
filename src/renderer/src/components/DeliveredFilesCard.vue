@@ -186,6 +186,7 @@ async function pick(key: string) {
       role="button"
       tabindex="0"
       class="dl-card"
+      :aria-label="meta(item) ? `${item.name} · ${meta(item)}` : item.name"
       :data-delivered-card="deliveredCard(item)"
       :data-office-artifact-card="deliveredCard(item) === 'office' ? '' : undefined"
       :data-html-file-card="deliveredCard(item) === 'html' ? '' : undefined"
@@ -271,10 +272,14 @@ async function pick(key: string) {
   transition: border-color 0.15s ease;
 }
 
-.dl-card:hover,
+.dl-card:hover {
+  border-color: #2f6fed;
+}
+
 .dl-card:focus-visible {
   border-color: #2f6fed;
-  outline: none;
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 /* A preview sits where a card would, the same distance under what is above. */
@@ -336,10 +341,14 @@ async function pick(key: string) {
   transition: background-color 0.15s ease;
 }
 
-.dl-open-with:hover,
+.dl-open-with:hover {
+  background: #f0f0f2;
+}
+
 .dl-open-with:focus-visible {
   background: #f0f0f2;
-  outline: none;
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 .dl-chev,
