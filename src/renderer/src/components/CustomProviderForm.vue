@@ -986,6 +986,11 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
   border-color: var(--text-weak);
 }
 
+.cp-in:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
 /*
  * The dark fill is written on the plain element, which outranks the two rules
  * above it - one class and a pseudo-class against one class inside :root and a

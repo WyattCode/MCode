@@ -56,6 +56,7 @@ onMounted(() => {
         v-model="id"
         class="field-in"
         :class="{ bad: error }"
+        aria-labelledby="clone-provider-title"
         placeholder="my-provider-copy"
         data-clone-provider-id
         spellcheck="false"
@@ -129,6 +130,11 @@ h2 {
 
 .field-in:focus {
   border-color: var(--text-weak);
+}
+
+.field-in:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 /* The focus and refusal rings repeated for the dark fill, which would otherwise outrank both - see CustomProviderForm's .cp-in, the same shape. */
