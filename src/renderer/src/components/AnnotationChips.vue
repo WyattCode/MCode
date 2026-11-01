@@ -131,6 +131,17 @@ watch(shown, (list) => {
   if (open.value && !list.length) open.value = null
 })
 
+watch(
+  () => props.scope,
+  () => {
+    editing.value = null
+    draft.value = ""
+    open.value = null
+    clearTimeout(openTimer)
+    clearTimeout(closeTimer)
+  },
+)
+
 onBeforeUnmount(() => {
   clearTimeout(openTimer)
   clearTimeout(closeTimer)
