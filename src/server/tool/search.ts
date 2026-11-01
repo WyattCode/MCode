@@ -7,7 +7,7 @@ import type { ToolContext, ToolDefinition } from "./types"
 import { ToolError } from "./types"
 import { relative, resolvePath } from "./fs-util"
 import { SearchStopped } from "./ignore"
-import { lineText, MAX_LINE_LENGTH, type Row, type GrepOutcome, type GlobOutcome } from "./search-fallback"
+import { lineText, MAX_LINE_LENGTH, type Row } from "./search-fallback"
 import { runFallback } from "./search-run"
 
 /** MiMo lists at most 100 files for a glob and 100 matches for a grep. */
@@ -125,8 +125,7 @@ async function globFiles(root: string, pattern: string, limit: number, signal: A
     if (code !== 0 && code !== 1 && !found.length) throw new ToolError(stderr.trim() || `ripgrep failed with code ${code}`)
     return found
   }
-  const outcome = (await runFallback({ kind: "glob", root, pattern, limit }, signal)) as GlobOutcome
-  return outcome.paths
+  return (await runFallback({ kind: "glob", root, pattern, limit }, signal)).paths
 }
 
 export const GlobTool: ToolDefinition = {
@@ -235,7 +234,7 @@ export const GrepTool: ToolDefinition = {
     const { rows, partial } = await (binary
       ? grepWithRipgrep(binary, cwd, pattern, include, isDir ? undefined : path.relative(cwd, target), context.signal)
       : stat
-        ? (runFallback({ kind: "grep", target, isFile: !isDir, pattern, include }, context.signal) as Promise<GrepOutcome>)
+        ? runFallback({ kind: "grep", target, isFile: !isDir, pattern, include }, context.signal)
         : Promise.resolve({ rows: [] as Row[], partial: true })
     ).catch(stopped)
 

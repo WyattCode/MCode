@@ -66,6 +66,13 @@ export function truncate(text: string, limit: number): { text: string; truncated
  * answer is always no. Approving "always" covers that directory and everything
  * under it for the rest of the session, so a walk through one tree asks once.
  */
+/** The memory folder's real location, found once: the folder does not move while the app runs. */
+let memoryReal: { root: string; real: Promise<string> } | undefined
+function memoryTruePath(root: string): Promise<string> {
+  if (memoryReal?.root !== root) memoryReal = { root, real: truePath(root) }
+  return memoryReal.real
+}
+
 /**
  * Where a path really leads, following any links along the way.
  *
@@ -194,7 +201,7 @@ export async function resolvePath(context: ToolContext, target: string, access: 
   // `real` is symlink-resolved, so the root is compared in the same spelling: a data folder reached through a link
   // (macOS's /var -> /private/var) would otherwise never match.
   const memoryRoot = historyService()?.memoryRoot
-  if (isMemoryPath(real) || (memoryRoot && insideMemory(await truePath(memoryRoot), real))) return resolved
+  if (isMemoryPath(real) || (memoryRoot && insideMemory(await memoryTruePath(memoryRoot), real))) return resolved
 
   // Approve the directory itself, not the file, so reading a second file in the
   // same folder does not ask again.
