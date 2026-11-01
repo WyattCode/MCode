@@ -254,7 +254,6 @@ onBeforeUnmount(() => {
   <Teleport to="body">
     <div v-if="shown" class="vp-overlay" data-video-preview>
       <div id="video-preview" v-modal class="vp-content" role="dialog" aria-modal="true" data-new-task-clears :aria-label="t('videoPreview.title')" @pointerdown.capture="onGroundPointerDown" @click="onGroundClick">
-        <span class="vp-sr">{{ t("videoPreview.title") }}</span>
         <div class="vp-column" @click.stop>
           <div class="vp-frame">
             <video
@@ -282,7 +281,14 @@ onBeforeUnmount(() => {
             <div v-if="live" class="vp-live" data-video-box :style="place(live)" />
           </div>
           <div class="vp-bar">
-            <button type="button" class="vp-toggle" data-video-toggle :title="playing ? t('videoPreview.pause') : t('videoPreview.play')" @click="togglePlay">
+            <button
+              type="button"
+              class="vp-toggle"
+              data-video-toggle
+              :title="playing ? t('videoPreview.pause') : t('videoPreview.play')"
+              :aria-label="playing ? t('videoPreview.pause') : t('videoPreview.play')"
+              @click="togglePlay"
+            >
               <svg v-if="playing" viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
                 <rect x="6" y="5" width="4" height="14" rx="1" />
                 <rect x="14" y="5" width="4" height="14" rx="1" />
@@ -352,14 +358,6 @@ onBeforeUnmount(() => {
   }
 }
 
-.vp-sr {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
 
 .vp-column {
   display: flex;
@@ -449,6 +447,13 @@ onBeforeUnmount(() => {
   border: none;
   border-radius: 7px;
 }
+
+.vp-toggle:focus-visible,
+.vp-range:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
 
 .vp-toggle:hover {
   background: var(--surface-hover);
