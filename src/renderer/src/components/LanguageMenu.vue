@@ -125,7 +125,15 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="root" class="lang-menu">
-    <button class="lang-trigger" type="button" data-language-trigger :aria-expanded="open" aria-haspopup="listbox" @click="toggle">
+    <button
+      class="lang-trigger"
+      type="button"
+      data-language-trigger
+      :aria-label="t('set.language')"
+      :aria-expanded="open"
+      aria-haspopup="listbox"
+      @click="toggle"
+    >
       <span class="lang-label">{{ label }}</span>
       <svg class="lang-caret" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
         <path d="M5 6.5L8 9.5L11 6.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
