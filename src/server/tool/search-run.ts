@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url"
 import { Worker } from "node:worker_threads"
 import { SearchStopped } from "./ignore"
 import { ToolError } from "./types"
-import { runFallbackJob, type FallbackJob, type GlobOutcome, type GrepOutcome } from "./search-fallback"
+import { runFallbackJob, type FallbackJob, type GlobJob, type GlobOutcome, type GrepJob, type GrepOutcome } from "./search-fallback"
 
 /**
  * How long a single stand-in search may run before it is killed.
@@ -32,6 +32,47 @@ function workerFile(): string | undefined {
   return undefined
 }
 
+/** Workers kept warm between searches, and for how long: starting one means loading the bundle again. */
+const IDLE_WORKERS = 2
+const IDLE_MS = 30_000
+const idle: { worker: Worker; timer: NodeJS.Timeout }[] = []
+
+function forget(worker: Worker): void {
+  const at = idle.findIndex((entry) => entry.worker === worker)
+  if (at < 0) return
+  clearTimeout(idle[at]!.timer)
+  idle.splice(at, 1)
+}
+
+/** A worker that finished its search cleanly: kept for the next one, within limits. */
+function keep(worker: Worker): void {
+  if (idle.length >= IDLE_WORKERS) {
+    void worker.terminate()
+    return
+  }
+  const timer = setTimeout(() => {
+    forget(worker)
+    void worker.terminate()
+  }, IDLE_MS)
+  timer.unref()
+  idle.push({ worker, timer })
+}
+
+function take(file: string): Worker {
+  const entry = idle.pop()
+  if (entry) {
+    clearTimeout(entry.timer)
+    return entry.worker
+  }
+  const worker = new Worker(file)
+  // A worker waiting for work must not keep the process from exiting; a search in progress is held open by its deadline timer.
+  worker.unref()
+  // Between searches nobody is listening, and an unhandled worker error would take the process down.
+  worker.on("error", () => forget(worker))
+  worker.on("exit", () => forget(worker))
+  return worker
+}
+
 /**
  * Runs a stand-in search off the main thread, with a deadline.
  *
@@ -40,7 +81,13 @@ function workerFile(): string | undefined {
  * timer, because both need the event loop the match is holding - so it runs
  * where it can be terminated instead. The backend shares its thread with the
  * window, so the alternative is not a slow search but an unresponsive app.
+ *
+ * A worker that finishes is kept for the next search; one that is stopped is
+ * terminated, since it may still be inside the match.
  */
+export function runFallback(job: GrepJob, signal: AbortSignal, timeoutMs?: number): Promise<GrepOutcome>
+export function runFallback(job: GlobJob, signal: AbortSignal, timeoutMs?: number): Promise<GlobOutcome>
+export function runFallback(job: FallbackJob, signal: AbortSignal, timeoutMs?: number): Promise<GrepOutcome | GlobOutcome>
 export async function runFallback(
   job: FallbackJob,
   signal: AbortSignal,
@@ -64,15 +111,19 @@ export async function runFallback(
   if (signal.aborted) throw new SearchStopped()
 
   return new Promise((resolve, reject) => {
-    const worker = new Worker(file, { workerData: job })
+    const worker = take(file)
     let settled = false
 
-    const finish = (act: () => void) => {
+    const finish = (act: () => void, reusable = false) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
       signal.removeEventListener("abort", onAbort)
-      void worker.terminate()
+      worker.off("message", onMessage)
+      worker.off("error", onError)
+      worker.off("exit", onExit)
+      if (reusable) keep(worker)
+      else void worker.terminate()
       act()
     }
 
@@ -89,15 +140,15 @@ export async function runFallback(
     )
 
     const onAbort = () => finish(() => reject(new SearchStopped()))
-    signal.addEventListener("abort", onAbort, { once: true })
+    const onMessage = (message: { ok: boolean; result?: GrepOutcome | GlobOutcome; error?: string }) =>
+      finish(() => (message.ok ? resolve(message.result!) : reject(new ToolError(message.error ?? "Search failed"))), true)
+    const onError = (error: Error) => finish(() => reject(new ToolError(error.message)))
+    const onExit = (code: number) => finish(() => reject(new ToolError(`The search worker stopped unexpectedly (code ${code})`)))
 
-    worker.once("message", (message: { ok: boolean; result?: GrepOutcome | GlobOutcome; error?: string }) => {
-      finish(() => (message.ok ? resolve(message.result!) : reject(new ToolError(message.error ?? "Search failed"))))
-    })
-    worker.once("error", (error: Error) => finish(() => reject(new ToolError(error.message))))
-    worker.once("exit", (code) => {
-      // A clean exit after a result has already been handled is the normal path.
-      finish(() => reject(new ToolError(`The search worker stopped unexpectedly (code ${code})`)))
-    })
+    signal.addEventListener("abort", onAbort, { once: true })
+    worker.on("message", onMessage)
+    worker.on("error", onError)
+    worker.on("exit", onExit)
+    worker.postMessage(job)
   })
 }

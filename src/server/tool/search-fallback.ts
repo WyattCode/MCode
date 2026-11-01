@@ -2,6 +2,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import { StringDecoder } from "node:string_decoder"
 import { SearchStopped, overrideMatcher, walkFiles } from "./ignore"
+import { ToolError } from "./types"
 
 /*
  * The part of grep and glob that runs without ripgrep, over the JS walk.
@@ -75,7 +76,7 @@ async function grepWithWalk(target: string, isFile: boolean, pattern: string, in
   try {
     regex = fallbackRegex(pattern)
   } catch (err) {
-    throw new Error(`Invalid regular expression: ${(err as Error).message}`)
+    throw new ToolError(`Invalid regular expression: ${(err as Error).message}`)
   }
   const rows: Row[] = []
   let partial = false
@@ -175,6 +176,9 @@ export interface GlobOutcome {
   paths: string[]
 }
 
+export function runFallbackJob(job: GrepJob, signal: AbortSignal): Promise<GrepOutcome>
+export function runFallbackJob(job: GlobJob, signal: AbortSignal): Promise<GlobOutcome>
+export function runFallbackJob(job: FallbackJob, signal: AbortSignal): Promise<GrepOutcome | GlobOutcome>
 export async function runFallbackJob(job: FallbackJob, signal: AbortSignal): Promise<GrepOutcome | GlobOutcome> {
   return job.kind === "grep" ? grepWithWalk(job.target, job.isFile, job.pattern, job.include, signal) : { paths: await globWithWalk(job.root, job.pattern, job.limit, signal) }
 }

@@ -15,13 +15,19 @@
  *
  * Each round's fixes get their checks added here as they are made.
  */
+import { createRequire } from "node:module"
 import fs from "node:fs/promises"
+import os from "node:os"
 import path from "node:path"
 
 import { nameFromId } from "../src/server/provider/model-name"
 import { commandRisk } from "../src/server/command-risk"
 import { isSummary } from "../src/server/session/summary"
 import { modelVariants } from "../src/server/provider/variants"
+import { reasoningRequest } from "../src/server/provider/anthropic"
+import { runFallback } from "../src/server/tool/search-run"
+import { runFallbackJob } from "../src/server/tool/search-fallback"
+import { ToolError } from "../src/server/tool/types"
 import { normalizeChord, retireKeybinds, RETIRED_DEFAULTS } from "../src/shared/chord"
 
 let failures = 0
@@ -190,6 +196,58 @@ section("The renderer files that broke the build")
       open.set(m[1], i)
     }
     check(`${name} has no const declared twice in one block`, twin === "", twin)
+  }
+}
+
+section("A second look at #18: none that thinks, a marker that outlived its answer, a worker per search")
+{
+  // Each check names the input that used to do the opposite of what the code said.
+  const levels = ["none", "low", "medium", "high", "xhigh", "max"]
+  const older = "my-claude-3-model"
+  const body = (model: string, effort: string, menu: string[] | undefined = levels) => reasoningRequest(model, effort, menu, 64_000)
+  check("none sends no thinking on a model that takes a budget", JSON.stringify(body(older, "none")) === "{}", body(older, "none"))
+  check("nor on an adaptive model", JSON.stringify(body("claude-opus-4-7", "none")) === "{}", body("claude-opus-4-7", "none"))
+  check("nor when the menu was never worked out", JSON.stringify(body(older, "none", undefined)) === "{}")
+  const budget = (effort: string) => (body(older, effort) as { thinking?: { budget_tokens?: number } }).thinking?.budget_tokens ?? 0
+  check("low, medium and high are three growing budgets, not one", budget("low") < budget("medium") && budget("medium") < budget("high") && budget("high") < budget("max"), [budget("low"), budget("medium"), budget("high"), budget("max")])
+  check("xhigh takes the largest, the nearest level the budget model has", budget("xhigh") === budget("max"))
+  check("a built-in model's high and max are unchanged", budget("high") === 16_000 && budget("max") === 31_999)
+
+  const network = await read("src/main/local-network.ts")
+  check("the Local Network marker names the build, so a rebuilt app is asked again", /function build\(\)/.test(network) && network.includes("app.getVersion()") && network.includes("mtimeMs") && /readFileSync\(marker, "utf8"\)\.trim\(\) === current/.test(network))
+  check("and is written only once the packet went out", /send\(serviceQuery\(\)[^\n]*\(error\) => \{\s*done\(\)\s*if \(error\) return\s*try \{[\s\S]*?writeFileSync\(marker, current/.test(network))
+  check("a send that throws is closed, not left open", /\} catch \{\s*done\(\)\s*\}\s*\}\s*$/.test(network.trim()))
+
+  const { willSign } = createRequire(path.join(root, "package.json"))("./scripts/mac-adhoc-sign.cjs") as { willSign: (options: { identity?: string | null }, env: Record<string, string>, listing: string) => boolean }
+  const listing = (name: string) => `  1) 0123456789ABCDEF "${name}"\n     1 valid identities found`
+  const empty = "     0 valid identities found"
+  check("no identity: electron-builder will not sign, so the hook does", willSign({}, {}, empty) === false)
+  check("an identity of a kind electron-builder uses: it signs, the hook stands down", ["Developer ID Application: A (T)", "Apple Development: A (T)", "Mac Developer: A (T)"].every((name) => willSign({}, {}, listing(name))))
+  check("an identity of a kind it does not use is no reason to skip", willSign({}, {}, listing("iPhone Distribution: A (T)")) === false)
+  check("mac.identity null, or discovery off, is a decision not to sign", willSign({ identity: null }, {}, listing("Developer ID Application: A (T)")) === false && willSign({}, { CSC_IDENTITY_AUTO_DISCOVERY: "false" }, listing("Developer ID Application: A (T)")) === false)
+  check("a named identity or certificate file is signed with, found or not", willSign({ identity: "A" }, {}, empty) && willSign({}, { CSC_NAME: "A" }, empty) && willSign({}, { CSC_LINK: "x.p12" }, empty))
+
+  const invalid = await runFallbackJob({ kind: "grep", target: "/nonexistent", isFile: true, pattern: "(" }, new AbortController().signal).then(() => undefined, (error: unknown) => error)
+  check("a bad pattern is a ToolError on the main thread too", invalid instanceof ToolError, String(invalid))
+
+  const dir = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), "mcode-search-"))
+  try {
+    await fs.writeFile(path.join(dir, "a.txt"), "needle one\nhay\n")
+    await fs.writeFile(path.join(dir, "b.txt"), "hay\nneedle two\n")
+    const grep = (pattern: string, timeout?: number) => runFallback({ kind: "grep", target: dir, isFile: false, pattern }, new AbortController().signal, timeout)
+    const first = await grep("needle")
+    const second = await grep("needle")
+    check("a search finds its matches, and so does the next on the worker that was kept", first.rows.length === 2 && second.rows.map((row) => row.text).sort().join() === "needle one,needle two", second.rows)
+    const glob = await runFallback({ kind: "glob", root: dir, pattern: "*.txt", limit: 10 }, new AbortController().signal)
+    check("a glob is answered by the same pool", glob.paths.length === 2, glob.paths)
+    const together = await Promise.all([grep("needle"), grep("hay"), grep("one"), grep("two")])
+    check("several at once each get a worker and their own answer", together.map((outcome) => outcome.rows.length).join() === "2,2,1,1", together.map((outcome) => outcome.rows.length))
+    await fs.writeFile(path.join(dir, "bait.txt"), "a".repeat(60) + "!\n")
+    const stopped = await grep("(a+)+$", 600).then(() => undefined, (error: unknown) => error)
+    check("a runaway pattern is stopped at the deadline", stopped instanceof ToolError, String(stopped))
+    check("and the search after it does not land on the worker that was killed", (await grep("needle")).rows.length === 2)
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true })
   }
 }
 
