@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue"
+import { computed, onMounted, onUnmounted, ref, watch } from "vue"
 import type { McpServerState, SkillSummary } from "@shared/protocol"
 import ContextMenu from "./ContextMenu.vue"
 import SkillDetailDialog from "./SkillDetailDialog.vue"
@@ -51,14 +51,25 @@ interface Entry {
 /* The folder whose skills are listed: the open conversation's, or the default one on the home screen. */
 const where = computed(() => app.current?.directory ?? app.config?.directory)
 
+/* Which directory the in-memory skills belong to, and a generation to drop stale responses. */
+let skillsFor: string | undefined
+let skillsSeq = 0
+
 /** Rejects when the list cannot be read, leaving the skills already shown in place. */
 async function loadSkills(): Promise<void> {
   const directory = where.value
+  const seq = ++skillsSeq
   if (!directory) {
+    skillsFor = undefined
     skills.value = []
     return
   }
+  if (skillsFor !== directory) {
+    skills.value = []
+    skillsFor = directory
+  }
   const listed = await app.client?.request({ type: "skill.list", directory })
+  if (seq !== skillsSeq || where.value !== directory) return
   if (!listed) throw new Error(t("error.backendLost"))
   skills.value = listed.skills
 }
@@ -241,6 +252,18 @@ const detail = computed(() => skills.value.find((entry) => entry.name === detail
 const content = ref<SkillContentState>({ status: "idle" })
 const uninstalling = ref(false)
 
+/* The open project changed: drop the old project's skill detail and reload its skills. */
+watch(where, (directory, previous) => {
+  if (directory === previous) return
+  detailName.value = undefined
+  content.value = { status: "idle" }
+  skillMenu.value = undefined
+  void loadSkills().catch(() => {
+    listFailed.value = true
+  })
+})
+
+
 function openDetail(name: string) {
   detailName.value = name
   content.value = { status: "idle" }
@@ -256,9 +279,10 @@ async function loadContent() {
   content.value = { status: "loading" }
   try {
     const read = await app.client!.request({ type: "skill.content", directory, name: skill.name })
-    if (detailName.value === skill.name) content.value = { status: "ready", path: read.path, text: read.content, truncated: read.truncated }
+    if (detailName.value === skill.name && where.value === directory)
+      content.value = { status: "ready", path: read.path, text: read.content, truncated: read.truncated }
   } catch {
-    if (detailName.value === skill.name) content.value = { status: "failed" }
+    if (detailName.value === skill.name && where.value === directory) content.value = { status: "failed" }
   }
 }
 
@@ -270,12 +294,15 @@ async function uninstall() {
   const title = skillTitle(skill, language.value)
   try {
     await app.client!.request({ type: "skill.uninstall", directory, name: skill.name })
-    detailName.value = undefined
-    skills.value = skills.value.filter((entry) => entry.name !== skill.name)
-    void app.refreshCommands()
-    notice.success(t("skillDetail.uninstalledToast", { name: title }))
+    if (where.value === directory) {
+      detailName.value = undefined
+      skills.value = skills.value.filter((entry) => entry.name !== skill.name)
+      void app.refreshCommands()
+      notice.success(t("skillDetail.uninstalledToast", { name: title }))
+    }
   } catch (err) {
-    notice.danger(t("skillDetail.uninstallFailed", { error: err instanceof Error ? err.message : String(err) }))
+    if (where.value === directory)
+      notice.danger(t("skillDetail.uninstallFailed", { error: err instanceof Error ? err.message : String(err) }))
   } finally {
     uninstalling.value = false
   }
