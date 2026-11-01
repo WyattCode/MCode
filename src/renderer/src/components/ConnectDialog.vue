@@ -99,6 +99,19 @@ const others = computed(() => results.value.filter((entry) => !entry.recommended
 const provider = computed<ProviderStatus | undefined>(() => way.value?.provider)
 const auth = computed(() => (app.authState?.provider === provider.value?.id ? app.authState : undefined))
 
+const dialogTitleId = computed(() => {
+  switch (step.value) {
+    case "custom":
+      return "connect-title-custom"
+    case "methods":
+      return "connect-title-methods"
+    case "form":
+      return "connect-title-form"
+    default:
+      return "connect-title-browse"
+  }
+})
+
 /** The live attempt has to be abandoned whenever this screen stops showing it. */
 function dropPending() {
   const pending = app.authState
@@ -279,15 +292,15 @@ useEscapeLayer(dismiss)
 
 <template>
   <div class="scrim" @mousedown.self="dismiss">
-    <div v-modal class="dialog">
+    <div v-modal class="dialog" role="dialog" aria-modal="true" :aria-labelledby="dialogTitleId">
       <header class="bar">
-        <button v-if="step !== 'browse'" class="icon" v-tip="{ label: t('common.back'), placement: 'bottom' }" @click="back">
+        <button v-if="step !== 'browse'" type="button" class="icon" :aria-label="t('common.back')" v-tip="{ label: t('common.back'), placement: 'bottom' }" @click="back">
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M9.6 3.4 5 8l4.6 4.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
         </button>
         <span class="gap" />
-        <button class="icon" v-tip="{ label: t('common.close'), placement: 'bottom' }" @click="dismiss">
+        <button type="button" class="icon" :aria-label="t('common.close')" v-tip="{ label: t('common.close'), placement: 'bottom' }" @click="dismiss">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
           </svg>
@@ -296,15 +309,15 @@ useEscapeLayer(dismiss)
 
       <!-- 1. Which vendor. -->
       <template v-if="step === 'browse'">
-        <h2 class="title">{{ t("connect.title") }}</h2>
+        <h2 id="connect-title-browse" class="title">{{ t("connect.title") }}</h2>
 
         <div class="search">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <circle cx="7.2" cy="7.2" r="4.4" stroke="currentColor" stroke-width="1.3" />
             <path d="M10.6 10.6 13.4 13.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
           </svg>
-          <input ref="searchEl" v-model="query" class="search-in" :placeholder="t('connect.search')" spellcheck="false" />
-          <button v-if="query" class="icon small" v-tip="{ label: t('common.clear'), placement: 'bottom' }" @click="query = ''">
+          <input ref="searchEl" v-model="query" class="search-in" :placeholder="t('connect.search')" :aria-label="t('connect.search')" spellcheck="false" />
+          <button v-if="query" type="button" class="icon small" :aria-label="t('common.clear')" v-tip="{ label: t('common.clear'), placement: 'bottom' }" @click="query = ''">
             <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.2" />
               <path d="M6 6l4 4M10 6l-4 4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
@@ -354,7 +367,7 @@ useEscapeLayer(dismiss)
       <template v-else-if="step === 'custom'">
         <div class="head">
           <span class="row-mark big">+</span>
-          <h2 class="title">{{ t("provider.custom.title") }}</h2>
+          <h2 id="connect-title-custom" class="title">{{ t("provider.custom.title") }}</h2>
         </div>
         <CustomProviderForm standalone autofocus @connected="emit('close')" />
       </template>
@@ -363,7 +376,7 @@ useEscapeLayer(dismiss)
       <template v-else-if="step === 'methods'">
         <div class="head">
           <ProviderIcon v-if="target" :id="target.entries[0].id" :name="target.name" big />
-          <h2 class="title">{{ t("connect.to", { name: target?.name ?? "" }) }}</h2>
+          <h2 id="connect-title-methods" class="title">{{ t("connect.to", { name: target?.name ?? "" }) }}</h2>
         </div>
         <p class="lead">{{ t("connect.pickMethod", { name: target?.name ?? "" }) }}</p>
 
@@ -379,7 +392,7 @@ useEscapeLayer(dismiss)
       <template v-else>
         <div class="head">
           <ProviderIcon v-if="target" :id="target.entries[0].id" :name="target.name" big />
-          <h2 class="title">{{ t("connect.to", { name: provider?.name ?? "" }) }}</h2>
+          <h2 id="connect-title-form" class="title">{{ t("connect.to", { name: provider?.name ?? "" }) }}</h2>
         </div>
 
         <template v-if="way?.method === 'api-key'">
@@ -539,6 +552,11 @@ useEscapeLayer(dismiss)
 .icon.small {
   width: 22px;
   height: 22px;
+}
+
+.icon:focus-visible {
+  outline: 2px solid var(--text-strong);
+  outline-offset: -2px;
 }
 
 .head {
@@ -795,6 +813,11 @@ useEscapeLayer(dismiss)
 
 .eye:hover {
   color: var(--text-strong);
+}
+
+.eye:focus-visible {
+  outline: 2px solid var(--text-strong);
+  outline-offset: -2px;
 }
 
 .actions {

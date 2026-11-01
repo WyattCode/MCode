@@ -18,7 +18,7 @@ useEscapeLayer(() => emit("close"))
 
 <template>
   <div class="scrim" @mousedown.self="emit('close')">
-    <div v-modal class="dialog" data-full-access-confirm data-modal-keep-focus aria-labelledby="full-access-title">
+    <div v-modal class="dialog" data-full-access-confirm data-modal-keep-focus role="dialog" aria-modal="true" aria-labelledby="full-access-title" aria-describedby="full-access-desc">
       <div class="head">
         <h2 id="full-access-title">{{ t("composer.access.confirmTitle") }}</h2>
         <button class="close" type="button" :aria-label="t('common.close')" v-tip="t('common.close')" data-full-access-close @click="emit('close')">
@@ -27,7 +27,7 @@ useEscapeLayer(() => emit("close"))
           </svg>
         </button>
       </div>
-      <p class="desc">{{ t("composer.access.confirmBody") }}</p>
+      <p id="full-access-desc" class="desc">{{ t("composer.access.confirmBody") }}</p>
       <footer>
         <button class="ghost" type="button" data-full-access-cancel @click="emit('close')">{{ t("common.cancel") }}</button>
         <button class="confirm" type="button" data-full-access-ok @click="emit('confirm')">
@@ -94,6 +94,13 @@ h2 {
 .close:hover {
   color: var(--text-strong);
   background: var(--surface-hover);
+}
+
+.close:focus-visible,
+.ghost:focus-visible,
+.confirm:focus-visible {
+  outline: 2px solid var(--text-strong);
+  outline-offset: 2px;
 }
 
 /* MiMo's permc-desc: 14px in --color-txt. */
