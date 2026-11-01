@@ -870,20 +870,31 @@ watch(annotationFlash, (request) => {
 /* ------------------------------------------------------------ disk and runs */
 
 async function onDiskChange() {
-  const { ai, prompt } = aiTouch(props.path)
+  const path = props.path
+  const { ai, prompt } = aiTouch(path)
   const aiRunning = ai && app.running.size > 0
   // A send from here is out: its run-end record carries the note and the diff, and recording these bytes first would make that one a duplicate by hash.
   const pending = localConvo !== null
   if (aiRunning || pending) deferReload = true
-  const [dir, base] = splitPath()
+  const [dir, base] = splitFilePath(path)
   const read = await window.mcode.readFileBytes(dir, base, lastStat)
+  if (props.path !== path) {
+    deferReload = false
+    return
+  }
   if (!read.ok) return
   if (read.unchanged) {
     deferReload = false
     return
   }
   const changed = read.base64 !== lastBase64
-  if (changed && !pending) await versions.record(props.path, read.base64, ai ? "ai_local" : "external", ai ? prompt : t("office.versionNoteExternal"))
+  if (changed && !pending) {
+    await versions.record(path, read.base64, ai ? "ai_local" : "external", ai ? prompt : t("office.versionNoteExternal"))
+    if (props.path !== path) {
+      deferReload = false
+      return
+    }
+  }
   if (!aiRunning && !pending) {
     lastStat = { size: read.size, mtimeMs: read.mtimeMs }
     reload()
