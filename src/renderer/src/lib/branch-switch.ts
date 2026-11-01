@@ -89,6 +89,7 @@ export function useBranchSwitch(directory: () => string | undefined, onMutated: 
     switching.value = true
     try {
       const outcome = await switchBranch(root, branch, known, force)
+      if (directory() !== root) return
       if (outcome.kind === "switched") {
         if (outcome.conflicts) error.value = t("info.branchSwitchConflicts")
         current.value = outcome.branch
