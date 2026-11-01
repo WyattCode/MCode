@@ -70,11 +70,17 @@ async function preview(item: Delivered) {
     window.mcode.openExternal(item.url)
     return
   }
+  // Hold the turn's directory and the right panel's session across the awaits:
+  // a conversation switch mid-resolve must not open this file into the new panel.
+  const heldDirectory = props.directory
+  const heldSession = app.currentID
   try {
     const found = await window.mcode.resolveExistingPath([item.path]).catch(() => null)
+    if (props.directory !== heldDirectory || app.currentID !== heldSession) return
     if (!found || found.directory) throw new Error(t("harnessRow.pathNotExist"))
-    await openDocument({ path: found.path, name: item.name }, props.directory)
+    await openDocument({ path: found.path, name: item.name }, heldDirectory)
   } catch (failure) {
+    if (props.directory !== heldDirectory || app.currentID !== heldSession) return
     notifyFailure(t("webCard.previewFailed", { err: failure instanceof Error ? failure.message : String(failure) }))
   }
 }
