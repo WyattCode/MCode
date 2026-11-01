@@ -217,6 +217,11 @@ watch(input, (element) => props.find.setInput(element))
   opacity: 0.4;
 }
 
+.step:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: 2px;
+}
+
 /*
  * MiMo's --color-bg and --color-side-hover on the dark scheme.
  */
