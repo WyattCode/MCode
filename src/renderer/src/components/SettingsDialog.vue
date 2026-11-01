@@ -2542,6 +2542,7 @@ onBeforeUnmount(() => {
               v-model="mcpForm.name"
               class="mcp-input"
               data-mcp-name
+              :aria-label="t('set.mcpForm.name')"
               :disabled="Boolean(mcpEditing)"
               placeholder="my-server"
               spellcheck="false"
@@ -2565,7 +2566,7 @@ onBeforeUnmount(() => {
 
             <template v-if="mcpForm.type === 'stdio'">
               <label class="mcp-label">{{ t("set.mcpForm.command") }}</label>
-              <input v-model="mcpForm.command" class="mcp-input" data-mcp-command placeholder="node server.js" spellcheck="false" />
+              <input v-model="mcpForm.command" class="mcp-input" data-mcp-command :aria-label="t('set.mcpForm.command')" placeholder="node server.js" spellcheck="false" />
               <label class="mcp-label">{{ t("set.mcpForm.args") }}</label>
               <div v-for="(_, at) in mcpForm.args" :key="`arg${at}`" class="mcp-pair">
                 <input v-model="mcpForm.args[at]" class="mcp-input small" :data-mcp-arg="at" spellcheck="false" />
@@ -2601,7 +2602,7 @@ onBeforeUnmount(() => {
 
             <template v-else>
               <label class="mcp-label">{{ t("set.mcpForm.url") }}</label>
-              <input v-model="mcpForm.url" class="mcp-input" data-mcp-url placeholder="https://example.com/mcp" spellcheck="false" />
+              <input v-model="mcpForm.url" class="mcp-input" data-mcp-url :aria-label="t('set.mcpForm.url')" placeholder="https://example.com/mcp" spellcheck="false" />
               <label class="mcp-label">{{ t("set.mcpForm.headers") }}</label>
               <div v-for="(row, at) in mcpForm.headers" :key="`hdr${at}`" class="mcp-pair">
                 <input v-model="row.key" class="mcp-input small" placeholder="Header" :data-mcp-header-key="at" spellcheck="false" />
@@ -2849,7 +2850,7 @@ onBeforeUnmount(() => {
               </div>
             </div>
             <div class="env-flabel">{{ t("set.envName") }}</div>
-            <input v-model="envName" class="env-input" data-env-name :placeholder="t('set.envNamePlaceholder')" spellcheck="false" />
+            <input v-model="envName" class="env-input" data-env-name :aria-label="t('set.envName')" :placeholder="t('set.envNamePlaceholder')" spellcheck="false" />
             <div class="env-save-row">
               <button class="ctl-btn env-save" :class="{ dirty: envDirty }" data-env-save :disabled="!envDirty" @click="saveEnv">{{ t("set.envSave") }}</button>
             </div>
@@ -3117,6 +3118,7 @@ onBeforeUnmount(() => {
               v-else
               v-model="keyFilter"
               class="keys-search-input"
+              :aria-label="t('key.search')"
               :placeholder="t('key.search')"
               spellcheck="false"
               data-key-search-input
@@ -3960,6 +3962,15 @@ h3 {
   background: transparent;
   border: 0;
   outline: none;
+}
+
+.keys-search-input:focus-visible,
+.mcp-input:focus-visible,
+.env-input:focus-visible,
+.nav-search:focus-visible,
+.ci-input:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 .keys-search-input::placeholder,
