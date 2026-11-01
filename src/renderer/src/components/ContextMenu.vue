@@ -244,10 +244,11 @@ onBeforeUnmount(() => {
     @mouseleave="leaveMain"
   >
     <template v-for="item in items" :key="item.key">
-      <div v-if="item.divided" class="rule" />
+      <div v-if="item.divided" class="rule" role="separator" />
       <div v-if="item.heading" class="heading">{{ item.label }}</div>
       <button
         v-else
+        type="button"
         class="item"
         :class="{
           ticked: item.checked && !item.checkEnd,
@@ -324,8 +325,9 @@ onBeforeUnmount(() => {
       />
     </div>
     <template v-for="child in filtered.rows" :key="child.key">
-      <div v-if="child.divided && !query.trim()" class="rule" />
+      <div v-if="child.divided && !query.trim()" class="rule" role="separator" />
       <button
+        type="button"
         class="item"
         :class="{ ticked: child.checked && !child.checkEnd, danger: child.danger, active: child.active }"
         role="menuitem"
@@ -359,10 +361,11 @@ onBeforeUnmount(() => {
     </template>
     <div v-if="parent.search && query.trim() && !filtered.matched" class="sub-empty" data-submenu-empty>{{ parent.search.empty }}</div>
     <template v-if="parent.footer?.length">
-      <div class="rule" />
+      <div class="rule" role="separator" />
       <button
         v-for="foot in parent.footer"
         :key="foot.key"
+        type="button"
         class="item"
         :class="{ danger: foot.danger }"
         role="menuitem"
