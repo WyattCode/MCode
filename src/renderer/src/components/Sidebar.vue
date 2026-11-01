@@ -192,15 +192,20 @@ type ProjectRow = (typeof projects.value)[number]
 const branches = ref<Record<string, string>>({})
 const branchAsked = new Map<string, number>()
 const BRANCH_EVERY = 3000
+let branchSeq = 0
 
 async function readBranches(force = false) {
   if (!app.connected) return
+  const mine = ++branchSeq
   const now = Date.now()
   for (const project of projects.value) {
+    if (mine !== branchSeq) return
     const directory = project.directory
     if (!force && now - (branchAsked.get(directory) ?? 0) < BRANCH_EVERY) continue
     branchAsked.set(directory, now)
     const info = await app.workspaceInfo(directory).catch(() => undefined)
+    /* A newer readBranches started while this one was waiting; drop the slower pass. */
+    if (mine !== branchSeq) return
     const branch = info?.branch ?? ""
     if ((branches.value[directory] ?? "") !== branch) branches.value = { ...branches.value, [directory]: branch }
   }
