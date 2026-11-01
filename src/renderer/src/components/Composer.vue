@@ -2721,11 +2721,12 @@ async function chooseAccess(next: Access) {
 }
 
 async function confirmFull() {
-  confirmingFull.value = false
   const held = pendingFullFor.value
   pendingFullFor.value = undefined
+  confirmingFull.value = false
+  // Apply once for the session the dialog was opened on — a second call used
+  // to re-run against whatever session is current after the first await.
   await applyAccess("full", held)
-  if (await applyAccess("full")) confirmingFull.value = false
 }
 
 /*

@@ -2237,6 +2237,8 @@ export type Request =
   /** skills: MiMo's uninstall - the skill's folder moves to the app's skill trash. */
   | { type: "skill.uninstall"; directory: string; name: string }
   | { type: "config.get" }
+  /** Retry reading credentials.json after the Linux keyring (or other secure storage) becomes available. */
+  | { type: "config.recheckCredentials" }
   /** Stored documents found damaged or unreadable at start-up, each answered once per launch. */
   | { type: "storage.problems" }
   | { type: "config.set"; patch: Partial<AppConfig> }
@@ -2560,6 +2562,10 @@ export interface ResponseMap {
     config: AppConfig
     unreadable?: { problem: string; evidence?: string }
     fromNewerVersion?: boolean
+    credentialsUnreadable?: { problem: string; evidence?: string }
+    credentialsPlaintext?: boolean
+  }
+  "config.recheckCredentials": {
     credentialsUnreadable?: { problem: string; evidence?: string }
     credentialsPlaintext?: boolean
   }

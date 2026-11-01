@@ -1051,9 +1051,21 @@ export const useApp = defineStore("app", () => {
     if (settings.unreadable) notice.warning(t("error.configInvalid"), { duration: 0 })
     else if (settings.fromNewerVersion) notice.warning(t("error.configNewer"), { duration: 0 })
     // L12-2: the keys and sign-ins are a file of their own, and their loss is said on its own.
-    if (settings.credentialsUnreadable) notice.warning(t("error.credentialsInvalid"), { duration: 0 })
+    if (settings.credentialsUnreadable) {
+      notice.warning(t("error.credentialsInvalid"), {
+        id: "credentials-unreadable",
+        duration: 0,
+        links: [{ label: t("error.credentialsRecheck"), run: () => { void recheckCredentialsToast() } }],
+      })
+    }
     // L12-3: MiMo refuses to save without secure storage; this keeps them in plain text and says so.
-    else if (settings.credentialsPlaintext) notice.warning(t("error.credentialsPlaintext"), { duration: 0 })
+    else if (settings.credentialsPlaintext) {
+      notice.warning(t("error.credentialsPlaintext"), {
+        id: "credentials-plaintext",
+        duration: 0,
+        links: [{ label: t("error.credentialsRecheck"), run: () => { void recheckCredentialsToast() } }],
+      })
+    }
     providers.value = (await instance.request({ type: "provider.list" })).providers
     const listed = await instance.request({ type: "session.list" })
     // subagents: listed apart from both, as their own conversations are.
@@ -2010,6 +2022,36 @@ export const useApp = defineStore("app", () => {
     if ((chosen === "smart" ? "smart" : `${chosen.provider}/${chosen.model}`) === before) return
     const name = chosen === "smart" ? t("model.smart") : (findModel(providers.value, chosen)?.name ?? chosen.model)
     notify(t("toast.modelPrefix", { name }))
+  }
+
+  async function recheckCredentialsToast() {
+    try {
+      const status = await api().request({ type: "config.recheckCredentials" })
+      notice.dismiss("credentials-unreadable")
+      notice.dismiss("credentials-plaintext")
+      if (status.credentialsUnreadable) {
+        notice.warning(t("error.credentialsInvalid"), {
+          id: "credentials-unreadable",
+          duration: 0,
+          links: [{ label: t("error.credentialsRecheck"), run: () => { void recheckCredentialsToast() } }],
+        })
+        return
+      }
+      if (status.credentialsPlaintext) {
+        notice.warning(t("error.credentialsPlaintext"), {
+          id: "credentials-plaintext",
+          duration: 0,
+          links: [{ label: t("error.credentialsRecheck"), run: () => { void recheckCredentialsToast() } }],
+        })
+        return
+      }
+      notice.success(t("error.credentialsRecheckOk"))
+      providers.value = (await api().request({ type: "provider.list" })).providers
+    } catch (err) {
+      notice.danger(t("error.credentialsRecheckFailed"), {
+        body: err instanceof Error ? err.message : String(err),
+      })
+    }
   }
 
   function announceAccess(level: "ask" | "auto" | "full") {

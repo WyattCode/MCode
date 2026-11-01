@@ -31,8 +31,12 @@ const SEALING = "safeStorage"
 export type CredentialRead =
   | { state: "absent" }
   | { state: "read"; credentials: Credentials; sealed: boolean }
-  /** Never carries the file's text: a parse error quotes it, and it is keys. */
-  | { state: "unreadable"; problem: string }
+  /**
+   * Never carries the file's text: a parse error quotes it, and it is keys.
+   * `keep` means the file must stay where it is (Linux keyring locked / no
+   * box yet) so a later unlock can open it - never quarantine those.
+   */
+  | { state: "unreadable"; problem: string; keep?: boolean }
 
 /**
  * The credential file as stored.
@@ -75,7 +79,7 @@ export function parseCredentials(text: string, box: SecretBox | undefined): Cred
 
 function opened(raw: Record<string, unknown>, box: SecretBox | undefined): CredentialRead {
   if (raw.sealed !== SEALING) return { state: "unreadable", problem: "credentials.json is sealed in a form this build does not know" }
-  if (!box?.available()) return { state: "unreadable", problem: "credentials.json is encrypted and this system's secure storage cannot open it" }
+  if (!box?.available()) return { state: "unreadable", problem: "credentials.json is encrypted and this system's secure storage cannot open it", keep: true }
   const keys = raw.keys ?? {}
   const oauth = raw.oauth ?? {}
   if (!isRecord(keys) || !isRecord(oauth)) return { state: "unreadable", problem: "credentials.json does not hold key and sign-in maps" }

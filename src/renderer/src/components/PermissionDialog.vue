@@ -181,9 +181,11 @@ function onReasonKey(event: KeyboardEvent) {
         data-cnav-primary
         data-perm-once
         :disabled="busy"
+        :title="t('perm.once') + ' · ' + t('perm.onceEnter')"
         @click="answer('once')"
       >
-        {{ t("perm.once") }}
+        <span>{{ t("perm.once") }}</span>
+        <kbd class="chord">{{ t("perm.onceEnter") }}</kbd>
       </button>
     </div>
 
@@ -399,5 +401,17 @@ function onReasonKey(event: KeyboardEvent) {
 
 .reason-input:focus {
   border-color: var(--interactive);
+}
+
+.chord {
+  margin-inline-start: 6px;
+  padding: 1px 5px;
+  color: inherit;
+  font: inherit;
+  font-size: 0.85em;
+  line-height: 1.2;
+  opacity: 0.65;
+  border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
+  border-radius: 4px;
 }
 </style>

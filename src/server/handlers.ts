@@ -851,6 +851,11 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         ...(runtime.config.credentialsPlaintext ? { credentialsPlaintext: true } : {}),
       } satisfies Handled<"config.get">
 
+    case "config.recheckCredentials": {
+      const status = await runtime.config.recheckCredentials()
+      return status satisfies Handled<"config.recheckCredentials">
+    }
+
     case "storage.problems":
       return { problems: await storeNotices(runtime) } satisfies Handled<"storage.problems">
 
