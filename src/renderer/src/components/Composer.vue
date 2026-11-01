@@ -3695,6 +3695,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             <button
               class="pill access"
               :class="{ open: menu === 'access', full: access === 'full' }"
+              :aria-expanded="menu === 'access'"
+              aria-haspopup="menu"
               v-tip="{ label: t('composer.accessTip'), disabled: menu === 'access' }"
               @click="toggle('access')"
             >
@@ -3724,6 +3726,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               v-if="menu === 'access'"
               ref="accessMenu"
               class="menu access-menu"
+              role="menu"
               :class="{ up: menuUp }"
               tabindex="-1"
               @keydown="onAccessKeys"
@@ -3735,6 +3738,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                 :key="entry"
                 v-tip="{ label: t(`composer.access.${entry}Hint`), placement: 'right', trigger: 'hover' }"
                 class="item access-item"
+                role="menuitemradio"
+                :aria-checked="entry === access"
                 :class="{ on: entry === access, hot: entry === accessHot }"
                 :data-access="entry"
                 @mouseenter="accessHot = entry"
@@ -3762,6 +3767,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             v-if="!side && agent === 'plan'"
             class="mode-chip"
             data-mode="plan"
+            aria-pressed="true"
             v-tip="{ label: t('composer.modeChipTip', { mode: t('composer.planMode') }) }"
             @click="chooseAgent('build')"
           >
@@ -3777,6 +3783,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             v-if="!side && goalMode"
             class="mode-chip"
             data-mode="goal"
+            aria-pressed="true"
             v-tip="{ label: t('composer.goalChipTip') }"
             @click="toggleGoalMode"
           >
@@ -3816,6 +3823,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             <button
               class="pill model-pill"
               :aria-expanded="menu === 'model'"
+              aria-haspopup="menu"
               v-tip="{ label: t('composer.modelTip'), disabled: menu === 'model' }"
               @click="toggle('model')"
             >
@@ -3837,6 +3845,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               v-if="menu === 'model'"
               ref="modelMenu"
               class="menu model-menu"
+              role="menu"
               :class="{ up: menuUp }"
               tabindex="-1"
               @keydown="onModelKeys"
@@ -4760,6 +4769,11 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   background: var(--surface-hover);
 }
 
+.ctx:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
 /* MiMo's voice capsule: the round button widens into a pill in the send colour while it is in use. */
 .mic {
   overflow: hidden;
@@ -5074,6 +5088,11 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   background: var(--surface-hover);
 }
 
+.pill:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
 .caret {
   color: var(--text-weaker);
 }
@@ -5358,6 +5377,11 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 
 .mode-chip:hover {
   background: var(--surface-selected);
+}
+
+.mode-chip:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 .mode-chip svg {
