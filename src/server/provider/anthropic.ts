@@ -205,7 +205,11 @@ function budget(level: "low" | "medium" | "high" | "max", outputLimit: number, m
  *     `thinking: {type:"adaptive"}` with the level in `output_config.effort`;
  *   - Opus 4.5 gets a thinking budget AND the level;
  *   - anything older gets a budget alone, `high` and `max` being the only two
- *     levels it offers because they are the only two budgets computed;
+ *     levels it offers because they are the only two budgets computed (a custom
+ *     model that names `low` or `medium` gets a smaller budget of its own, and
+ *     `xhigh` the `max` one);
+ *   - `none`, which only a custom model's own thinking setting can offer, is no
+ *     thinking at all;
  *   - and a level the model does not accept - including every level, for a
  *     model that takes no effort parameter - is not sent at all. The
  *     reference's `anthropicEffort` returns undefined there and its `variants`
