@@ -1,4 +1,5 @@
 import { useRightPanel, type OfficeType } from "../stores/right-panel"
+import { useApp } from "../stores/app"
 import { notifyFailure } from "./toast"
 import { t } from "./i18n"
 
@@ -68,6 +69,7 @@ export function openFileInViewer(file: string, directory?: string) {
 /** MiMo's "open this file" from an attachment chip or an annotation. */
 export async function openDocument(file: { path: string; name?: string }, directory?: string) {
   const rp = useRightPanel()
+  const app = useApp()
   const name = file.name || nameOf(file.path)
   if (/\.html?$/i.test(file.path)) {
     rp.openHtml({ path: file.path, title: name })
@@ -75,7 +77,9 @@ export async function openDocument(file: { path: string; name?: string }, direct
   }
   const type = officeTypeOf(name) ?? officeTypeOf(file.path)
   if (type) {
+    const heldID = app.currentID
     const size = await window.mcode.fileSize(file.path).catch(() => 0)
+    if (app.currentID !== heldID) return
     rp.openOffice({ path: file.path, name, fileType: type, size })
     return
   }
