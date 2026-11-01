@@ -50,6 +50,11 @@ const emit = defineEmits<{ open: [artifact: SessionArtifact] }>()
   background: var(--surface-hover);
 }
 
+.artifact:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 1px;
+}
+
 .kind {
   display: inline-grid;
   flex: none;

@@ -81,7 +81,13 @@ onBeforeUnmount(() => {
     :inert="Boolean(covered)"
     :aria-hidden="covered || undefined"
   >
-    <div v-if="shown && hasReply && !collapsed" class="fc-win">
+    <div
+      v-if="shown && hasReply && !collapsed"
+      id="fc-win"
+      class="fc-win"
+      role="region"
+      :aria-label="t(running ? 'rp.floatingChat.generating' : 'rp.floatingChat.latestReply')"
+    >
       <div class="fc-win-head">
         <span class="fc-label">{{ t(running ? "rp.floatingChat.generating" : "rp.floatingChat.latestReply") }}</span>
         <button type="button" class="fc-collapse" data-fc-collapse :title="t('rp.floatingChat.collapse')" :aria-label="t('rp.floatingChat.collapse')" @click="collapsed = true">
@@ -96,7 +102,15 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </div>
-    <button v-if="shown && hasReply && collapsed" type="button" class="fc-strip" data-fc-expand @click="collapsed = false">
+    <button
+      v-if="shown && hasReply && collapsed"
+      type="button"
+      class="fc-strip"
+      data-fc-expand
+      aria-expanded="false"
+      aria-controls="fc-win"
+      @click="collapsed = false"
+    >
       <span v-if="running" class="fc-spin" aria-hidden="true" />
       <span>{{ t(running ? "rp.floatingChat.generating" : "rp.floatingChat.showOutput") }}</span>
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 15l-6-6-6 6" /></svg>
@@ -205,6 +219,11 @@ onBeforeUnmount(() => {
   box-shadow: 0 4px 14px rgb(0 0 0 / 0.12);
   font-size: calc(12px * var(--ui-font-scale, 1));
   pointer-events: auto;
+}
+
+.fc-strip:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 1px;
 }
 
 .fc-strip:hover {
