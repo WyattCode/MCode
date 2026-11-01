@@ -1653,6 +1653,7 @@ defineExpose({ stepMessage, scroller })
                 v-tip="item.path ? t('stream.previewTip') : ''"
                 :role="item.path ? 'button' : undefined"
                 :tabindex="item.path ? 0 : undefined"
+                :aria-label="item.path ? t('stream.previewTip') : undefined"
                 data-sent-file
                 @click="item.path && openSentFile(item.path)"
                 @keydown.enter.space.prevent="item.path && openSentFile(item.path)"
@@ -1694,6 +1695,7 @@ defineExpose({ stepMessage, scroller })
               v-model="editDraft"
               rows="1"
               :placeholder="t('stream.editPlaceholder')"
+              :aria-label="t('stream.editPlaceholder')"
               spellcheck="false"
               @input="fitEdit($event.target as HTMLTextAreaElement)"
               @keydown="onEditKey($event, turn)"
@@ -1753,20 +1755,22 @@ defineExpose({ stepMessage, scroller })
                 />
                 <button
                   v-if="codeFolds(part.code)"
+                  type="button"
                   class="asked-expand code-expand"
                   data-code-expand
+                  :aria-expanded="openAsked.has(partKey(turn.id, index))"
                   @click="toggleAsked(partKey(turn.id, index))"
                   @dblclick.stop
                 >
                   {{ openAsked.has(partKey(turn.id, index)) ? t("stream.collapseCode") : t("stream.expandAsked", { count: askedLines(part.code) }) }}
                 </button>
               </div>
-              <div v-else-if="foldable(part.text)" class="asked-part" data-asked-fold :data-folded="openAsked.has(partKey(turn.id, index)) ? undefined : ''"><span class="asked-text" :class="{ folded: !openAsked.has(partKey(turn.id, index)) }">{{ part.text }}</span><button class="asked-expand" data-asked-expand @click="toggleAsked(partKey(turn.id, index))" @dblclick.stop>{{ openAsked.has(partKey(turn.id, index)) ? t("stream.collapseAsked") : t("stream.expandAsked", { count: askedLines(part.text) }) }}</button></div>
+              <div v-else-if="foldable(part.text)" class="asked-part" data-asked-fold :data-folded="openAsked.has(partKey(turn.id, index)) ? undefined : ''"><span class="asked-text" :class="{ folded: !openAsked.has(partKey(turn.id, index)) }">{{ part.text }}</span><button type="button" class="asked-expand" data-asked-expand :aria-expanded="openAsked.has(partKey(turn.id, index))" @click="toggleAsked(partKey(turn.id, index))" @dblclick.stop>{{ openAsked.has(partKey(turn.id, index)) ? t("stream.collapseAsked") : t("stream.expandAsked", { count: askedLines(part.text) }) }}</button></div>
               <div v-else class="asked-part">{{ part.text }}</div>
             </template>
           </div>
           <div v-else-if="turn.text && foldable(turn.text)" class="user-bubble" data-asked-fold :data-folded="openAsked.has(turn.id) ? undefined : ''" @dblclick="startEdit(turn, true)">
-            <span class="asked-text" :class="{ folded: !openAsked.has(turn.id) }">{{ turn.text }}</span><button class="asked-expand" data-asked-expand @click="toggleAsked(turn.id)" @dblclick.stop>{{ openAsked.has(turn.id) ? t("stream.collapseAsked") : t("stream.expandAsked", { count: askedLines(turn.text) }) }}</button>
+            <span class="asked-text" :class="{ folded: !openAsked.has(turn.id) }">{{ turn.text }}</span><button type="button" class="asked-expand" data-asked-expand :aria-expanded="openAsked.has(turn.id)" @click="toggleAsked(turn.id)" @dblclick.stop>{{ openAsked.has(turn.id) ? t("stream.collapseAsked") : t("stream.expandAsked", { count: askedLines(turn.text) }) }}</button>
           </div>
           <div v-else-if="turn.text" class="user-bubble" @dblclick="startEdit(turn, true)">{{ turn.text }}</div>
           <AnnotationChips v-if="turn.annotations?.length" class="asked-annotations" :list="turn.annotations" read-only />
@@ -2141,6 +2145,11 @@ defineExpose({ stepMessage, scroller })
   background: var(--surface-hover);
 }
 
+.msg-act:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
 .msg-act:active {
   scale: 0.96;
 }
@@ -2245,6 +2254,11 @@ defineExpose({ stepMessage, scroller })
   background: transparent;
   border: 0;
   cursor: pointer;
+}
+
+.fork-label:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 /*
@@ -2467,6 +2481,12 @@ defineExpose({ stepMessage, scroller })
 .asked-edit-send:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+.asked-edit-cancel:focus-visible,
+.asked-edit-send:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 /*
@@ -2802,6 +2822,11 @@ defineExpose({ stepMessage, scroller })
   color: var(--text-strong);
 }
 
+.asked-expand:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
 /* MiMo's scheduled-task bubble: the text over its 显示更多, both from the left edge. */
 .automation-bubble {
   display: flex;
@@ -2869,6 +2894,11 @@ defineExpose({ stepMessage, scroller })
 
 .sent-tile.file.openable:hover {
   opacity: 0.8;
+}
+
+.sent-tile.file.openable:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 /* The annotations a message carried, under it on its own side. */
