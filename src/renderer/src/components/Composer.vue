@@ -1942,7 +1942,10 @@ watch(
   draftKey,
   (next, previous) => {
     historyIndex.value = null
-    if (previous) saveDraft(previous)
+    if (previous) {
+      if (mine.value) dropVoice()
+      saveDraft(previous)
+    }
     const kept = drafts.get(next)
     text.value = kept?.text ?? ""
     attachments.value = kept?.attachments ?? []
