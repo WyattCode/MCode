@@ -159,8 +159,11 @@ function attached(id: number) {
   if (term) respawn(term)
 }
 
+const pendingClose = ref<number>()
+
 watch(here, () => {
   dismissed.value = new Set()
+  pendingClose.value = undefined
   for (const term of terms.value) respawn(term)
 })
 
@@ -175,15 +178,30 @@ function dismissMismatch() {
 }
 
 /*
- * What is already running for this session, asked once on the way in.
+ * What is already running for this scope, asked again whenever the drawer is
+ * pointed somewhere else.
  *
  * A drawer that always started a shell would leave the previous one running
  * with nothing on screen attached to it - the leak that keeping them alive
  * would otherwise buy. Falling back to one fresh tab is the first-open case.
  */
-onMounted(async () => {
+const scopeKey = computed(() => props.sessionID ? `session:${props.sessionID}` : props.directory ? `dir:${props.directory}` : "")
+
+let loadSeq = 0
+
+async function loadTabs() {
+  const seq = ++loadSeq
+  const key = scopeKey.value
   const client = app.client
-  const where = props.sessionID ? { sessionID: props.sessionID } : props.directory ? { directory: props.directory } : undefined
+  const sessionID = props.sessionID
+  const directory = props.directory
+  const where = sessionID ? { sessionID } : directory ? { directory } : undefined
+  // Drop the previous scope's tabs without closing their shells: they keep
+  // running, and coming back to this scope lists them again. Clear before the
+  // await so a mid-flight switch cannot keep typing into the wrong session.
+  terms.value = []
+  dismissed.value = new Set()
+  pendingClose.value = undefined
   if (!client || !where) {
     add()
     return
@@ -191,17 +209,20 @@ onMounted(async () => {
   // The drawer's own shells only: the right panel's terminal is not a tab here (N11-9).
   try {
     const found = await client.request({ type: "shell.list", ...where, surface: "drawer" })
+    if (seq !== loadSeq || key !== scopeKey.value) return
     if (found?.shells.length) for (const shell of found.shells) add(shell.shellID, shell.cwd, shell.used)
     else add()
   } catch (err) {
+    if (seq !== loadSeq || key !== scopeKey.value) return
     // Keep one usable tab; do not orphan running shells without a word.
     notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
     add()
   }
-})
+}
+
+watch(scopeKey, () => void loadTabs(), { immediate: true })
 
 /* A terminal someone typed into is held for MiMo's question; the rest close at once. */
-const pendingClose = ref<number>()
 
 function requestClose(id: number) {
   const term = entry(id)
@@ -242,6 +263,7 @@ function onWindowResize() {
 
 onMounted(() => window.addEventListener("resize", onWindowResize))
 onBeforeUnmount(() => {
+  loadSeq += 1
   window.removeEventListener("resize", onWindowResize)
   document.body.classList.remove("resizing", "resizing-v")
 })
