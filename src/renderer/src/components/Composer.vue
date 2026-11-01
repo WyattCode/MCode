@@ -2717,7 +2717,8 @@ async function chooseAccess(next: Access) {
     confirmingFull.value = true
     return
   }
-  await applyAccess(next)
+  const held = sessionID.value ?? null
+  await applyAccess(next, held)
 }
 
 async function confirmFull() {
