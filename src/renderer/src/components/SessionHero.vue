@@ -68,7 +68,7 @@ const initial = computed(() => (name.value.match(/[a-z0-9]/i)?.[0] ?? name.value
         <div id="hero-dock" class="dock-slot" />
 
         <div class="foot">
-          <button class="chip" v-tip="{ label: directory, placement: 'top' }">
+          <button class="chip" type="button" :aria-label="name" v-tip="{ label: directory, placement: 'top' }">
             <span class="avatar" :style="{ '--h': hue }">
               <img v-if="icon" :src="icon" alt="" />
               <template v-else>{{ initial }}</template>
@@ -215,6 +215,11 @@ const initial = computed(() => (name.value.match(/[a-z0-9]/i)?.[0] ?? name.value
 
 .chip:not(.flat):hover {
   background: var(--surface-hover);
+}
+
+.chip:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 /* The branch is a statement, not a control, so it takes no hover. */
