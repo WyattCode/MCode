@@ -71,7 +71,7 @@
     "docx-preview": "0.3.7",
     "dompurify": "3.4.17",
     "echarts": "6.1.0",
-    "electron": "41.10.7",
+    "electron": "42.11.18",
     "electron-builder": "^26.0.0",
     "electron-vite": "^5.0.0",
     "exceljs": "4.4.0",
