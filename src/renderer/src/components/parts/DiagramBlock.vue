@@ -36,6 +36,9 @@ const ZOOM_MIN = 0.25
 const ZOOM_MAX = 3
 const ZOOM_STEP = 0.25
 
+/** Ties this block's tabs to its panels; two diagrams in one reply must not share ids. */
+const uid = Math.random().toString(36).slice(2, 9)
+
 const tab = ref<"diagram" | "code">("diagram")
 const dark = ref(isDarkTheme())
 const svg = ref<string>()
@@ -212,6 +215,8 @@ const lineEnd = (index: number) => (index < lines.value.length - 1 ? "\n" : "")
           <button
             type="button"
             role="tab"
+            :id="`diagram-tab-diagram-${uid}`"
+            :aria-controls="`diagram-panel-diagram-${uid}`"
             data-diagram-tab="diagram"
             :aria-selected="showingDiagram"
             :class="{ on: showingDiagram }"
@@ -220,7 +225,16 @@ const lineEnd = (index: number) => (index < lines.value.length - 1 ? "\n" : "")
           >
             {{ t("mermaid.diagram") }}
           </button>
-          <button type="button" role="tab" data-diagram-tab="code" :aria-selected="!showingDiagram" :class="{ on: !showingDiagram }" @click="tab = 'code'">
+          <button
+            type="button"
+            role="tab"
+            :id="`diagram-tab-code-${uid}`"
+            :aria-controls="`diagram-panel-code-${uid}`"
+            data-diagram-tab="code"
+            :aria-selected="!showingDiagram"
+            :class="{ on: !showingDiagram }"
+            @click="tab = 'code'"
+          >
             {{ t("mermaid.code") }}
           </button>
         </div>
@@ -271,27 +285,31 @@ const lineEnd = (index: number) => (index < lines.value.length - 1 ? "\n" : "")
     </div>
 
     <template v-if="showingDiagram">
-      <div v-if="!svg" class="md-diagram-rendering" data-diagram-rendering>{{ t("mermaid.rendering") }}</div>
-      <!-- Sanitised by DOMPurify in lib/diagram before it is bound. -->
-      <div
-        v-else-if="mode === 'mermaid'"
-        ref="scroller"
-        class="md-diagram-scroll"
-        role="button"
-        tabindex="0"
-        data-diagram-body
-        :aria-label="t('markdown.previewImageTip')"
-        @click="enlarge"
-        @keydown.enter.prevent="enlarge"
-        @keydown.space.prevent="enlarge"
-      >
-        <div class="md-diagram-canvas" :style="canvasStyle" v-html="svg" />
+      <div class="md-diagram-panel" role="tabpanel" :id="`diagram-panel-diagram-${uid}`" :aria-labelledby="`diagram-tab-diagram-${uid}`">
+        <div v-if="!svg" class="md-diagram-rendering" data-diagram-rendering>{{ t("mermaid.rendering") }}</div>
+        <!-- Sanitised by DOMPurify in lib/diagram before it is bound. -->
+        <div
+          v-else-if="mode === 'mermaid'"
+          ref="scroller"
+          class="md-diagram-scroll"
+          role="button"
+          tabindex="0"
+          data-diagram-body
+          :aria-label="t('markdown.previewImageTip')"
+          @click="enlarge"
+          @keydown.enter.prevent="enlarge"
+          @keydown.space.prevent="enlarge"
+        >
+          <div class="md-diagram-canvas" :style="canvasStyle" v-html="svg" />
+        </div>
+        <div v-else class="md-diagram-inline" data-diagram-body v-html="svg" />
       </div>
-      <div v-else class="md-diagram-inline" data-diagram-body v-html="svg" />
     </template>
     <template v-else>
-      <div v-if="failed && mode === 'mermaid'" class="md-diagram-error" data-diagram-error>{{ t("mermaid.parseError") }}</div>
-      <pre class="md-code md-lined md-diagram-source"><code><template v-for="(line, index) in lines" :key="index"><span class="line">{{ line }}</span>{{ lineEnd(index) }}</template></code></pre>
+      <div class="md-diagram-panel" role="tabpanel" :id="`diagram-panel-code-${uid}`" :aria-labelledby="`diagram-tab-code-${uid}`">
+        <div v-if="failed && mode === 'mermaid'" class="md-diagram-error" data-diagram-error>{{ t("mermaid.parseError") }}</div>
+        <pre class="md-code md-lined md-diagram-source"><code><template v-for="(line, index) in lines" :key="index"><span class="line">{{ line }}</span>{{ lineEnd(index) }}</template></code></pre>
+      </div>
     </template>
 
     <Teleport to="body">
@@ -425,6 +443,14 @@ const lineEnd = (index: number) => (index < lines.value.length - 1 ? "\n" : "")
 
 .text .md-diagram-more:hover {
   background: rgba(0, 0, 0, 0.08);
+}
+
+/* The keyboard ring the rest of the app draws, on the tabs, the zoom pill and the copy buttons. */
+.text .md-diagram-tabs button:focus-visible,
+.text .md-diagram-zoom button:focus-visible,
+.text .md-diagram .md-code-copy:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 1px;
 }
 
 .text .md-diagram-rendering {
