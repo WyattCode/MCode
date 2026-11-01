@@ -96,7 +96,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </div>
-    <button v-if="shown && hasReply && collapsed" type="button" class="fc-strip" data-fc-expand @click="collapsed = false">
+    <button v-if="shown && hasReply && collapsed" type="button" class="fc-strip" data-fc-expand :aria-label="t(running ? 'rp.floatingChat.generating' : 'rp.floatingChat.showOutput')" @click="collapsed = false">
       <span v-if="running" class="fc-spin" aria-hidden="true" />
       <span>{{ t(running ? "rp.floatingChat.generating" : "rp.floatingChat.showOutput") }}</span>
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 15l-6-6-6 6" /></svg>
@@ -165,6 +165,11 @@ onBeforeUnmount(() => {
   background: var(--surface-hover);
 }
 
+.fc-collapse:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
 /* At most 38% of the window tall, following the reply as it grows. */
 .fc-win-body {
   min-height: 0;
@@ -209,6 +214,11 @@ onBeforeUnmount(() => {
 
 .fc-strip:hover {
   color: var(--text-strong);
+}
+
+.fc-strip:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 .fc-spin {

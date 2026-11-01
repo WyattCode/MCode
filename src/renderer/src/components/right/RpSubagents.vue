@@ -196,7 +196,7 @@ onBeforeUnmount(() => {
         </button>
         <div v-if="!finished.length" class="rp-subagent-empty">{{ t("subagents.noCompleted") }}</div>
       </div>
-      <button v-if="finished.length > COMPLETED_CAP" type="button" class="rp-subagent-show-all" @click="showAll = !showAll">
+      <button v-if="finished.length > COMPLETED_CAP" type="button" class="rp-subagent-show-all" :aria-expanded="showAll" @click="showAll = !showAll">
         {{ showAll ? t("subagents.collapse") : t("subagents.showAll", { count: finished.length }) }}
       </button>
     </div>
@@ -346,6 +346,11 @@ onBeforeUnmount(() => {
   font: inherit;
   font-size: calc(12px * var(--ui-font-scale, 1));
   cursor: pointer;
+}
+
+.rp-subagent-show-all:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 /* Detail head: back, avatar, words and status on a 30 / 30 / 1fr / auto grid, at least 58 tall, 8 by 16 inside. */

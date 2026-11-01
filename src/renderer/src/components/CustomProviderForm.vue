@@ -645,7 +645,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
       <div class="cp-row">
         <span class="cp-label">{{ t("set.models.probeTitle") }}</span>
         <div class="cp-probe">
-          <span class="cp-probe-text" :class="probe.status" data-probe-text>{{ probe.text }}</span>
+          <span class="cp-probe-text" :class="probe.status" role="status" aria-live="polite" data-probe-text>{{ probe.text }}</span>
           <!-- The light repeats the words beside it; a reader hears those, not "ok" or "busy". -->
           <span class="cp-light" :class="probe.status" data-probe-light aria-hidden="true" />
           <button type="button" class="cp-btn" data-provider-probe :disabled="probe.status === 'busy'" @click="testConnection()">
@@ -662,6 +662,8 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
         class="cp-in"
         role="combobox"
         :aria-expanded="openMenu === 'combo'"
+        :aria-label="t('set.models.comboPlaceholder')"
+        :aria-controls="openMenu === 'combo' ? 'cp-combo-menu' : undefined"
         aria-autocomplete="list"
         :placeholder="t('set.models.comboPlaceholder')"
         spellcheck="false"
@@ -672,7 +674,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
         @keydown="comboKey"
       />
       <button type="button" class="cp-btn" data-model-add :disabled="!query.trim()" @click="addModel(query)">{{ t("provider.custom.models.add") }}</button>
-      <div v-if="openMenu === 'combo'" ref="comboMenuEl" class="cp-menu combo" role="listbox" data-model-combo-menu>
+      <div v-if="openMenu === 'combo'" id="cp-combo-menu" ref="comboMenuEl" class="cp-menu combo" role="listbox" data-model-combo-menu>
         <div v-if="!choices.length" class="cp-menu-empty" data-model-combo-empty>{{ t("set.models.comboEmpty") }}</div>
         <button
           v-for="(choice, at) in choices"
@@ -719,7 +721,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
       </div>
       <div class="cp-model-options">
         <div v-for="field in (['context', 'output'] as const)" :key="field" class="cp-pick" :data-menu-anchor="`${field}:${row.key}`">
-          <button type="button" class="cp-pick-btn" :data-model-limit="field" @click="toggleMenu(`${field}:${row.key}`)">
+          <button type="button" class="cp-pick-btn" :data-model-limit="field" :aria-expanded="openMenu === `${field}:${row.key}`" aria-haspopup="menu" @click="toggleMenu(`${field}:${row.key}`)">
             <span class="cp-pick-label">{{ t(field === "context" ? "set.models.limitContext" : "set.models.limitOutput") }}</span>
             <span class="cp-pick-value">
               {{ limitLabel(row[field]) }}
@@ -749,6 +751,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
                 inputmode="numeric"
                 :value="row[field] !== undefined ? String(row[field]) : ''"
                 :placeholder="t('set.models.limitCustom')"
+                :aria-label="t('set.models.limitCustom')"
                 :data-model-limit-custom="field"
                 @input="typeLimit(row, field, $event)"
               />
@@ -756,7 +759,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
           </div>
         </div>
         <div class="cp-pick" :data-menu-anchor="`mods:${row.key}`">
-          <button type="button" class="cp-pick-btn wide" data-model-modality-menu @click="toggleMenu(`mods:${row.key}`)">
+          <button type="button" class="cp-pick-btn wide" data-model-modality-menu :aria-expanded="openMenu === `mods:${row.key}`" aria-haspopup="menu" @click="toggleMenu(`mods:${row.key}`)">
             <span class="cp-pick-label">{{ t("set.models.modalities") }}</span>
             <span class="cp-pick-value">
               <span data-model-modality-summary>{{ modalitySummary(row.mods, modLabel) }}</span>
@@ -1599,5 +1602,13 @@ label.cp-option {
 .cp-submit:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+.cp-btn:focus-visible,
+.cp-pick-btn:focus-visible,
+.cp-eye:focus-visible,
+.cp-model-remove:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 </style>
