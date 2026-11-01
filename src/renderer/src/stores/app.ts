@@ -1255,7 +1255,9 @@ export const useApp = defineStore("app", () => {
       commandsState.value = "idle"
       return
     }
+    const directoryChanged = commandsFor !== where
     commandsFor = where
+    if (directoryChanged) commands.value = []
     commandsState.value = "loading"
     const result = await client.value
       ?.request({ type: "command.list", directory: where })
