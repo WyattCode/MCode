@@ -281,13 +281,13 @@ useEscapeLayer(dismiss)
   <div class="scrim" @mousedown.self="dismiss">
     <div v-modal class="dialog">
       <header class="bar">
-        <button v-if="step !== 'browse'" class="icon" v-tip="{ label: t('common.back'), placement: 'bottom' }" @click="back">
+        <button v-if="step !== 'browse'" type="button" class="icon" v-tip="{ label: t('common.back'), placement: 'bottom' }" @click="back">
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M9.6 3.4 5 8l4.6 4.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
         </button>
         <span class="gap" />
-        <button class="icon" v-tip="{ label: t('common.close'), placement: 'bottom' }" @click="dismiss">
+        <button type="button" class="icon" v-tip="{ label: t('common.close'), placement: 'bottom' }" @click="dismiss">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
           </svg>
@@ -304,7 +304,7 @@ useEscapeLayer(dismiss)
             <path d="M10.6 10.6 13.4 13.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
           </svg>
           <input ref="searchEl" v-model="query" class="search-in" :placeholder="t('connect.search')" spellcheck="false" />
-          <button v-if="query" class="icon small" v-tip="{ label: t('common.clear'), placement: 'bottom' }" @click="query = ''">
+          <button v-if="query" type="button" class="icon small" v-tip="{ label: t('common.clear'), placement: 'bottom' }" @click="query = ''">
             <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.2" />
               <path d="M6 6l4 4M10 6l-4 4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
@@ -319,7 +319,7 @@ useEscapeLayer(dismiss)
             Pinned above the vendors, never sorted among them: this is the row
             for a provider that is not on the list at all.
           -->
-          <button v-if="customMatches" class="row" @click="openCustom">
+          <button v-if="customMatches" type="button" class="row" @click="openCustom">
             <span class="row-mark">+</span>
             <span class="row-name">{{ customLabel }}</span>
             <span class="row-desc">{{ t("settings.providers.custom.description") }}</span>
@@ -328,7 +328,7 @@ useEscapeLayer(dismiss)
 
           <template v-if="recommended.length">
             <div class="group-head">{{ t("provider.recommended") }}</div>
-            <button v-for="entry in recommended" :key="entry.id" class="row" @click="pickGroup(entry)">
+            <button v-for="entry in recommended" :key="entry.id" type="button" class="row" @click="pickGroup(entry)">
               <ProviderIcon :id="entry.entries[0].id" :name="entry.name" />
               <span class="row-name">{{ entry.name }}</span>
               <span class="row-desc">{{ describe(entry) }}</span>
@@ -339,7 +339,7 @@ useEscapeLayer(dismiss)
 
           <template v-if="others.length">
             <div class="group-head">{{ t("connect.other") }}</div>
-            <button v-for="entry in others" :key="entry.id" class="row" @click="pickGroup(entry)">
+            <button v-for="entry in others" :key="entry.id" type="button" class="row" @click="pickGroup(entry)">
               <ProviderIcon :id="entry.entries[0].id" :name="entry.name" />
               <span class="row-name">{{ entry.name }}</span>
               <span class="row-desc">{{ describe(entry) }}</span>
@@ -368,7 +368,7 @@ useEscapeLayer(dismiss)
         <p class="lead">{{ t("connect.pickMethod", { name: target?.name ?? "" }) }}</p>
 
         <div class="ways">
-          <button v-for="entry in ways" :key="entry.key" class="way" @click="pickWay(entry)">
+          <button v-for="entry in ways" :key="entry.key" type="button" class="way" @click="pickWay(entry)">
             <span class="way-name">{{ entry.label }}</span>
             <span v-if="entry.provider.configured" class="row-state">{{ t("connect.connected") }}</span>
           </button>
@@ -415,8 +415,8 @@ useEscapeLayer(dismiss)
             </button>
           </div>
           <div class="actions">
-            <button class="go" :disabled="!key.trim() || busy" @click="submitKey">{{ t("common.save") }}</button>
-            <button v-if="provider?.keyURL" class="link" @click="openKeyPage">
+            <button type="button" class="go" :disabled="!key.trim() || busy" @click="submitKey">{{ t("common.save") }}</button>
+            <button v-if="provider?.keyURL" type="button" class="link" @click="openKeyPage">
               {{ t("onboard.getKey") }}
             </button>
           </div>
@@ -437,7 +437,7 @@ useEscapeLayer(dismiss)
           />
           <p class="lead soft">{{ t("onboard.endpointHint") }}</p>
           <div class="actions">
-            <button class="go" :disabled="busy || !endpointValue.trim()" @click="connectLocal">
+            <button type="button" class="go" :disabled="busy || !endpointValue.trim()" @click="connectLocal">
               {{ t("set.connect") }}
             </button>
           </div>
@@ -449,7 +449,7 @@ useEscapeLayer(dismiss)
           </p>
 
           <div v-if="!auth?.url" class="actions">
-            <button class="go" :disabled="busy" @click="login">
+            <button type="button" class="go" :disabled="busy" @click="login">
               {{ way?.method === "oauth-browser" ? t("auth.openBrowser") : t("auth.startDevice") }}
             </button>
           </div>
@@ -457,11 +457,11 @@ useEscapeLayer(dismiss)
           <template v-if="auth?.userCode">
             <p class="lead">
               {{ t("auth.deviceLead") }}
-              <button class="link inline" @click="openVerification">{{ t("auth.thisLink") }}</button>
+              <button type="button" class="link inline" @click="openVerification">{{ t("auth.thisLink") }}</button>
               {{ t("auth.deviceTail") }}
             </p>
             <label class="label">{{ t("auth.code") }}</label>
-            <button class="code" @click="copyCode">
+            <button type="button" class="code" @click="copyCode">
               <span>{{ auth.userCode }}</span>
               <span class="code-hint">{{ copied ? t("code.copied") : t("edit.copy") }}</span>
             </button>
@@ -470,7 +470,7 @@ useEscapeLayer(dismiss)
           <div v-if="auth?.stage === 'waiting'" class="pending">
             <span class="spinner" />
             <span>{{ way?.method === "oauth-browser" ? t("auth.waiting") : t("auth.waitingDevice") }}</span>
-            <button class="link" @click="app.cancelAuth(provider!.id)">{{ t("common.cancel") }}</button>
+            <button type="button" class="link" @click="app.cancelAuth(provider!.id)">{{ t("common.cancel") }}</button>
           </div>
         </template>
       </template>
@@ -734,6 +734,14 @@ useEscapeLayer(dismiss)
 .way:hover {
   background: var(--surface-hover);
   border-color: var(--border-weak);
+}
+
+.way:focus-visible,
+.go:focus-visible,
+.link:focus-visible,
+.code:focus-visible {
+  outline: 2px solid var(--text-strong);
+  outline-offset: -2px;
 }
 
 .way-name {

@@ -349,6 +349,7 @@ defineExpose({ close })
           <button
             v-for="item in group.items"
             :key="item.kind + item.id"
+            type="button"
             class="sr-item"
             :data-kind="item.kind"
             @click="choose(item)"

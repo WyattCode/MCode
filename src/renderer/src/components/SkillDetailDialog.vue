@@ -41,7 +41,7 @@ useEscapeLayer(() => emit("close"))
 <template>
   <div class="scrim" data-skill-overlay @mousedown.self="emit('close')">
     <div v-modal class="card" role="dialog" aria-labelledby="skill-card-title" :data-skill-card="skill.name">
-      <button class="close" data-skill-close :aria-label="t('skillDetail.close')" @click="emit('close')">✕</button>
+      <button type="button" class="close" data-skill-close :aria-label="t('skillDetail.close')" @click="emit('close')">✕</button>
       <div class="head">
         <span class="mark" aria-hidden="true">
           <template v-if="skill.icon">{{ skill.icon }}</template>
@@ -59,6 +59,7 @@ useEscapeLayer(() => emit("close"))
           <span class="kind">{{ t("skillDetail.kind") }}</span>
         </div>
         <button
+          type="button"
           class="switch"
           :class="{ on: skill.enabled }"
           role="switch"
@@ -73,7 +74,7 @@ useEscapeLayer(() => emit("close"))
       <div v-if="brief" class="brief" dir="auto">{{ brief }}</div>
       <div class="body">
         <div v-if="description" class="desc" dir="auto">{{ description }}</div>
-        <button class="content-toggle" data-skill-content-toggle :aria-expanded="open" @click="toggleContent">
+        <button type="button" class="content-toggle" data-skill-content-toggle :aria-expanded="open" @click="toggleContent">
           {{ open ? "▾" : "▸" }} {{ t("skillDetail.viewContent") }}
         </button>
         <div v-if="open" class="content" data-skill-content>
@@ -87,12 +88,12 @@ useEscapeLayer(() => emit("close"))
         </div>
       </div>
       <div class="foot">
-        <button v-if="skill.removable" class="uninstall" data-skill-uninstall :disabled="busy" @click="emit('uninstall')">
+        <button v-if="skill.removable" type="button" class="uninstall" data-skill-uninstall :disabled="busy" @click="emit('uninstall')">
           {{ busy ? t("skillDetail.processing") : t("skillDetail.uninstall") }}
         </button>
         <div class="foot-end">
-          <button v-if="!skill.builtin" class="configure" data-skill-configure @click="emit('configure')">✨ {{ t("skillDetail.agentConfig") }}</button>
-          <button class="try" data-skill-try @click="emit('try-skill')">↩ {{ t("skillDetail.tryInChat") }}</button>
+          <button v-if="!skill.builtin" type="button" class="configure" data-skill-configure @click="emit('configure')">✨ {{ t("skillDetail.agentConfig") }}</button>
+          <button type="button" class="try" data-skill-try @click="emit('try-skill')">↩ {{ t("skillDetail.tryInChat") }}</button>
         </div>
       </div>
     </div>

@@ -58,6 +58,7 @@ function levelTitle(level: Effort): string | undefined {
 <template>
   <div ref="slot" class="slot" @mouseenter="emit('enter')">
     <button
+      type="button"
       class="item model-item"
       tabindex="-1"
       :class="{ hot, on }"
@@ -86,6 +87,7 @@ function levelTitle(level: Effort): string | undefined {
       <button
         v-for="entry in efforts"
         :key="entry"
+        type="button"
         class="item model-item"
         tabindex="-1"
         :class="{ on: on && entry === effort, hot: entry === effortHot }"
