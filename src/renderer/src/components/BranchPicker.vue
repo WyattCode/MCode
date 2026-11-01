@@ -213,7 +213,7 @@ onBeforeUnmount(() => {
           <path d="M7.2 2.8a4.4 4.4 0 1 0 0 8.8 4.4 4.4 0 0 0 0-8.8z" />
           <path d="M13.2 13.2l-2.8-2.8" />
         </svg>
-        <input ref="search" v-model="query" spellcheck="false" :placeholder="t('home.branchSearch')" @keydown.stop />
+        <input ref="search" v-model="query" spellcheck="false" :placeholder="t('home.branchSearch')" :aria-label="t('home.branchSearch')" @keydown.stop />
       </div>
 
       <div class="list" data-branch-list>
@@ -414,6 +414,12 @@ svg circle {
   outline: none;
   font: inherit;
   font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+.search input:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 .search input::placeholder {

@@ -692,7 +692,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" />
           </svg>
-          <input v-model="filter" data-ft-filter spellcheck="false" :placeholder="t('rp.files.filterPlaceholder')" />
+          <input v-model="filter" data-ft-filter spellcheck="false" :placeholder="t('rp.files.filterPlaceholder')" :aria-label="t('rp.files.filterPlaceholder')" />
         </div>
         <div class="fv-rows">
           <div v-if="!root" class="fv-note">{{ t("rp.files.noProject") }}</div>
@@ -752,7 +752,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
           <svg class="fv-find-ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" />
           </svg>
-          <input ref="findInput" v-model="query" class="fv-find-input" :placeholder="t('rp.files.findPlaceholder')" @keydown="onFindKey" />
+          <input ref="findInput" v-model="query" class="fv-find-input" :placeholder="t('rp.files.findPlaceholder')" :aria-label="t('rp.files.findPlaceholder')" @keydown="onFindKey" />
           <span class="fv-find-count" data-ft-find-count>{{ findCount }}</span>
           <button type="button" class="fv-find-btn" :aria-label="t('rp.files.findPrev')" :disabled="findTotal === 0" @click="stepFind(-1)">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m18 15-6-6-6 6" /></svg>
@@ -985,6 +985,12 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
+.fv-filter input:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 .fv-rows {
   display: flex;
   flex: 1;
@@ -1185,6 +1191,12 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
   outline: none;
   font-family: inherit;
   font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+.fv-find-input:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 .fv-find-input::placeholder {

@@ -201,6 +201,7 @@ onBeforeUnmount(() => {
           v-model="query"
           spellcheck="false"
           :placeholder="t('home.searchProjects')"
+          :aria-label="t('home.searchProjects')"
           @keydown="onSearchKeys"
         />
       </div>
@@ -413,6 +414,12 @@ svg path {
   outline: none;
   font: inherit;
   font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+.search input:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 .search input::placeholder {

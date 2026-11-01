@@ -303,7 +303,7 @@ useEscapeLayer(dismiss)
             <circle cx="7.2" cy="7.2" r="4.4" stroke="currentColor" stroke-width="1.3" />
             <path d="M10.6 10.6 13.4 13.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
           </svg>
-          <input ref="searchEl" v-model="query" class="search-in" :placeholder="t('connect.search')" spellcheck="false" />
+          <input ref="searchEl" v-model="query" class="search-in" :placeholder="t('connect.search')" :aria-label="t('connect.search')" spellcheck="false" />
           <button v-if="query" class="icon small" v-tip="{ label: t('common.clear'), placement: 'bottom' }" @click="query = ''">
             <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.2" />
@@ -607,6 +607,12 @@ useEscapeLayer(dismiss)
   border: none;
   font-size: calc(13.5px * var(--ui-font-scale, 1));
   outline: none;
+}
+
+.search-in:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 .list {
