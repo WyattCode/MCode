@@ -62,7 +62,7 @@ import { draftFromMessage, provideRestoreDraft } from "./lib/draft"
 import { cycleVariant, findModel } from "./lib/model"
 import { PANEL_MIN_WIDTH, useRightPanel } from "./stores/right-panel"
 import { arbitratePanel, boundChord, clampSideWidth, panelWidthShown, sideFits, toolHints } from "./lib/right-tools"
-import { exportConversationById, exportConversationMarkdown, transcriptOf } from "./lib/convo-export"
+import { copyConversationMarkdownById, exportConversationById, exportConversationMarkdown } from "./lib/convo-export"
 import { ZOOM_TOAST, dismiss, notify, notifyFailure, zoomNotice } from "./lib/toast"
 import { followZoom } from "./lib/zoom-resize"
 import { openDocument } from "./lib/office-open"
@@ -1581,11 +1581,7 @@ const ROW_ACTIONS: Record<string, (sessionID: string, header: boolean) => void |
   "row.newProjectMove": (sessionID) => {
     namingProject.value = { sessionID }
   },
-  "row.copyMarkdown": async (sessionID) => {
-    if (app.currentID !== sessionID) await app.open(sessionID)
-    window.mcode.setClipboardText(transcriptMarkdown())
-    notify(t("menu.copiedMarkdown"))
-  },
+  "row.copyMarkdown": (sessionID) => void copyConversationMarkdownById(sessionID),
   /* Round 3 AR15 (artifacts agent): MiMo's 导出对话记录 saves the named conversation as Markdown without opening it. */
   "session.export": (sessionID) => exportConversationById(sessionID),
   /* MiMo's copy notices are the title alone; what was copied is already on the clipboard. */
@@ -2058,14 +2054,6 @@ async function createNamedProject(title: string, source?: string) {
   }
   // DL15: MiMo lands on the home screen with the new project picked, and makes no conversation for it.
   await addAndBrowse([directory])
-}
-
-/**
- * The conversation on show as Markdown, in MiMo's shape (lib/convo-export.ts).
- * Round 3 AR16 (artifacts agent).
- */
-function transcriptMarkdown(): string {
-  return transcriptOf(app.current ? sessionTitle(app.current.title) : "", app.messages)
 }
 
 /**
