@@ -2,6 +2,7 @@
 import { onMounted, ref, watch } from "vue"
 import type { Attachment } from "@shared/protocol"
 import { openImagePreview } from "../../lib/image-preview"
+import { t } from "../../lib/i18n"
 import { stepImages } from "../../lib/tool-meta"
 import "./steps.css"
 
@@ -63,8 +64,24 @@ function show(shot: Shot, event: MouseEvent) {
 
 <template>
   <div v-if="shots.length" class="hs-shots" data-step-shots>
-    <button v-for="shot in shots" :key="shot.key" type="button" class="hs-shot" :aria-label="shot.name" :title="shot.name" @click="show(shot, $event)">
+    <button
+      v-for="shot in shots"
+      :key="shot.key"
+      type="button"
+      class="hs-shot"
+      :aria-label="`${t('markdown.previewImageTip')}: ${shot.name}`"
+      :title="shot.name"
+      @click="show(shot, $event)"
+    >
       <img :src="shot.url" :alt="shot.name" draggable="false" />
     </button>
   </div>
 </template>
+
+<style scoped>
+/* A thumbnail reached from the keyboard keeps MiMo's ring. */
+.hs-shot:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+</style>

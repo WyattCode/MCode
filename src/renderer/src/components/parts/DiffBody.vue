@@ -130,6 +130,7 @@ defineExpose({ reveal })
           class="db-list-line"
           role="button"
           tabindex="0"
+          :aria-label="`${file.path.dir}${file.path.base} +${file.added} -${file.deleted}`"
           @click="reveal(index)"
           @keydown.enter.space.self.prevent="reveal(index, true)"
         >
@@ -160,6 +161,7 @@ defineExpose({ reveal })
           role="button"
           tabindex="0"
           :aria-expanded="!collapsed.has(file.name)"
+          :aria-label="`${file.path.dir}${file.path.base}, ${t(`rp.diff.tag.${file.status}`)}`"
           @click="toggle(file.name)"
           @keydown.enter.space.self.prevent="toggle(file.name)"
         >
@@ -368,6 +370,13 @@ defineExpose({ reveal })
   border-bottom: 0;
 }
 
+/* A row reached from the keyboard keeps MiMo's ring, rounded as the row is. */
+.db-list-line:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
 /* A name in the list is diff2html's link blue in either theme, its folders dimmed. */
 .db-list .db-name {
   --d2h-color: #3572b0;
@@ -438,6 +447,12 @@ defineExpose({ reveal })
   border-bottom: 1px solid var(--d2h-head-border);
   font-size: calc(13px * var(--ui-font-scale, 1));
   cursor: pointer;
+}
+
+/* A fold head reached from the keyboard keeps MiMo's ring. */
+.db-head:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 /* The fold triangle: 5px, turned down while open, over .12s. */
