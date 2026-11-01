@@ -24,12 +24,16 @@ const directory = computed(() => app.current?.directory ?? "")
 /** Read from disk: a branch line that cannot be backed by a fact is not drawn. */
 const info = ref<{ exists: boolean; branch?: string; modified?: number }>()
 
+let infoSeq = 0
+
 watch(
   directory,
   async (next) => {
+    const seq = ++infoSeq
     info.value = undefined
     if (!next) return
-    info.value = await app.workspaceInfo(next).catch(() => undefined)
+    const result = await app.workspaceInfo(next).catch(() => undefined)
+    if (seq === infoSeq) info.value = result
   },
   { immediate: true },
 )
