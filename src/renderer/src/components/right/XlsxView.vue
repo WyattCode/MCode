@@ -822,7 +822,9 @@ watch(
     const ended = [...runningBefore].filter((id) => !now.has(id))
     runningBefore = now
     if (!ended.length) return
-    const [dir, base] = splitPath()
+    const path = props.path
+    const origin = props.origin
+    const [dir, base] = splitFilePath(path)
     if (localPending && localConvo && ended.includes(localConvo)) {
       localPending = false
       deferReload = false
@@ -831,20 +833,23 @@ watch(
       localNote = ""
       try {
         const read = await window.mcode.readFileBytes(dir, base)
+        if (props.path !== path) return
         if (read.ok && !read.unchanged) {
+          await versions.record(path, read.base64, "ai_local", note)
+          if (props.path !== path) return
           lastStat = { size: read.size, mtimeMs: read.mtimeMs }
-          await versions.record(props.path, read.base64, "ai_local", note)
         } else console.error("[XlsxView] read bytes for AI version record failed:", read.ok ? "unchanged" : read.reason)
       } catch (err) {
         console.error("[XlsxView] record AI version error:", err)
       } finally {
-        reload()
+        if (props.path === path) reload()
       }
       return
     }
-    if (ended.some((id) => id === props.origin || watchedFilesOf(id).includes(props.path))) {
+    if (ended.some((id) => id === origin || watchedFilesOf(id).includes(path))) {
       deferReload = false
       const read = await window.mcode.readFileBytes(dir, base, lastStat)
+      if (props.path !== path) return
       if (!read.ok || read.unchanged) return
       lastStat = { size: read.size, mtimeMs: read.mtimeMs }
       reload()
