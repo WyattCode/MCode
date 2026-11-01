@@ -1887,8 +1887,8 @@ onBeforeUnmount(() => {
                 <div class="line-sub">{{ app.config?.projectRoot || t("set.projectRootEmpty") }}</div>
               </div>
               <span class="ctl-pair">
-                <button class="ctl-btn" data-pick @click="pickProjectRoot">{{ t("set.pickDir") }}</button>
-                <button v-if="app.config?.projectRoot" class="ctl-btn" data-reset @click="resetProjectRoot">
+                <button type="button" class="ctl-btn" data-pick @click="pickProjectRoot">{{ t("set.pickDir") }}</button>
+                <button v-if="app.config?.projectRoot" type="button" class="ctl-btn" data-reset @click="resetProjectRoot">
                   {{ t("set.resetDir") }}
                 </button>
               </span>
@@ -1935,6 +1935,7 @@ onBeforeUnmount(() => {
                 </div>
               </div>
               <button
+                type="button"
                 class="switch"
                 :class="{ on: app.config?.tray ?? true }"
                 role="switch"
@@ -1953,6 +1954,7 @@ onBeforeUnmount(() => {
                 <div class="line-sub">{{ t("set.launchAtLoginSub") }}</div>
               </div>
               <button
+                type="button"
                 class="switch"
                 :class="{ on: loginItem.enabled }"
                 role="switch"
@@ -1974,6 +1976,7 @@ onBeforeUnmount(() => {
                 <div class="line-sub">{{ t("set.remoteSub") }}</div>
               </div>
               <button
+                type="button"
                 class="switch"
                 :class="{ on: app.config?.remote?.enabled ?? false }"
                 role="switch"
@@ -1997,6 +2000,7 @@ onBeforeUnmount(() => {
                 <div class="line-sub">{{ t("set.allowFullAccessSub") }}</div>
               </div>
               <button
+                type="button"
                 class="switch"
                 :class="{ on: app.config?.allowFullAccess }"
                 role="switch"
@@ -2014,6 +2018,7 @@ onBeforeUnmount(() => {
                 <div class="line-sub">{{ t("set.userVerifySub") }}</div>
               </div>
               <button
+                type="button"
                 class="switch"
                 :class="{ on: userVerify.requireGate }"
                 role="switch"
@@ -2036,6 +2041,7 @@ onBeforeUnmount(() => {
                 <div class="line-sub">{{ t("set.browserPluginSub") }}</div>
               </div>
               <button
+                type="button"
                 class="switch"
                 :class="{ on: app.config?.browserEnabled !== false }"
                 role="switch"
@@ -2053,6 +2059,7 @@ onBeforeUnmount(() => {
                 <div class="line-sub">{{ t("set.videoCardDetailsSub") }}</div>
               </div>
               <button
+                type="button"
                 class="switch"
                 :class="{ on: app.config?.videoCardDetails !== false }"
                 role="switch"
@@ -2069,7 +2076,7 @@ onBeforeUnmount(() => {
                 <div class="line-title">{{ t("set.browsingData") }}</div>
                 <div class="line-sub">{{ t("set.browsingDataSub") }}</div>
               </div>
-              <button class="ctl-btn clear-browsing" @click="confirmingClear = true">{{ t("set.clearBrowsingData") }}</button>
+              <button type="button" class="ctl-btn clear-browsing" @click="confirmingClear = true">{{ t("set.clearBrowsingData") }}</button>
             </div>
           </div>
 
@@ -2089,6 +2096,7 @@ onBeforeUnmount(() => {
                 <div class="line-sub">{{ t("set.webSearchSub") }}</div>
               </div>
               <button
+                type="button"
                 class="switch"
                 :class="{ on: app.config?.websearch !== false }"
                 role="switch"
@@ -2159,6 +2167,7 @@ onBeforeUnmount(() => {
                 <div class="line-sub">{{ t(app.config?.voiceSend ? "set.voiceSendSubOn" : "set.voiceSendSub") }}</div>
               </div>
               <button
+                type="button"
                 class="switch"
                 :class="{ on: app.config?.voiceSend ?? false }"
                 role="switch"
@@ -2176,6 +2185,7 @@ onBeforeUnmount(() => {
                 <div class="line-sub">{{ t("set.voiceFeedbackSub") }}</div>
               </div>
               <button
+                type="button"
                 class="switch"
                 :class="{ on: app.config?.voiceFeedback ?? true }"
                 role="switch"
@@ -2235,6 +2245,7 @@ onBeforeUnmount(() => {
                 <div class="line-sub">{{ t("set.spineSoundSub") }}</div>
               </div>
               <button
+                type="button"
                 class="switch"
                 :class="{ on: app.config?.spineSound !== false }"
                 role="switch"
@@ -2257,6 +2268,7 @@ onBeforeUnmount(() => {
                 <div class="line-sub">{{ t("set.hwAccelSub") }}</div>
               </div>
               <button
+                type="button"
                 class="switch"
                 :class="{ on: hardwareAcceleration }"
                 role="switch"
@@ -2300,6 +2312,7 @@ onBeforeUnmount(() => {
             <button
               v-for="tile in iconTiles"
               :key="tile.spec.id"
+              type="button"
               class="tile"
               :class="{ on: appIcon === tile.spec.id }"
               role="radio"
@@ -2320,6 +2333,7 @@ onBeforeUnmount(() => {
                 <div class="line-sub">{{ t("set.pointerCursorSub") }}</div>
               </div>
               <button
+                type="button"
                 class="switch"
                 :class="{ on: app.config?.pointerCursor ?? true }"
                 role="switch"
@@ -2340,6 +2354,7 @@ onBeforeUnmount(() => {
                 <button
                   v-for="mode in MOTION_MODES"
                   :key="mode"
+                  type="button"
                   class="choice-btn"
                   :class="{ on: (app.config?.reduceMotion ?? 'system') === mode }"
                   role="radio"
@@ -2403,6 +2418,7 @@ onBeforeUnmount(() => {
                 <button
                   v-for="mark in DIFF_MARKS"
                   :key="mark"
+                  type="button"
                   class="choice-btn"
                   :class="{ on: (app.config?.diffMarks ?? 'color') === mark }"
                   role="radio"
@@ -2420,6 +2436,7 @@ onBeforeUnmount(() => {
                 <div class="line-sub">{{ t(app.platform === "darwin" ? "set.fontSmoothingSubMac" : "set.fontSmoothingSub") }}</div>
               </div>
               <button
+                type="button"
                 class="switch"
                 :class="{ on: app.config?.fontSmoothing ?? true }"
                 role="switch"
@@ -2455,7 +2472,7 @@ onBeforeUnmount(() => {
           />
           <div class="ci-actions">
             <!-- MiMo's save turns into the primary button once there is something to save. -->
-            <button class="ctl-btn ci-save" :class="{ 'update-install': dirty }" data-ci-save :disabled="!dirty" @click="saveInstructions">
+            <button type="button" class="ctl-btn ci-save" :class="{ 'update-install': dirty }" data-ci-save :disabled="!dirty" @click="saveInstructions">
               {{ t("common.save") }}
             </button>
           </div>
@@ -2470,8 +2487,8 @@ onBeforeUnmount(() => {
                 <div class="line-sub mcp-path" data-config-path :title="configFile?.path">{{ configFile ? homePath(configFile.path, paths?.home) : "" }}</div>
               </div>
               <div class="mcp-ctrl">
-                <button class="ctl-btn" data-config-copy-path :disabled="!configFile" @click="copyConfigPath">{{ t("set.config.copyPath") }}</button>
-                <button class="ctl-btn" data-config-open :disabled="!configFile" @click="openConfigFile">{{ t("files.open") }}</button>
+                <button type="button" class="ctl-btn" data-config-copy-path :disabled="!configFile" @click="copyConfigPath">{{ t("set.config.copyPath") }}</button>
+                <button type="button" class="ctl-btn" data-config-open :disabled="!configFile" @click="openConfigFile">{{ t("files.open") }}</button>
               </div>
             </div>
             <div class="line" data-agents-row>
@@ -2483,14 +2500,14 @@ onBeforeUnmount(() => {
                 <span class="agents-tag" :class="{ off: agents?.state !== 'loaded' }" data-agents-state>
                   {{ t(agents?.state === "loaded" ? "set.agents.loaded" : agents?.state === "disabled" ? "set.agents.disabled" : "set.agents.none") }}
                 </span>
-                <button v-if="agents?.state !== 'disabled'" class="ctl-btn" data-agents-open @click="openAgents">{{ t("files.open") }}</button>
-                <button v-if="agents?.state === 'loaded'" class="ctl-btn" data-agents-disable @click="switchAgents(false)">
+                <button v-if="agents?.state !== 'disabled'" type="button" class="ctl-btn" data-agents-open @click="openAgents">{{ t("files.open") }}</button>
+                <button v-if="agents?.state === 'loaded'" type="button" class="ctl-btn" data-agents-disable @click="switchAgents(false)">
                   {{ t("set.agents.disable") }}
                 </button>
-                <button v-if="agents?.state === 'disabled'" class="ctl-btn" data-agents-enable @click="switchAgents(true)">
+                <button v-if="agents?.state === 'disabled'" type="button" class="ctl-btn" data-agents-enable @click="switchAgents(true)">
                   {{ t("set.agents.enable") }}
                 </button>
-                <button v-if="agents && agents.state !== 'none'" class="ctl-btn" data-agents-delete @click="confirmingAgentsDelete = true">
+                <button v-if="agents && agents.state !== 'none'" type="button" class="ctl-btn" data-agents-delete @click="confirmingAgentsDelete = true">
                   {{ t("set.agents.delete") }}
                 </button>
               </div>
@@ -2509,6 +2526,7 @@ onBeforeUnmount(() => {
               <span v-if="row.id === 'mcode'" class="agents-tag" data-skill-path-always>{{ t("set.skillPaths.always") }}</span>
               <button
                 v-else
+                type="button"
                 class="switch"
                 :class="{ on: row.on }"
                 role="switch"
@@ -2667,6 +2685,7 @@ onBeforeUnmount(() => {
                   </span>
                   <button
                     v-else
+                    type="button"
                     class="switch"
                     :class="{ on: mcpImportPicked.has(importKey(item)) }"
                     role="switch"
@@ -2684,8 +2703,9 @@ onBeforeUnmount(() => {
           <!-- MiMo's note under the sources: where skills are read from, and that other tools' folders are not scanned. -->
           <p class="page-sub mcp-skills-note" data-mcp-import-skills-note>{{ t("set.mcp.importSkillsNote") }}</p>
           <div class="mcp-import-actions">
-            <button class="ctl-btn" data-mcp-import-back @click="mcpView = 'list'">{{ t("set.mcp.importBack") }}</button>
+            <button type="button" class="ctl-btn" data-mcp-import-back @click="mcpView = 'list'">{{ t("set.mcp.importBack") }}</button>
             <button
+              type="button"
               v-if="mcpImports.some((item) => !item.exists)"
               class="ctl-btn update-install"
               data-mcp-import-apply
@@ -2710,7 +2730,7 @@ onBeforeUnmount(() => {
                 </div>
               </div>
               <div class="mcp-ctrl">
-                <button v-if="mcpUnapplied" class="ctl-btn" data-mcp-apply-now :disabled="mcpApply === 'doing'" @click="applyMcpNow">{{ t("set.mcp.applyNow") }}</button>
+                <button v-if="mcpUnapplied" type="button" class="ctl-btn" data-mcp-apply-now :disabled="mcpApply === 'doing'" @click="applyMcpNow">{{ t("set.mcp.applyNow") }}</button>
               </div>
             </div>
           </div>
@@ -2729,6 +2749,7 @@ onBeforeUnmount(() => {
                 </div>
                 <div class="mcp-ctrl">
                   <button
+                    type="button"
                     class="switch"
                     :class="{ on: row.enabled }"
                     role="switch"
@@ -2741,6 +2762,7 @@ onBeforeUnmount(() => {
                   </button>
                   <button
                     v-if="row.enabled && mcpNeedsSignIn(row.status)"
+                    type="button"
                     class="ctl-btn"
                     :data-mcp-auth="row.name"
                     :disabled="mcpAuthorizing === row.name"
@@ -2748,9 +2770,9 @@ onBeforeUnmount(() => {
                   >
                     {{ mcpAuthorizing === row.name ? t("set.mcp.authorizing") : t("set.mcp.authorize") }}
                   </button>
-                  <button class="ctl-btn" :data-mcp-tools="row.name" @click="toggleMcpTools(row.name)">{{ t("set.mcp.tools") }}</button>
-                  <button class="ctl-btn" :data-mcp-edit="row.name" @click="editMcp(row.name)">{{ t("set.mcp.edit") }}</button>
-                  <button class="ctl-btn" :data-mcp-rm="row.name" @click="removeMcp(row.name)">{{ t("set.mcp.remove") }}</button>
+                  <button type="button" class="ctl-btn" :data-mcp-tools="row.name" @click="toggleMcpTools(row.name)">{{ t("set.mcp.tools") }}</button>
+                  <button type="button" class="ctl-btn" :data-mcp-edit="row.name" @click="editMcp(row.name)">{{ t("set.mcp.edit") }}</button>
+                  <button type="button" class="ctl-btn" :data-mcp-rm="row.name" @click="removeMcp(row.name)">{{ t("set.mcp.remove") }}</button>
                 </div>
               </div>
               <div v-if="mcpToolsOpen === row.name" class="mcp-tools-panel" :data-mcp-tools-panel="row.name">
@@ -2760,6 +2782,7 @@ onBeforeUnmount(() => {
                     <div class="mcp-codemode-desc">{{ t("set.mcp.codemodeDesc") }}</div>
                   </div>
                   <button
+                    type="button"
                     class="switch"
                     :class="{ on: codeModeOf(row.name) }"
                     role="switch"
@@ -2775,7 +2798,7 @@ onBeforeUnmount(() => {
                   <div v-if="view.kind === 'loading'" class="mcp-tools-hint" data-mcp-tools-loading>{{ t("set.mcp.toolsLoading") }}</div>
                   <div v-else-if="view.kind === 'error'" class="mcp-tools-hint err" data-mcp-tools-error>
                     <span>{{ t("set.mcp.toolsFailed") }}{{ view.error }}</span>
-                    <button class="ctl-btn" :data-mcp-tools-retry="row.name" @click="loadMcpTools(row.name)">{{ t("set.mcp.toolsRetry") }}</button>
+                    <button type="button" class="ctl-btn" :data-mcp-tools-retry="row.name" @click="loadMcpTools(row.name)">{{ t("set.mcp.toolsRetry") }}</button>
                   </div>
                   <div v-else-if="view.kind === 'empty'" class="mcp-tools-hint" data-mcp-tools-empty>{{ t("set.mcp.toolsEmpty") }}</div>
                   <template v-else>
@@ -2795,14 +2818,14 @@ onBeforeUnmount(() => {
                 <div class="line-title">{{ t("set.mcp.addServer") }}</div>
                 <div class="line-sub">{{ t("set.mcp.addServerDesc") }}</div>
               </div>
-              <button class="ctl-btn" data-add-mcp @click="addMcp">{{ t("set.mcp.add") }}</button>
+              <button type="button" class="ctl-btn" data-add-mcp @click="addMcp">{{ t("set.mcp.add") }}</button>
             </div>
             <div class="line">
               <div class="line-text">
                 <div class="line-title">{{ t("set.mcp.importEntry") }}</div>
                 <div class="line-sub">{{ t("set.mcp.importEntryDesc") }}</div>
               </div>
-              <button class="ctl-btn" data-mcp-import :disabled="mcpScanning" @click="startMcpImport">
+              <button type="button" class="ctl-btn" data-mcp-import :disabled="mcpScanning" @click="startMcpImport">
                 {{ t(mcpScanning ? "set.mcp.importScanning" : "set.mcp.importScan") }}
               </button>
             </div>
@@ -2820,8 +2843,8 @@ onBeforeUnmount(() => {
               </div>
               <!-- MiMo 26.920 puts the config page's 复制路径 and 打开 on this row too. -->
               <div class="mcp-ctrl">
-                <button class="ctl-btn" data-config-copy-path :disabled="!configFile" @click="copyConfigPath">{{ t("set.config.copyPath") }}</button>
-                <button class="ctl-btn" data-mcp-config-open :disabled="!configFile" @click="openConfigFile">{{ t("files.open") }}</button>
+                <button type="button" class="ctl-btn" data-config-copy-path :disabled="!configFile" @click="copyConfigPath">{{ t("set.config.copyPath") }}</button>
+                <button type="button" class="ctl-btn" data-mcp-config-open :disabled="!configFile" @click="openConfigFile">{{ t("files.open") }}</button>
               </div>
             </div>
           </div>
@@ -2832,7 +2855,7 @@ onBeforeUnmount(() => {
         <template v-else-if="section === 'environment' && configuring">
           <!-- MiMo's detail: capped at 820, a plain back link, plain labels, the local card with its folder icon. -->
           <div class="env-detail" data-env-detail>
-            <button class="env-back" data-env-back @click="leaveEnvironment">
+            <button type="button" class="env-back" data-env-back @click="leaveEnvironment">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="m15 18-6-6 6-6" />
               </svg>
@@ -2851,7 +2874,7 @@ onBeforeUnmount(() => {
             <div class="env-flabel">{{ t("set.envName") }}</div>
             <input v-model="envName" class="env-input" data-env-name :placeholder="t('set.envNamePlaceholder')" spellcheck="false" />
             <div class="env-save-row">
-              <button class="ctl-btn env-save" :class="{ dirty: envDirty }" data-env-save :disabled="!envDirty" @click="saveEnv">{{ t("set.envSave") }}</button>
+              <button type="button" class="ctl-btn env-save" :class="{ dirty: envDirty }" data-env-save :disabled="!envDirty" @click="saveEnv">{{ t("set.envSave") }}</button>
             </div>
           </div>
           <!-- MiMo's leave guard: not destructive, so the plain confirm button. -->
@@ -2874,7 +2897,7 @@ onBeforeUnmount(() => {
 
           <div class="sec-row">
             <h3>{{ t("set.selectProject") }}</h3>
-            <button class="ctl-btn add-project" data-env-add @click="addProject">{{ t("set.addProject") }}</button>
+            <button type="button" class="ctl-btn add-project" data-env-add @click="addProject">{{ t("set.addProject") }}</button>
           </div>
           <div class="card env-projects">
             <div v-for="directory in envProjects" :key="directory" class="line env-project" :data-env-project="directory">
@@ -2897,6 +2920,7 @@ onBeforeUnmount(() => {
               <!-- MiMo's pair: secondary sm buttons 34 wide, a 16px trash that reddens on hover, then a text 「+」, 10 apart. -->
               <span class="env-ctrl">
                 <button
+                  type="button"
                   class="ctl-btn env-icon env-del"
                   data-act="remove"
                   :aria-label="t('set.removeProject')"
@@ -2908,6 +2932,7 @@ onBeforeUnmount(() => {
                   </svg>
                 </button>
                 <button
+                  type="button"
                   class="ctl-btn env-icon env-plus"
                   data-act="configure"
                   :aria-label="t('set.configureProject')"
@@ -2929,6 +2954,7 @@ onBeforeUnmount(() => {
           <div class="sec-row">
             <h3>{{ t("set.worktrees") }}</h3>
             <button
+              type="button"
               class="env-refresh"
               data-env-refresh
               :aria-label="t('set.refreshWorktrees')"
@@ -3061,6 +3087,7 @@ onBeforeUnmount(() => {
               <!-- MiMo's button follows the capsule's phase: 重启更新, 更新中… (disabled), or 重试. -->
               <button
                 v-if="updatePhase !== 'idle'"
+                type="button"
                 class="ctl-btn update-install"
                 data-update-install
                 :data-update-phase="updatePhase"
@@ -3069,7 +3096,7 @@ onBeforeUnmount(() => {
               >
                 {{ t(updatePhase === "installing" ? "update.pillInstalling" : updatePhase === "failed" ? "update.pillRetry" : "set.restartUpdate") }}
               </button>
-              <button v-else class="ctl-btn" data-check-update :disabled="updateChecking" @click="emit('check-updates')">
+              <button v-else type="button" class="ctl-btn" data-check-update :disabled="updateChecking" @click="emit('check-updates')">
                 {{ t(updateChecking ? "set.checking" : "update.check") }}
               </button>
             </div>
@@ -3094,7 +3121,7 @@ onBeforeUnmount(() => {
                 <div class="line-title">{{ t("set.licenses") }}</div>
                 <div class="line-sub">{{ t("set.licensesSub") }}</div>
               </div>
-              <button class="ctl-btn" data-licenses-open @click="licensesOpen = true">{{ t("set.licensesView") }}</button>
+              <button type="button" class="ctl-btn" data-licenses-open @click="licensesOpen = true">{{ t("set.licensesView") }}</button>
             </div>
           </div>
           <ThirdPartyDialog v-if="licensesOpen" @close="licensesOpen = false" />
@@ -3237,7 +3264,7 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="keys-foot">
-            <button class="ctl-btn" data-reset-all-shortcuts :title="t('set.keys.resetAll')" @click="resetAllBindings">{{ t("set.keys.resetAll") }}</button>
+            <button type="button" class="ctl-btn" data-reset-all-shortcuts :title="t('set.keys.resetAll')" @click="resetAllBindings">{{ t("set.keys.resetAll") }}</button>
           </div>
         </div>
 
@@ -3256,6 +3283,7 @@ onBeforeUnmount(() => {
                 <div class="line-sub">{{ t("set.lab.sessionChatSub") }}</div>
               </div>
               <button
+                type="button"
                 class="switch"
                 :class="{ on: app.config?.sessionChat !== false }"
                 role="switch"
@@ -3276,6 +3304,7 @@ onBeforeUnmount(() => {
             <h2>{{ t("set.nav.archive") }}</h2>
             <button
               v-if="archived.length"
+              type="button"
               class="archived-manage"
               data-archived-manage
               @click="selecting ? stopSelecting() : (selecting = true)"
@@ -3296,15 +3325,16 @@ onBeforeUnmount(() => {
 
           <template v-else>
             <div v-if="selecting" class="batch-bar">
-              <button class="batch-all" @click="toggleAllPicked">
+              <button type="button" class="batch-all" @click="toggleAllPicked">
                 {{ allPicked ? t("set.selectNone") : t("set.selectAll") }}
               </button>
               <span class="batch-count">{{ t("set.selectedCount", { n: String(pickedLive.length) }) }}</span>
               <span class="batch-acts">
-                <button class="ctl-btn" data-batch="restore" :disabled="!pickedLive.length" @click="restorePicked">
+                <button type="button" class="ctl-btn" data-batch="restore" :disabled="!pickedLive.length" @click="restorePicked">
                   {{ t("set.restoreN", { n: String(pickedLive.length) }) }}
                 </button>
                 <button
+                  type="button"
                   class="archived-delete"
                   data-batch="delete"
                   :disabled="!pickedLive.length"
@@ -3338,8 +3368,9 @@ onBeforeUnmount(() => {
                   <div class="line-sub">{{ archivedDescription(session) }}</div>
                 </div>
                 <div v-if="!selecting" class="confirm">
-                  <button class="ctl-btn" data-archived-restore @click="restoreOne(session.id)">{{ t("set.unarchive") }}</button>
+                  <button type="button" class="ctl-btn" data-archived-restore @click="restoreOne(session.id)">{{ t("set.unarchive") }}</button>
                   <button
+                    type="button"
                     class="archived-delete"
                     data-archived-delete
                     @click="confirmingDelete = { ids: [session.id], title: sessionTitle(session.title) }"
@@ -3366,7 +3397,7 @@ onBeforeUnmount(() => {
                 <div class="line-sub">{{ directory }}</div>
               </div>
               <div class="confirm">
-                <button class="ctl-btn" @click="reopenProject(directory)">{{ t("set.reopen") }}</button>
+                <button type="button" class="ctl-btn" @click="reopenProject(directory)">{{ t("set.reopen") }}</button>
               </div>
             </div>
           </div>
@@ -4830,6 +4861,17 @@ h3 {
 
 .choice-btn:hover {
   color: var(--text-strong);
+}
+
+.choice-btn:focus-visible,
+.tile:focus-visible,
+.env-back:focus-visible,
+.env-refresh:focus-visible,
+.archived-manage:focus-visible,
+.batch-all:focus-visible,
+.archived-delete:focus-visible {
+  outline: 2px solid var(--text-strong);
+  outline-offset: -2px;
 }
 
 /*
