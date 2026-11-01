@@ -16,6 +16,13 @@ import { runFallbackJob, type FallbackJob, type GlobJob, type GlobOutcome, type 
 const TIMEOUT = 10_000
 
 /**
+ * The share of that time a walk is given before it stops on its own and answers
+ * with what it has. Only a regex that never returns needs the kill; a search
+ * that is merely big gets to say "this far" instead of nothing.
+ */
+const SOFT_SHARE = 0.7
+
+/**
  * The bundled worker entry, which lands beside whichever bundle is running.
  *
  * The app builds it to out/main/search-worker.js; the test bundle writes
@@ -36,6 +43,11 @@ function workerFile(): string | undefined {
 const IDLE_WORKERS = 2
 const IDLE_MS = 30_000
 const idle: { worker: Worker; timer: NodeJS.Timeout }[] = []
+
+/** The workers waiting for a job; for the checks, which need to reach one. */
+export function idleWorkers(): Worker[] {
+  return idle.map((entry) => entry.worker)
+}
 
 function forget(worker: Worker): void {
   const at = idle.findIndex((entry) => entry.worker === worker)
@@ -58,11 +70,11 @@ function keep(worker: Worker): void {
   idle.push({ worker, timer })
 }
 
-function take(file: string): Worker {
+function take(file: string): { worker: Worker; reused: boolean } {
   const entry = idle.pop()
   if (entry) {
     clearTimeout(entry.timer)
-    return entry.worker
+    return { worker: entry.worker, reused: true }
   }
   const worker = new Worker(file)
   // A worker waiting for work must not keep the process from exiting; a search in progress is held open by its deadline timer.
@@ -70,7 +82,7 @@ function take(file: string): Worker {
   // Between searches nobody is listening, and an unhandled worker error would take the process down.
   worker.on("error", () => forget(worker))
   worker.on("exit", () => forget(worker))
-  return worker
+  return { worker, reused: false }
 }
 
 /**
@@ -110,8 +122,18 @@ export async function runFallback(
   // A turn stopped before the search began must not run it: no listener below would ever hear an abort that already happened.
   if (signal.aborted) throw new SearchStopped()
 
+  return attempt(file, job, signal, timeoutMs, true)
+}
+
+/**
+ * One go at the job on one worker. A worker taken from the idle list may have
+ * died since it was put there, with its exit not yet heard; that shows up as an
+ * exit before any reply, and is no verdict on the search, so it is tried once
+ * more on a fresh worker.
+ */
+function attempt(file: string, job: FallbackJob, signal: AbortSignal, timeoutMs: number, mayRetry: boolean): Promise<GrepOutcome | GlobOutcome> {
   return new Promise((resolve, reject) => {
-    const worker = take(file)
+    const { worker, reused } = take(file)
     let settled = false
 
     const finish = (act: () => void, reusable = false) => {
@@ -132,7 +154,7 @@ export async function runFallback(
         finish(() =>
           reject(
             new ToolError(
-              `The search did not finish within ${timeoutMs / 1000} seconds and was stopped. A pattern with nested quantifiers such as (a+)+ can take effectively forever - narrow it, or anchor it.`,
+              `The search did not finish within ${timeoutMs / 1000} seconds and was stopped. Either the pattern backtracks without end (nested quantifiers such as (a+)+ do) - anchor or simplify it - or there is too much to search: narrow the path or the include.`,
             ),
           ),
         ),
@@ -143,12 +165,13 @@ export async function runFallback(
     const onMessage = (message: { ok: boolean; result?: GrepOutcome | GlobOutcome; error?: string }) =>
       finish(() => (message.ok ? resolve(message.result!) : reject(new ToolError(message.error ?? "Search failed"))), true)
     const onError = (error: Error) => finish(() => reject(new ToolError(error.message)))
-    const onExit = (code: number) => finish(() => reject(new ToolError(`The search worker stopped unexpectedly (code ${code})`)))
+    const onExit = (code: number) =>
+      finish(() => (reused && mayRetry ? resolve(attempt(file, job, signal, timeoutMs, false)) : reject(new ToolError(`The search worker stopped unexpectedly (code ${code})`))))
 
     signal.addEventListener("abort", onAbort, { once: true })
     worker.on("message", onMessage)
     worker.on("error", onError)
     worker.on("exit", onExit)
-    worker.postMessage(job)
+    worker.postMessage({ ...job, deadline: Date.now() + timeoutMs * SOFT_SHARE })
   })
 }
