@@ -94,9 +94,16 @@ onBeforeUnmount(() => {
 
 <template>
   <Teleport to="body">
-    <div class="version-pop" data-version-pop :style="style">
+    <div
+      class="version-pop"
+      data-version-pop
+      :style="style"
+      role="dialog"
+      aria-modal="false"
+      aria-labelledby="office-version-title"
+    >
       <div class="vp-head">
-        <span class="vp-title">{{ t("office.history") }}</span>
+        <span id="office-version-title" class="vp-title">{{ t("office.history") }}</span>
         <button type="button" class="vp-close" :aria-label="t('office.historyClose')" @click="emit('close')">
           <LucideIcon name="x" :size="14" />
         </button>
@@ -162,6 +169,11 @@ onBeforeUnmount(() => {
   color: var(--text-base);
   background: transparent;
   border: none;
+}
+
+.vp-close:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: -2px;
 }
 
 .vp-list {
@@ -246,6 +258,11 @@ onBeforeUnmount(() => {
   border: 1px solid var(--border-weak);
   border-radius: 6px;
   font-size: 12px;
+}
+
+.vp-restore:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: -2px;
 }
 
 .vp-tip {

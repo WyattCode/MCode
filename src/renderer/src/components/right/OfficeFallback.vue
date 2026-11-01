@@ -11,7 +11,7 @@ defineProps<{ type?: string }>()
 
 <template>
   <div class="office-fallback" data-office-fallback>
-    <div class="of-note">{{ t("office.structuredNoteFailed") }}</div>
+    <div class="of-note" role="status">{{ t("office.structuredNoteFailed") }}</div>
     <div class="of-message">
       {{
         type === "xlsx"

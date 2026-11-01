@@ -90,6 +90,7 @@ async function reveal() {
             class="fc-btn"
             data-office-undo
             :title="t('office.undo')"
+            :aria-label="t('office.undo')"
             :disabled="!versions.canUndo(path)"
             :style="versions.canUndo(path) ? undefined : { opacity: 0.4 }"
             @click="versions.undo(path)"
@@ -101,20 +102,37 @@ async function reveal() {
             class="fc-btn"
             data-office-redo
             :title="t('office.redo')"
+            :aria-label="t('office.redo')"
             :disabled="!versions.canRedo(path)"
             :style="versions.canRedo(path) ? undefined : { opacity: 0.4 }"
             @click="versions.redo(path)"
           >
             <LucideIcon name="redo-2" :size="15" />
           </button>
-          <button type="button" class="fc-btn" data-office-history :title="t('office.history')" @click="toggleHistory">
+          <button
+            type="button"
+            class="fc-btn"
+            data-office-history
+            :title="t('office.history')"
+            :aria-label="t('office.history')"
+            :aria-expanded="!!history"
+            aria-haspopup="dialog"
+            @click="toggleHistory"
+          >
             <LucideIcon name="history" :size="15" />
           </button>
         </template>
-        <button v-if="type === 'pptx' && !fallback.pptx" type="button" class="fc-btn" :title="t('office.pptxPresent')" @click="viewer?.enterPresent?.()">
+        <button
+          v-if="type === 'pptx' && !fallback.pptx"
+          type="button"
+          class="fc-btn"
+          :title="t('office.pptxPresent')"
+          :aria-label="t('office.pptxPresent')"
+          @click="viewer?.enterPresent?.()"
+        >
           <LucideIcon name="play" :size="15" />
         </button>
-        <button type="button" class="fc-btn" data-office-folder :title="t('office.openFolder')" @click="reveal">
+        <button type="button" class="fc-btn" data-office-folder :title="t('office.openFolder')" :aria-label="t('office.openFolder')" @click="reveal">
           <LucideIcon name="folder-open" :size="15" />
         </button>
       </div>
@@ -220,6 +238,11 @@ async function reveal() {
 .fc-btn:disabled {
   opacity: 0.55;
   cursor: default;
+}
+
+.fc-btn:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: -2px;
 }
 
 .office-body {
