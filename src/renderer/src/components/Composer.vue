@@ -3473,7 +3473,14 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           The menus, just above the box and moving with it. Only one is up at a
           time: the @ wins, because it is about the word the caret is in.
         -->
-        <div v-if="atOpen" class="slash at-menu" data-at-menu :style="{ maxHeight: `${menuRoom}px` }">
+        <div
+          v-if="atOpen"
+          class="slash at-menu"
+          data-at-menu
+          role="listbox"
+          :aria-label="t('composer.at.filesGroup')"
+          :style="{ maxHeight: `${menuRoom}px` }"
+        >
           <div v-if="!projectRoot" class="at-note">{{ t("composer.at.pickProject") }}</div>
           <template v-else>
             <!-- MiMo's head: a breadcrumb that climbs out while browsing a folder, else what the list is. -->
@@ -3520,7 +3527,13 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           </template>
         </div>
 
-        <div v-else-if="slashOpen" class="slash" :style="{ maxHeight: `${menuRoom}px` }">
+        <div
+          v-else-if="slashOpen"
+          class="slash"
+          role="listbox"
+          :aria-label="t('composer.commands')"
+          :style="{ maxHeight: `${menuRoom}px` }"
+        >
           <div class="slash-head">{{ t("composer.commands") }}</div>
           <!-- Nothing matching is a line of its own, not an absent menu, so a name typed wrong says so. -->
           <!-- MiMo's order: a failed load, then a load under way, then a list with nothing in it. -->
@@ -3539,6 +3552,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             :key="command.id"
             class="slash-row command"
             :class="{ on: at === slashIndex }"
+            role="option"
+            :aria-selected="at === slashIndex"
             @mouseenter="slashIndex = at"
             @mousedown.prevent="runSlash(at)"
           >
@@ -3557,6 +3572,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           rows="1"
           spellcheck="false"
           :placeholder="placeholder"
+          :aria-label="placeholder"
           :disabled="compactingHere || restrictedHere"
           :aria-busy="compactingHere || undefined"
           @keydown="onKeydown"
@@ -3663,6 +3679,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                   type="text"
                   spellcheck="false"
                   :placeholder="t('composer.skillSearch')"
+                  :aria-label="t('composer.skillSearch')"
                   @keydown.enter="!composing($event) && pickFirstSkill($event)"
                 />
                 <div class="skill-list">
@@ -4218,6 +4235,13 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 
 .slash-row.on {
   background: var(--surface-hover);
+}
+
+.slash-row.command:focus-visible,
+.at-crumb:focus-visible,
+.at-ref:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 /* MiMo's @ rows: a 16px mark, the name, where it lives, and a folder's two actions at the end. */
@@ -5233,6 +5257,11 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   border-radius: 8px;
   outline: none;
   font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+.skill-search:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 .skill-list {
