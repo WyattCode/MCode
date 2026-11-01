@@ -463,9 +463,9 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
       </div>
 
       <!-- A search that found nothing says so, rather than claiming there is nothing at all. -->
-      <p v-else-if="loaded && answered.trim()" class="notice" data-empty="no-match">{{ t("art.noMatch") }}</p>
+      <p v-else-if="loaded && answered.trim()" class="notice" data-empty="no-match" role="status">{{ t("art.noMatch") }}</p>
 
-      <div v-else-if="loaded" class="none" data-empty="none">
+      <div v-else-if="loaded" class="none" data-empty="none" role="status">
         <!-- MCode's own drawing: two sheets, the front one with a folded corner and a spark. -->
         <svg class="illo" width="168" height="120" viewBox="0 0 168 120" fill="none" aria-hidden="true">
           <rect class="illo-back" x="46" y="18" width="62" height="80" rx="8" transform="rotate(-8 77 58)" />
@@ -594,6 +594,11 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
   color: var(--text-weak);
 }
 
+.search:focus-within {
+  border-color: var(--text-strong);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--text-strong) 12%, transparent);
+}
+
 /*
  * The filter tabs take the row; the layout toggle sits at its end, as MiMo's
  * does. The 18 below it belongs to this row rather than to the grid, so the
@@ -601,7 +606,8 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
  */
 .bar {
   display: flex;
-  align-items: center;
+  flex-wrap: wrap;
+  align-items: flex-start;
   gap: 12px;
   margin-top: 16px;
   margin-bottom: 18px;
@@ -621,6 +627,7 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
   flex: none;
   align-items: center;
   gap: 2px;
+  margin-inline-start: auto;
   padding: 2px;
   background: #fffefd;
   border: 1px solid var(--border-weak);

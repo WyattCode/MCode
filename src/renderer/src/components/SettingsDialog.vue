@@ -1009,11 +1009,15 @@ const displayServerOptions = computed(() => [
   { value: "wayland", label: t("set.dsWayland") },
   { value: "x11", label: t("set.dsX11") },
 ])
-const displayServerSub = computed(() =>
-  displayServer.value.pref === "auto"
-    ? `${t("set.displayServerSub")} · ${t(displayServer.value.effective === "wayland" ? "set.dsCurrentWayland" : "set.dsCurrentX11")}`
-    : t("set.displayServerSub"),
-)
+const displayServerSub = computed(() => {
+  const base =
+    displayServer.value.pref === "auto"
+      ? `${t("set.displayServerSub")} · ${t(displayServer.value.effective === "wayland" ? "set.dsCurrentWayland" : "set.dsCurrentX11")}`
+      : t("set.displayServerSub")
+  const wayland =
+    displayServer.value.effective === "wayland" || displayServer.value.pref === "wayland"
+  return wayland ? `${base} ${t("set.dsWaylandTip")}` : base
+})
 
 async function chooseDisplayServer(value: string) {
   const pref = value === "wayland" || value === "x11" ? value : "auto"
@@ -4832,6 +4836,16 @@ h3 {
   color: var(--text-strong);
 }
 
+.choice-btn:focus-visible {
+  outline: 2px solid var(--text-strong);
+  outline-offset: -2px;
+}
+
+.choice:focus-within {
+  outline: 2px solid var(--text-strong);
+  outline-offset: -2px;
+}
+
 /*
  * The picked segment is MiMo's primary pair - --color-primary on
  * --color-primary-foreground - which is #151c13 under white in light and
@@ -4934,6 +4948,8 @@ h3 {
   position: relative;
   width: min(960px, 100vw - 48px);
   height: min(660px, 100vh - 88px);
+  height: min(660px, 100dvh - 88px);
+  max-height: calc(100dvh - 24px);
   background: #ffffff;
   border: 1px solid #f3efeb;
   border-radius: 20px;
@@ -5134,7 +5150,8 @@ h3 {
 }
 
 .content {
-  padding: 44px 40px;
+  padding: 44px 40px 64px;
+  scroll-padding-bottom: 48px;
   background: #ffffff;
 }
 
