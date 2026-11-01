@@ -67,7 +67,7 @@ onMounted(() => {
 
 <template>
   <div class="scrim" @mousedown.self="emit('close')">
-    <div v-modal class="dialog" data-rename-dialog role="dialog" aria-labelledby="rename-title">
+    <div v-modal class="dialog" data-rename-dialog role="dialog" aria-labelledby="rename-title" aria-modal="true">
       <div class="head">
         <div class="head-text">
           <h2 id="rename-title">{{ heading ?? t("cmd.rename") }}</h2>
@@ -163,6 +163,11 @@ h2 {
   background: var(--surface-hover);
 }
 
+.close:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
 .field {
   box-sizing: border-box;
   width: 100%;
@@ -254,6 +259,12 @@ footer {
 
 .go:hover:not(:disabled) {
   opacity: 0.9;
+}
+
+.ghost:focus-visible,
+.go:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 .go:disabled {

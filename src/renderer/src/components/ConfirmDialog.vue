@@ -32,7 +32,7 @@ onMounted(() => {
 
 <template>
   <div class="scrim" @mousedown.self="emit('close')">
-    <div v-modal class="dialog" data-confirm-dialog role="alertdialog" aria-labelledby="confirm-title">
+    <div v-modal class="dialog" data-confirm-dialog role="alertdialog" aria-labelledby="confirm-title" aria-modal="true">
       <h2 id="confirm-title">{{ title }}</h2>
       <p class="body">{{ body }}</p>
       <footer>
@@ -120,6 +120,12 @@ footer {
 
 .confirm:hover {
   opacity: 0.9;
+}
+
+.ghost:focus-visible,
+.confirm:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 /* MiMo's light red pair for an action that cannot be undone. */
