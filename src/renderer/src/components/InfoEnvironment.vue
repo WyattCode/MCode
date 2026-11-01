@@ -297,6 +297,11 @@ watch(
   background: var(--surface-hover);
 }
 
+.row.actionable:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: -2px;
+}
+
 .icon {
   flex: none;
   width: 15px;
@@ -392,6 +397,12 @@ watch(
 .confirm-go:hover,
 .confirm-cancel:hover {
   background: var(--surface-hover);
+}
+
+.confirm-go:focus-visible,
+.confirm-cancel:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: 2px;
 }
 
 .error {

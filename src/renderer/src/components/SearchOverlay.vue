@@ -319,16 +319,18 @@ defineExpose({ close })
 <template>
   <!-- MiMo closes on the click, not on the press: a drag out of the card never closes it. -->
   <div class="search-overlay" :class="{ closing }" @click.self="close">
-    <div v-modal class="search-card" role="dialog" data-new-task-clears :aria-label="t('searchOverlay.placeholder')">
+    <div v-modal class="search-card" role="dialog" aria-modal="true" data-new-task-clears :aria-label="t('searchOverlay.placeholder')">
       <div class="search-bar">
         <svg class="i" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <circle cx="11" cy="11" r="7" />
           <path d="m21 21-4.3-4.3" />
         </svg>
         <input
+          id="search-overlay-query"
           ref="field"
           v-model="query"
           :placeholder="t('searchOverlay.placeholder')"
+          :aria-label="t('searchOverlay.placeholder')"
           spellcheck="false"
           autocomplete="off"
         />
@@ -342,7 +344,7 @@ defineExpose({ close })
           <span>{{ t("searchOverlay.error") }}</span>
           <button type="button" @click="search">{{ t("searchOverlay.retry") }}</button>
         </div>
-        <div v-if="!flat.length && artifactStatus === 'loading'" class="sr-empty" data-search-loading>{{ t("searchOverlay.loading") }}</div>
+        <div v-if="!flat.length && artifactStatus === 'loading'" class="sr-empty" role="status" aria-live="polite" data-search-loading>{{ t("searchOverlay.loading") }}</div>
         <div v-else-if="!flat.length && artifactStatus !== 'error' && !messageFailed" class="sr-empty">{{ t("searchOverlay.empty") }}</div>
         <div v-for="group in groups" :key="group.kind" class="sr-group">
           <div class="sr-head">{{ t(HEAD[group.kind]) }}</div>
@@ -484,6 +486,11 @@ defineExpose({ close })
   background: var(--surface-hover);
 }
 
+.sr-item:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: -2px;
+}
+
 .sr-line {
   display: flex;
   align-items: center;
@@ -559,6 +566,11 @@ defineExpose({ close })
   border-radius: 7px;
   font: inherit;
   cursor: pointer;
+}
+
+.sr-artifact-error button:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: 2px;
 }
 
 /*
