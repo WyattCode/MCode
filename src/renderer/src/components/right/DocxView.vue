@@ -114,7 +114,8 @@ async function load() {
   loading.value = true
   hideNote()
   pageWidth.value = 0
-  const [dir, base] = splitPath()
+  const file = props.path
+  const [dir, base] = splitFilePath(file)
   const read = await window.mcode.readFileBytes(dir, base)
   if (mine !== generation) return
   if (!read.ok || read.unchanged) {
@@ -126,9 +127,10 @@ async function load() {
     unhide()
     return
   }
-  const previous = lastPath === props.path ? lastBase64 : ""
+  if (props.path !== file) return
+  const previous = lastPath === file ? lastBase64 : ""
   lastBase64 = read.base64
-  lastPath = props.path
+  lastPath = file
   lastStat = { size: read.size, mtimeMs: read.mtimeMs }
   try {
     const docx = await import("docx-preview")
@@ -173,8 +175,9 @@ async function load() {
       console.warn("[DocxView] fidelity patch failed:", err)
     }
     if (mine !== generation) return
-    const { ai, prompt } = aiTouch(props.path, 60_000)
-    await versions.init(props.path, read.base64, { assumeAi: ai, note: ai ? prompt.trim() : t("office.versionNoteExternal") })
+    if (props.path !== file) return
+    const { ai, prompt } = aiTouch(file, 60_000)
+    await versions.init(file, read.base64, { assumeAi: ai, note: ai ? prompt.trim() : t("office.versionNoteExternal") })
     // A newer load owns the scroll restore and the marks from here.
     if (mine !== generation) return
     loading.value = false

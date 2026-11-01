@@ -142,7 +142,8 @@ async function load() {
   error.value = null
   loading.value = true
   closeNote()
-  const [dir, base] = splitPath()
+  const file = props.path
+  const [dir, base] = splitFilePath(file)
   const read = await window.mcode.readFileBytes(dir, base)
   if (mine !== generation) return
   if (!read.ok || read.unchanged) {
@@ -152,9 +153,10 @@ async function load() {
     unhide()
     return
   }
+  if (props.path !== file) return
   lastStat = { size: read.size, mtimeMs: read.mtimeMs }
-  const { ai, prompt } = aiTouch(props.path, 60_000)
-  void versions.init(props.path, read.base64, { assumeAi: ai, note: ai ? prompt.trim() : t("office.versionNoteExternal") })
+  const { ai, prompt } = aiTouch(file, 60_000)
+  void versions.init(file, read.base64, { assumeAi: ai, note: ai ? prompt.trim() : t("office.versionNoteExternal") })
   try {
     const { PptxViewer: Viewer } = await import("@aiden0z/pptx-renderer")
     if (mine !== generation || !host.value) return

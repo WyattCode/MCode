@@ -204,9 +204,10 @@ async function load() {
     unhide()
     return
   }
+  if (props.path !== path) return
   lastStat = { size: read.size, mtimeMs: read.mtimeMs }
-  const { ai, prompt } = aiTouch(props.path, 60_000)
-  void versions.init(props.path, read.base64, { assumeAi: ai, note: ai ? prompt.trim() : t("office.versionNoteExternal") })
+  const { ai, prompt } = aiTouch(path, 60_000)
+  void versions.init(path, read.base64, { assumeAi: ai, note: ai ? prompt.trim() : t("office.versionNoteExternal") })
   const edits = new Map<string, CellEdit>()
   // Keyed by sheet index and A1, so Sheet1!A1 and Sheet2!A1 stay two changes
   const changes = new Map<string, CellChange>()

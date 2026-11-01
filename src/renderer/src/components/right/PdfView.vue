@@ -194,12 +194,14 @@ async function load() {
  * the same, with nothing behind undo until it is written to.
  */
 async function firstVersion() {
-  const [dir, base] = splitPath()
+  const file = props.path
+  const [dir, base] = splitFilePath(file)
   const read = await window.mcode.readFileBytes(dir, base).catch(() => undefined)
   if (!read?.ok || read.unchanged) return
+  if (props.path !== file) return
   lastBase64 = read.base64
-  const { ai, prompt } = aiTouch(props.path, 60_000)
-  await versions.init(props.path, read.base64, { assumeAi: ai, note: ai ? prompt.trim() : t("office.versionNoteExternal") })
+  const { ai, prompt } = aiTouch(file, 60_000)
+  await versions.init(file, read.base64, { assumeAi: ai, note: ai ? prompt.trim() : t("office.versionNoteExternal") })
 }
 
 async function loaded(pdf: PDFDocumentProxy, mine: number) {
