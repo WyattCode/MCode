@@ -2725,7 +2725,6 @@ async function confirmFull() {
   const held = pendingFullFor.value
   pendingFullFor.value = undefined
   await applyAccess("full", held)
-  if (await applyAccess("full")) confirmingFull.value = false
 }
 
 /*
