@@ -2224,7 +2224,7 @@ async function undoTurn() {
   if (!id) return
   try {
     const files = await app.undo(id)
-    notify(t("toast.undone", { n: files }))
+    if (app.currentID === id) notify(t("toast.undone", { n: files }))
   } catch (failure) {
     notifyFailure(t("toast.undoFailed"), reasonOf(failure))
   }
@@ -2235,7 +2235,7 @@ async function redoTurn() {
   if (!id) return
   try {
     const files = await app.redo(id)
-    notify(t("toast.redone", { n: files }))
+    if (app.currentID === id) notify(t("toast.redone", { n: files }))
   } catch (failure) {
     notifyFailure(t("toast.redoFailed"), reasonOf(failure))
   }
