@@ -4,6 +4,7 @@ import { turnOpeners } from "@shared/steer"
 import { useApp } from "../stores/app"
 import { renderMarkdown } from "../lib/markdown"
 import { spineNote } from "../lib/sound"
+import { t } from "../lib/i18n"
 
 /**
  * The conversation navigator - MiMo's session spine, rebuilt for this app.
@@ -298,6 +299,35 @@ function onClick(event: MouseEvent) {
   if (index >= 0) jump(index)
 }
 
+/*
+ * The rail is a navigator, so every tick is a button that says which turn it
+ * is: the card's preview is for the eye, the label is what gets announced.
+ */
+function tickLabel(index: number, stop: Stop): string {
+  const question = stop.question.trim()
+  return question ? t("spine.tick", { n: index + 1, question }) : t("spine.tickEmpty", { n: index + 1 })
+}
+
+function onTickActivate(index: number) {
+  jump(index)
+}
+
+/** Keyboard focus previews the turn the way the pointer does. */
+function onTickFocus(index: number, event: FocusEvent) {
+  hovered.value = index
+  const rect = (event.currentTarget as HTMLElement | null)?.getBoundingClientRect()
+  if (rect) placeCard(rect.top + rect.height / 2)
+}
+
+/** Let go only once focus has left the rail and the card for good. */
+function onTickBlur(event: FocusEvent) {
+  const next = event.relatedTarget as Element | null
+  const toTick = Boolean(next && typeof next.closest === "function" && next.closest(".spine-tick"))
+  const toCard = Boolean(next && card.value?.contains(next))
+  if (toTick || toCard) return
+  clear()
+}
+
 function onCardClick() {
   if (hovered.value < 0) return
   jump(hovered.value)
@@ -324,7 +354,13 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-if="show" class="spine" :style="{ top: `${box.top}px`, bottom: `${box.bottom}px` }" aria-hidden="true">
+  <div
+    v-if="show"
+    class="spine"
+    role="navigation"
+    :aria-label="t('spine.nav')"
+    :style="{ top: `${box.top}px`, bottom: `${box.bottom}px` }"
+  >
     <div
       ref="rail"
       class="spine-rail"
@@ -335,17 +371,23 @@ onBeforeUnmount(() => {
       @click="onClick"
     >
       <div class="spine-ticks" :style="panning ? { transform: `translateY(${-offset}px)` } : undefined">
-        <div
+        <button
           v-for="(stop, index) in stops"
           :key="stop.id"
+          type="button"
           class="spine-tick"
           :class="{ active: active.has(index), clicked: clicked === index }"
+          :aria-label="tickLabel(index, stop)"
+          :aria-current="active.has(index) ? 'true' : undefined"
+          @click.stop="onTickActivate(index)"
+          @focus="onTickFocus(index, $event)"
+          @blur="onTickBlur"
         >
-          <i :style="{ width: `${widthOf(index).toFixed(2)}px` }" />
-        </div>
+          <i :style="{ width: `${widthOf(index).toFixed(2)}px` }" aria-hidden="true" />
+        </button>
       </div>
-      <div class="spine-fade top" :style="{ opacity: fadeTop }" />
-      <div class="spine-fade bottom" :style="{ opacity: fadeBottom }" />
+      <div class="spine-fade top" :style="{ opacity: fadeTop }" aria-hidden="true" />
+      <div class="spine-fade bottom" :style="{ opacity: fadeBottom }" aria-hidden="true" />
     </div>
 
     <Teleport to="body">
@@ -354,6 +396,7 @@ onBeforeUnmount(() => {
         class="spine-preview"
         :class="{ show: Boolean(shownStop) }"
         :style="{ left: `${cardAt.left}px`, top: `${cardAt.top}px` }"
+        aria-hidden="true"
         @click="onCardClick"
         @pointerleave="onCardLeave"
       >
@@ -409,11 +452,27 @@ onBeforeUnmount(() => {
   width: 100%;
 }
 
+/* A real button, stripped back to the tick it draws: the rail is keyboard-reachable. */
 .spine-tick {
   position: relative;
+  display: block;
   flex: none;
   width: 100%;
   height: 4px;
+  margin: 0;
+  padding: 0;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.spine-tick:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 .spine-tick i {

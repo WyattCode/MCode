@@ -57,12 +57,18 @@ watch(() => [props.active, props.activeText, props.doneText], measure)
 </script>
 
 <template>
-  <span class="status" :data-active="String(props.active)" :data-ready="String(ready)">
+  <span
+    class="status"
+    :data-active="String(props.active)"
+    :data-ready="String(ready)"
+    aria-live="polite"
+    aria-atomic="true"
+  >
     <span class="swap" :style="width !== undefined ? { width: `${width}px` } : undefined">
-      <span ref="activeEl" class="side on">
+      <span ref="activeEl" class="side on" :aria-hidden="props.active ? undefined : 'true'">
         <TextShimmer :text="props.activeText" :active="props.active" />
       </span>
-      <span ref="doneEl" class="side off">{{ props.doneText }}</span>
+      <span ref="doneEl" class="side off" :aria-hidden="props.active ? 'true' : undefined">{{ props.doneText }}</span>
     </span>
   </span>
 </template>
