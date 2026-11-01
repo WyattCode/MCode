@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import type { MessageHit, SessionArtifacts } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { sessionTitle, t } from "../lib/i18n"
@@ -16,10 +16,10 @@ import { badgeOf } from "../lib/artifact-kind"
  * what was said in them (read by the server, which holds every transcript),
  * project names and paths, and the files conversations wrote; each kind gets a
  * heading, the kind with the best match first, and the words are marked where
- * they were found. As in MiMo, rows are chosen with the pointer; only Escape is
- * bound.
+ * they were found. Rows can be chosen with the pointer or with arrow keys and Enter;
+ * Escape still closes the overlay.
  */
-const emit = defineEmits<{ close: []; open: [sessionID: string, messageID?: string]; project: [directory: string]; settings: [section?: string]; theme: [] }>()
+const emit = defineEmits<{ close: []; open: [sessionID: string, messageID?: string]; project: [directory: string]; settings: [section?: string]; theme: []; newTask: []; artifacts: [] }>()
 
 const app = useApp()
 const query = ref("")
@@ -53,6 +53,7 @@ interface Span {
 }
 
 type Kind = "convo" | "project" | "artifact" | "command"
+type CommandAction = "settings" | "models" | "theme" | "newTask" | "artifacts"
 
 interface Item {
   kind: Kind
@@ -61,7 +62,7 @@ interface Item {
   /** For a conversation found by what was said in it: the message to open at. */
   messageID?: string
   /** Command action when kind is command. */
-  command?: "settings" | "models" | "theme"
+  command?: CommandAction
   title: Span
   meta: string
   snippet?: Span
@@ -76,19 +77,120 @@ const plain = (text: string): Span => ({ text, ranges: [] })
 /* MiMo's scoring, shared with the backend's message search so both land on one scale. */
 const match = scoreMatch
 
-const COMMANDS: { id: string; command: "settings" | "models" | "theme"; titleKey: string; section?: string; needles: string[] }[] = [
-  { id: "cmd.settings", command: "settings", titleKey: "searchOverlay.cmd.settings", section: "general", needles: ["settings", "preferences", "设置", "設定", "偏好"] },
-  { id: "cmd.models", command: "models", titleKey: "searchOverlay.cmd.models", section: "models", needles: ["models", "provider", "模型", "供應商", "供应商"] },
-  { id: "cmd.theme", command: "theme", titleKey: "searchOverlay.cmd.theme", needles: ["theme", "dark", "light", "主题", "主題", "外观", "外觀"] },
+const COMMANDS: { id: string; command: CommandAction; titleKey: string; section?: string; needles: string[] }[] = [
+  {
+    id: "cmd.newTask",
+    command: "newTask",
+    titleKey: "side.newTask",
+    needles: ["new task", "new", "task", "create", "新建任务", "新建任務", "新建", "新任务", "新任務", "任务", "任務", "新对话", "新對話"],
+  },
+  {
+    id: "cmd.artifacts",
+    command: "artifacts",
+    titleKey: "side.artifacts",
+    needles: ["artifacts", "artifact", "outputs", "output", "files", "产物", "產物", "输出", "輸出", "文件", "成果"],
+  },
+  {
+    id: "cmd.settings",
+    command: "settings",
+    titleKey: "searchOverlay.cmd.settings",
+    section: "general",
+    needles: ["settings", "preferences", "preference", "general", "设置", "設定", "偏好", "通用"],
+  },
+  {
+    id: "cmd.appearance",
+    command: "settings",
+    titleKey: "set.appearance",
+    section: "appearance",
+    needles: ["appearance", "theme", "dark", "light", "外观", "外觀", "主题", "主題", "深色", "浅色", "淺色"],
+  },
+  {
+    id: "cmd.models",
+    command: "models",
+    titleKey: "searchOverlay.cmd.models",
+    section: "models",
+    needles: ["models", "model", "provider", "providers", "模型", "供應商", "供应商"],
+  },
+  {
+    id: "cmd.mcp",
+    command: "settings",
+    titleKey: "set.nav.mcp",
+    section: "mcp",
+    needles: ["mcp", "servers", "server", "mcp servers", "服务器", "伺服器", "服务", "服務"],
+  },
+  {
+    id: "cmd.keys",
+    command: "settings",
+    titleKey: "set.shortcuts",
+    section: "keys",
+    needles: ["keyboard", "shortcuts", "shortcut", "keys", "key", "快捷键", "快捷鍵", "键盘", "鍵盤"],
+  },
+  {
+    id: "cmd.environment",
+    command: "settings",
+    titleKey: "set.environment",
+    section: "environment",
+    needles: ["environment", "env", "environment variables", "环境", "環境", "变量", "變數"],
+  },
+  {
+    id: "cmd.personal",
+    command: "settings",
+    titleKey: "set.personal",
+    section: "personal",
+    needles: ["personal", "personalization", "custom", "个性化", "個人化", "个人化", "自定义", "自訂"],
+  },
+  {
+    id: "cmd.usage",
+    command: "settings",
+    titleKey: "set.nav.usage",
+    section: "usage",
+    needles: ["usage", "billing", "tokens", "用量", "使用量", "计费", "計費"],
+  },
+  {
+    id: "cmd.lab",
+    command: "settings",
+    titleKey: "set.nav.lab",
+    section: "lab",
+    needles: ["lab", "labs", "experimental", "实验室", "實驗室", "实验", "實驗"],
+  },
+  {
+    id: "cmd.archive",
+    command: "settings",
+    titleKey: "set.nav.archive",
+    section: "archive",
+    needles: ["archive", "archived", "archived conversations", "归档", "歸檔", "存档", "存檔"],
+  },
+  {
+    id: "cmd.updates",
+    command: "settings",
+    titleKey: "set.nav.updates",
+    section: "updates",
+    needles: ["updates", "update", "app updates", "version", "更新", "版本", "升级", "升級"],
+  },
+  {
+    id: "cmd.files",
+    command: "settings",
+    titleKey: "set.nav.files",
+    section: "files",
+    needles: ["files", "configuration", "config", "configuration files", "文件", "配置", "設定檔", "设置文件"],
+  },
+  {
+    id: "cmd.theme",
+    command: "theme",
+    titleKey: "searchOverlay.cmd.theme",
+    needles: ["theme", "dark", "light", "toggle theme", "主题", "主題", "外观", "外觀", "深色", "浅色", "淺色"],
+  },
 ]
 
 function commandItems(needle: string): Item[] {
   const q = needle.trim().toLowerCase()
   const out: Item[] = []
+  const ignored = new Set(["open", "go", "show", "打开", "開啟"])
+  const tokens = q.split(/\s+/).filter((token) => token && !ignored.has(token))
   for (const cmd of COMMANDS) {
     const title = t(cmd.titleKey)
     const hay = [title, ...cmd.needles].join(" ").toLowerCase()
-    if (q && !hay.includes(q) && !match(title, q)) continue
+    if (tokens.length && !tokens.every((token) => hay.includes(token) || match(title, token))) continue
     const titled = q ? match(title, q) : undefined
     out.push({
       kind: "command",
@@ -225,6 +327,28 @@ const groups = computed(() => {
 
 const flat = computed(() => groups.value.flatMap((group) => group.items))
 
+const selectedIndex = ref(0)
+const results = ref<HTMLElement>()
+
+function move(delta: number) {
+  const list = flat.value
+  if (!list.length) return
+  selectedIndex.value = (selectedIndex.value + delta + list.length) % list.length
+  void nextTick(() => {
+    const rows = results.value?.querySelectorAll<HTMLElement>(".sr-item")
+    rows?.[selectedIndex.value]?.scrollIntoView({ block: "nearest" })
+  })
+}
+
+function chooseSelected() {
+  choose(flat.value[selectedIndex.value])
+}
+
+watch(flat, (list) => {
+  if (!list.length) selectedIndex.value = 0
+  else if (selectedIndex.value >= list.length) selectedIndex.value = list.length - 1
+})
+
 /** A span cut into plain runs and marked ones. */
 function pieces(span: Span) {
   const out: { text: string; mark: boolean }[] = []
@@ -326,7 +450,10 @@ function search() {
   runSearch(needle)
 }
 
-watch(query, search)
+watch(query, () => {
+  selectedIndex.value = 0
+  search()
+})
 
 /** Plays MiMo's exit, then tells the owner to unmount. */
 function close() {
@@ -340,6 +467,8 @@ function choose(item?: Item) {
   if (item.kind === "command") {
     if (item.command === "theme") emit("theme")
     else if (item.command === "models") emit("settings", "models")
+    else if (item.command === "newTask") emit("newTask")
+    else if (item.command === "artifacts") emit("artifacts")
     else emit("settings", item.target || "general")
     close()
     return
@@ -378,9 +507,12 @@ defineExpose({ close })
           :placeholder="t('searchOverlay.placeholderWithCommands')"
           spellcheck="false"
           autocomplete="off"
+          @keydown.down.prevent="move(1)"
+          @keydown.up.prevent="move(-1)"
+          @keydown.enter.prevent="chooseSelected"
         />
       </div>
-      <div class="search-results" @scroll.passive="onResultsScroll">
+      <div ref="results" class="search-results" @scroll.passive="onResultsScroll">
         <div v-if="messageFailed" class="sr-artifact-error" data-search-error="messages">
           <span>{{ t("searchOverlay.messageError") }}</span>
           <button type="button" @click="search">{{ t("searchOverlay.retry") }}</button>
@@ -397,8 +529,10 @@ defineExpose({ close })
             v-for="item in group.items"
             :key="item.kind + item.id"
             class="sr-item"
+            :class="{ selected: selectedIndex === flat.indexOf(item) }"
             :data-kind="item.kind"
             @click="choose(item)"
+            @mouseenter="selectedIndex = flat.indexOf(item)"
           >
             <span class="sr-line">
               <span class="sr-title">
@@ -527,7 +661,8 @@ defineExpose({ close })
   cursor: default;
 }
 
-.sr-item:hover {
+.sr-item:hover,
+.sr-item.selected {
   background: var(--surface-hover);
 }
 
