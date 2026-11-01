@@ -927,13 +927,21 @@ async function sendNote() {
   const text = selectedText
   const range = selectedRange
   const note = buildNote(userText)
-  const result = await sendAnnotationNow(note, props.path, `${t("annotations.pdfPrefix", { page })}${userText}`, { origin: props.origin, directory: props.root })
+  const path = props.path
+  const name = props.name
+  const origin = props.origin
+  const directory = props.root
+  const result = await sendAnnotationNow(note, path, `${t("annotations.pdfPrefix", { page })}${userText}`, { origin, directory })
   if (!result.ok) {
     if (result.reason) notifyFailure(result.reason)
     return
   }
+  if (props.path !== path) {
+    batch.setBatch([{ id: note.id, num: 0, kind: note.kind, path, name }])
+    return
+  }
   if (range) kept.set(note.id, { range: range.cloneRange(), page, text, occ: note.occ ?? 1 })
-  batch.setBatch([{ id: note.id, num: 0, kind: note.kind, path: props.path, name: props.name }])
+  batch.setBatch([{ id: note.id, num: 0, kind: note.kind, path, name }])
   noteText.value = ""
   hideNote()
 }
