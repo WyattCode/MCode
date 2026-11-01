@@ -10,13 +10,13 @@
  * MiMo has no queue; the row is drawn as its goal bar is, so it sits in the
  * same place and the same way.
  */
-import { computed } from "vue"
+import { computed, onBeforeUnmount } from "vue"
 import type { QueuedPrompt, SessionInfo } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
 
 const props = defineProps<{ sessionID: string }>()
-const emit = defineEmits<{ edit: [item: QueuedPrompt] }>()
+const emit = defineEmits<{ edit: [item: QueuedPrompt, sessionID: string] }>()
 const app = useApp()
 
 const session = computed(() => app.sessions.find((entry: SessionInfo) => entry.id === props.sessionID) ?? app.sideSessionOf(props.sessionID))
@@ -30,9 +30,22 @@ function line(item: QueuedPrompt): string {
   return t("composer.queue.attachments", { count: item.attachments?.length ?? 0 })
 }
 
-/** 撤回: off the queue and back into the box to be changed - only if it was still waiting, or it would be sent and typed twice. */
+/*
+ * Composer stays mounted across conversation switches; this bar is keyed per
+ * session and remounts. A 撤回 that finishes after the switch must not paste
+ * into the draft now on screen — remove still targets the held session, and
+ * restore only while this instance is alive and Composer still owns it.
+ */
+let alive = true
+onBeforeUnmount(() => {
+  alive = false
+})
+
 async function edit(item: QueuedPrompt) {
-  if (await app.removeQueued(props.sessionID, item.id)) emit("edit", item)
+  const held = props.sessionID
+  if (!(await app.removeQueued(held, item.id))) return
+  if (!alive || props.sessionID !== held) return
+  emit("edit", item, held)
 }
 </script>
 
