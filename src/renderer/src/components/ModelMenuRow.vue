@@ -17,6 +17,8 @@ const props = defineProps<{
   rowKey: string
   on: boolean
   hot: boolean
+  /** Provider name under the model, so same-named models stay distinct. */
+  subtitle?: string
   /** The levels to offer; empty for no submenu. */
   efforts: Effort[]
   /** The level in use, when this is the model in use. */
@@ -67,7 +69,10 @@ function levelTitle(level: Effort): string | undefined {
       @click="emit('choose')"
     >
       <ModelMark :id="model.id" :name="model.name" />
-      <span class="item-name">{{ withoutLatest(model.name) }}</span>
+      <span class="model-text">
+        <span class="item-name">{{ withoutLatest(model.name) }}</span>
+        <span v-if="subtitle" class="item-desc">{{ subtitle }}</span>
+      </span>
       <span v-if="isLatest(model.name)" class="tag">{{ t("model.tag.latest") }}</span>
       <svg class="check" viewBox="0 0 16 16" fill="none" aria-hidden="true">
         <path d="M3.5 8.2 6.4 11.1 12.5 5" />
@@ -140,7 +145,6 @@ function levelTitle(level: Effort): string | undefined {
 }
 
 .item-name {
-  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -213,5 +217,22 @@ svg path {
   .sub {
     animation: none;
   }
+}
+
+.model-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  gap: 1px;
+}
+.item-desc {
+  overflow: hidden;
+  color: var(--text-weak);
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>
