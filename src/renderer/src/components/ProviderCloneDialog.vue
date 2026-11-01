@@ -48,9 +48,9 @@ onMounted(() => {
 
 <template>
   <div class="scrim" @mousedown.self="emit('close')">
-    <div v-modal class="dialog" data-clone-provider-dialog role="dialog" aria-labelledby="clone-provider-title">
+    <div v-modal class="dialog" data-clone-provider-dialog role="dialog" aria-labelledby="clone-provider-title" aria-describedby="clone-provider-desc">
       <h2 id="clone-provider-title">{{ t("set.models.cloneProvider") }}</h2>
-      <p class="body">{{ t("set.models.cloneDesc") }}</p>
+      <p id="clone-provider-desc" class="body">{{ t("set.models.cloneDesc") }}</p>
       <input
         ref="field"
         v-model="id"
@@ -58,11 +58,14 @@ onMounted(() => {
         :class="{ bad: error }"
         placeholder="my-provider-copy"
         data-clone-provider-id
+        :aria-label="t('set.models.cloneProvider')"
+        :aria-invalid="Boolean(error)"
+        :aria-describedby="error ? 'clone-provider-error' : 'clone-provider-desc'"
         spellcheck="false"
         autocomplete="off"
         @keydown.enter="onEnter"
       />
-      <div v-if="error" class="error" data-clone-provider-error>{{ error }}</div>
+      <div v-if="error" id="clone-provider-error" class="error" role="alert" data-clone-provider-error>{{ error }}</div>
       <footer>
         <button class="ghost" data-clone-cancel @click="emit('close')">{{ t("common.cancel") }}</button>
         <button class="confirm" data-clone-confirm :disabled="Boolean(error)" @click="confirm">{{ t("set.models.cloneConfirm") }}</button>
@@ -116,7 +119,7 @@ h2 {
   padding: 0 12px;
   color: var(--text-strong);
   background: transparent;
-  border: 1px solid #e3e3e0;
+  border: 1px solid var(--border-weak);
   border-radius: 6px;
   box-shadow: var(--shadow-xs);
   font-size: calc(13px * var(--ui-font-scale, 1));
@@ -128,7 +131,7 @@ h2 {
 }
 
 .field-in:focus {
-  border-color: var(--text-weak);
+  border-color: var(--text-strong);
 }
 
 /* The focus and refusal rings repeated for the dark fill, which would otherwise outrank both - see CustomProviderForm's .cp-in, the same shape. */
@@ -138,11 +141,11 @@ h2 {
 }
 
 :root[data-theme="dark"] .field-in:focus {
-  border-color: var(--text-weak);
+  border-color: var(--text-strong);
 }
 
 :root[data-theme="dark"] .field-in.bad {
-  border-color: #ff6467;
+  border-color: var(--error);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -152,23 +155,22 @@ h2 {
   }
 
   :root:not([data-theme="light"]) .field-in:focus {
-    border-color: var(--text-weak);
+    border-color: var(--text-strong);
   }
 
   :root:not([data-theme="light"]) .field-in.bad {
-    border-color: #ff6467;
+    border-color: var(--error);
   }
 }
 
-/* MiMo rings a bad id in red-400 and says why in red-500. Both are written out
-   MiMo's red-400, which is not its --color-err. */
+/* Validation ring uses the theme error token for contrast in light and dark. */
 .field-in.bad {
-  border-color: #ff6467;
+  border-color: var(--error);
 }
 
 .error {
   margin-top: 4px;
-  color: #fb2c36;
+  color: var(--error);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
