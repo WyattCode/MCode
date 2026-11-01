@@ -54,7 +54,7 @@ function coverFailed(url: string) {
 </script>
 
 <template>
-  <div v-if="current" class="media-coverflow" data-media-coverflow data-selectable="none" tabindex="0" @keydown="onKeydown">
+  <div v-if="current" class="media-coverflow" role="group" :aria-label="t('mediaCard.openInBrowser')" data-media-coverflow data-selectable="none" tabindex="0" @keydown="onKeydown">
     <div class="media-coverflow-stage">
       <button
         v-for="(meta, at) in metas"
@@ -63,6 +63,7 @@ function coverFailed(url: string) {
         class="media-coverflow-cover"
         :style="coverStyle(at)"
         :title="meta.title"
+        :aria-label="`${platformName(meta)}: ${meta.title || t('mediaCard.openInBrowser')}`"
         data-media-card
         :data-media-url="meta.url"
         :aria-current="at === index ? 'true' : undefined"
@@ -132,6 +133,11 @@ function coverFailed(url: string) {
   transition:
     transform 0.2s cubic-bezier(0.16, 1, 0.3, 1),
     opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.media-coverflow-cover:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 .media-coverflow-cover img {
@@ -260,6 +266,11 @@ function coverFailed(url: string) {
 .media-coverflow-step:disabled {
   cursor: default;
   opacity: 0.35;
+}
+
+.media-coverflow-step:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 .media-coverflow-counter {

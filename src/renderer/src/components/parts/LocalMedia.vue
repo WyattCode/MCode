@@ -209,7 +209,15 @@ onBeforeUnmount(() => {
     :data-path-image="kind === 'image' ? '' : undefined"
     :data-inline-audio="kind === 'audio' ? '' : undefined"
   >
-    <button v-if="state === 'error'" type="button" class="md-media-failed" :title="t('markdown.openWithDefaultTip')" data-media-failed @click="openWithDefault">
+    <button
+      v-if="state === 'error'"
+      type="button"
+      class="md-media-failed"
+      :title="t('markdown.openWithDefaultTip')"
+      :aria-label="`${failedLabel}: ${name}. ${t('markdown.openWithDefaultTip')}`"
+      data-media-failed
+      @click="openWithDefault"
+    >
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <template v-if="kind === 'image'">
           <rect x="3" y="3" width="18" height="18" rx="2" />
@@ -239,6 +247,7 @@ onBeforeUnmount(() => {
         :src="entry.url"
         :alt="name"
         :title="t('markdown.previewImageTip')"
+        :aria-label="`${t('markdown.previewImageTip')}: ${name}`"
         role="button"
         tabindex="0"
         @load="ready"
@@ -275,6 +284,7 @@ onBeforeUnmount(() => {
         role="button"
         tabindex="0"
         :title="name"
+        :aria-label="`${playing ? t('videoPreview.pause') : t('videoPreview.play')}: ${name}`"
         :style="{ width: bubbleWidth }"
         data-voice-bubble
         @click="togglePlay"
@@ -398,6 +408,12 @@ onBeforeUnmount(() => {
   background: var(--surface-hover);
 }
 
+.text .md-media-failed:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+  border-radius: 10px;
+}
+
 .text .md-media-failed svg {
   flex: none;
 }
@@ -485,6 +501,11 @@ onBeforeUnmount(() => {
 .text .md-voice-more:hover {
   color: var(--text-body);
   background: #f1f0ec;
+}
+
+.text .md-voice-more:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 .text .md-voice-foot {
