@@ -48,6 +48,9 @@ const chip = computed(() => {
   return request.titleCode ? t(request.titleCode) : request.title
 })
 
+/** Title + command (+ chip when present) for the live confirm card. */
+const describedBy = computed(() => (chip.value ? "confirm-dock-chip confirm-dock-desc" : "confirm-dock-desc"))
+
 /** The command or subject in full, capped so a runaway argument cannot flood the dock. */
 const full = computed(() => (isBash.value && !props.request.titleCode?.startsWith("perm.app.") ? `$ ${props.request.subject}` : props.request.subject).slice(0, 3000))
 
@@ -95,7 +98,7 @@ function onReasonKey(event: KeyboardEvent) {
 </script>
 
 <template>
-  <div class="card" data-confirm-perm>
+  <div class="card" role="group" aria-labelledby="confirm-dock-title" :aria-describedby="describedBy" data-confirm-perm>
     <div class="head">
       <span class="icon" aria-hidden="true">
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
@@ -111,7 +114,13 @@ function onReasonKey(event: KeyboardEvent) {
       <span id="confirm-dock-title" data-perm-title>{{ t("perm.request", { verb }) }}</span>
       <span v-if="chip" id="confirm-dock-chip" class="chip" data-perm-chip>{{ chip }}</span>
       <span class="queue-slot">
-        <span v-if="queueTotal > 1" class="queue" data-confirm-queue :title="t('perm.queueTitle', { total: queueTotal })">
+        <span
+          v-if="queueTotal > 1"
+          class="queue"
+          data-confirm-queue
+          :title="t('perm.queueTitle', { total: queueTotal })"
+          :aria-label="t('perm.queueTitle', { total: queueTotal })"
+        >
           1/{{ queueTotal }}
         </span>
       </span>
@@ -127,6 +136,7 @@ function onReasonKey(event: KeyboardEvent) {
         v-tip="t(showFull ? 'perm.hideCmd' : 'perm.viewCmd')"
         :aria-label="t(showFull ? 'perm.hideCmd' : 'perm.viewCmd')"
         :aria-expanded="showFull"
+        aria-controls="confirm-dock-desc"
         @click="showFull = !showFull"
       >
         <svg v-if="showFull" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -139,10 +149,10 @@ function onReasonKey(event: KeyboardEvent) {
     </div>
 
     <template v-if="isDiff && request.preview">
-      <button type="button" class="diff-toggle" data-perm-diff-toggle :aria-expanded="showDiff" @click="showDiff = !showDiff">
+      <button type="button" class="diff-toggle" data-perm-diff-toggle :aria-expanded="showDiff" aria-controls="confirm-dock-diff" @click="showDiff = !showDiff">
         {{ (showDiff ? "▾ " : "▸ ") + t(showDiff ? "perm.hideDiff" : "perm.viewDiff") }}
       </button>
-      <div v-if="showDiff" class="diff" data-perm-diff>
+      <div v-if="showDiff" id="confirm-dock-diff" class="diff" data-perm-diff>
         <DiffView :diff="request.preview" />
       </div>
     </template>
@@ -159,6 +169,8 @@ function onReasonKey(event: KeyboardEvent) {
         data-cnav
         data-perm-reason-toggle
         :disabled="busy"
+        :aria-expanded="reasoning"
+        aria-controls="confirm-dock-reason"
         @click="reasoning = !reasoning"
       >
         {{ t("perm.rejectWithReason") }}
@@ -187,13 +199,14 @@ function onReasonKey(event: KeyboardEvent) {
       </button>
     </div>
 
-    <div v-if="reasoning" class="reason" data-perm-reason>
+    <div v-if="reasoning" id="confirm-dock-reason" class="reason" data-perm-reason>
       <input
         ref="reasonInput"
         v-model="reason"
         type="text"
         class="reason-input"
         :placeholder="t('perm.reasonPlaceholder')"
+        :aria-label="t('perm.reasonPlaceholder')"
         :disabled="busy"
         @keydown="onReasonKey"
       />
@@ -368,7 +381,14 @@ function onReasonKey(event: KeyboardEvent) {
   opacity: 0.9;
 }
 
-.perm-btn:focus-visible {
+.perm-btn:focus-visible,
+.cmd-toggle:focus-visible,
+.diff-toggle:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 1px;
+}
+
+.reason-input:focus-visible {
   outline: 2px solid var(--interactive);
   outline-offset: 1px;
 }

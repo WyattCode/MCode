@@ -53,6 +53,8 @@ function answerText(index: number) {
 const open = ref(false)
 const animate = ref(false)
 
+const panelId = computed(() => `question-cancelled-${props.part.id}`)
+
 function toggle() {
   animate.value = true
   open.value = !open.value
@@ -78,7 +80,7 @@ function toggle() {
     </div>
   </div>
   <div v-else-if="settled" class="hs-q-card hs-q-cancelled" data-answer-state="cancelled" :data-question-card="part.id">
-    <button type="button" class="hs-q-head" :aria-expanded="open" data-question-head @click="toggle">
+    <button type="button" class="hs-q-head" :aria-expanded="open" :aria-controls="panelId" data-question-head @click="toggle">
       <span class="hs-ic tall mut"><StepIcon name="question" :size="15" /></span>
       <span class="hs-q-need">{{ t("question.needConfirm") }}</span>
       <span class="hs-tag" data-question-tag><span class="hs-tag-dot" />{{ t("question.cancelled") }}</span>
@@ -90,7 +92,7 @@ function toggle() {
         </svg>
       </span>
     </button>
-    <StepCollapse :show="open" :animate="animate">
+    <StepCollapse :id="panelId" :show="open" :animate="animate">
       <div class="hs-q-list">
         <div v-for="(entry, index) in asked" :key="index" class="hs-q-item">
           <div v-if="entry.header" class="hs-q-header">{{ planHeader(entry) }}</div>
@@ -110,3 +112,12 @@ function toggle() {
     </StepCollapse>
   </div>
 </template>
+
+<style scoped>
+.hs-q-head:focus-visible,
+.hs-q-plan:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+</style>
