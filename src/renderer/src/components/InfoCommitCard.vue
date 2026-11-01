@@ -136,10 +136,12 @@ function pushError(result: PushResult): string {
 }
 
 async function runPush(which: Action): Promise<void> {
+  const directory = props.directory
   action.value = which
   phase.value = "push"
   try {
-    const result = await app.client?.request({ type: "git.push", directory: props.directory })
+    const result = await app.client?.request({ type: "git.push", directory })
+    if (props.directory !== directory) return
     if (!result) {
       error.value = t("info.pushError.generic")
       return
@@ -147,6 +149,7 @@ async function runPush(which: Action): Promise<void> {
     if (result.ok) done.value = t("info.pushDone")
     else error.value = pushError(result)
   } catch (err) {
+    if (props.directory !== directory) return
     error.value = `${t("info.pushError.generic")}: ${err instanceof Error ? err.message : String(err)}`
   }
 }
@@ -154,6 +157,7 @@ async function runPush(which: Action): Promise<void> {
 async function commit(andPush: boolean) {
   if (!canCommit.value || !state.value) return
   const which: Action = andPush ? "commitPush" : "commit"
+  const directory = props.directory
   error.value = ""
   done.value = ""
   action.value = which
@@ -164,7 +168,7 @@ async function commit(andPush: boolean) {
       try {
         const generated = await app.client?.request({
           type: "git.commitMessage",
-          directory: props.directory,
+          directory,
           ...(props.sessionId ? { sessionID: props.sessionId } : {}),
           paths: state.value.changedPaths,
         })
@@ -172,6 +176,7 @@ async function commit(andPush: boolean) {
       } catch {
         text = ""
       }
+      if (props.directory !== directory) return
       // Gen failed or never arrived: refuse a silent "update" commit; surface the miss.
       if (!text) {
         error.value = t("common.requestFailed")
@@ -183,13 +188,14 @@ async function commit(andPush: boolean) {
     try {
       result = await app.client?.request({
         type: "git.commit",
-        directory: props.directory,
+        directory,
         message: text,
         includeUnstaged: includeUnstaged.value,
       })
     } catch (err) {
       result = { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
+    if (props.directory !== directory) return
     if (!result) {
       error.value = t("info.commitError.generic")
       return
