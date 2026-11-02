@@ -218,17 +218,25 @@ export const useQuestions = defineStore("questions", () => {
   function allowOnce(requestID: string): void {
     if (autoAnswered.has(requestID)) return
     autoAnswered.add(requestID)
+    const request = [...app.pendingPermissions.values()].flat().find((permission) => permission.id === requestID)
+    const owner = request ? app.rootOf(request.sessionID) : app.currentID
     const client = app.client
     if (!client) {
       autoAnswered.delete(requestID)
-      notifyFailure(t("error.autoPermissionFailed"), t("common.requestFailed"))
+      if (!owner || app.currentID === owner) {
+        notifyFailure(t("error.autoPermissionFailed"), t("common.requestFailed"))
+      }
       return
     }
     void client.request({ type: "permission.respond", requestID, response: "once" }).catch((failure: unknown) => {
       // Rolled back so the next pass asks again, and said out loud: the card is
       // still waiting and nothing on screen would otherwise have changed.
+      // Leaving mid-await or another conversation must not flash the failure
+      // elsewhere; only the owning conversation (or home) hears about it.
       autoAnswered.delete(requestID)
-      notifyFailure(t("error.autoPermissionFailed"), failure instanceof Error ? failure.message : String(failure))
+      if (!owner || app.currentID === owner) {
+        notifyFailure(t("error.autoPermissionFailed"), failure instanceof Error ? failure.message : String(failure))
+      }
     })
   }
 
