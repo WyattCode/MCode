@@ -19,7 +19,7 @@ import { badgeOf } from "../lib/artifact-kind"
  * they were found. As in MiMo, rows are chosen with the pointer; only Escape is
  * bound.
  */
-const emit = defineEmits<{ close: []; open: [sessionID: string, messageID?: string]; project: [directory: string] }>()
+const emit = defineEmits<{ close: []; open: [sessionID: string, messageID?: string]; project: [directory: string]; settings: [section?: string]; theme: [] }>()
 
 const app = useApp()
 const query = ref("")
@@ -52,7 +52,7 @@ interface Span {
   ranges: { start: number; end: number }[]
 }
 
-type Kind = "convo" | "project" | "artifact"
+type Kind = "convo" | "project" | "artifact" | "command"
 
 interface Item {
   kind: Kind
@@ -60,6 +60,8 @@ interface Item {
   target: string
   /** For a conversation found by what was said in it: the message to open at. */
   messageID?: string
+  /** Command action when kind is command. */
+  command?: "settings" | "models" | "theme"
   title: Span
   meta: string
   snippet?: Span
@@ -73,6 +75,35 @@ const plain = (text: string): Span => ({ text, ranges: [] })
 
 /* MiMo's scoring, shared with the backend's message search so both land on one scale. */
 const match = scoreMatch
+
+const COMMANDS: { id: string; command: "settings" | "models" | "theme"; titleKey: string; section?: string; needles: string[] }[] = [
+  { id: "cmd.settings", command: "settings", titleKey: "searchOverlay.cmd.settings", section: "general", needles: ["settings", "preferences", "设置", "設定", "偏好"] },
+  { id: "cmd.models", command: "models", titleKey: "searchOverlay.cmd.models", section: "models", needles: ["models", "provider", "模型", "供應商", "供应商"] },
+  { id: "cmd.theme", command: "theme", titleKey: "searchOverlay.cmd.theme", needles: ["theme", "dark", "light", "主题", "主題", "外观", "外觀"] },
+]
+
+function commandItems(needle: string): Item[] {
+  const q = needle.trim().toLowerCase()
+  const out: Item[] = []
+  for (const cmd of COMMANDS) {
+    const title = t(cmd.titleKey)
+    const hay = [title, ...cmd.needles].join(" ").toLowerCase()
+    if (q && !hay.includes(q) && !match(title, q)) continue
+    const titled = q ? match(title, q) : undefined
+    out.push({
+      kind: "command",
+      id: cmd.id,
+      target: cmd.section ?? cmd.command,
+      command: cmd.command,
+      title: titled ? { text: title, ranges: titled.ranges } : plain(title),
+      meta: t("searchOverlay.commands"),
+      score: (titled?.score ?? 0) + 400,
+      time: 0,
+    })
+  }
+  return out
+}
+
 
 const visible = computed(() => {
   const closed = new Set(app.config?.closedProjects ?? [])
@@ -89,7 +120,7 @@ const items = computed<Item[]>(() => {
   const needle = query.value.trim().toLowerCase()
   const pinned = new Set(app.config?.pinnedTabs ?? [])
   if (!needle) {
-    return [...visible.value]
+    const recent = [...visible.value]
       .sort((a, b) => Number(pinned.has(b.id)) - Number(pinned.has(a.id)) || b.updated - a.updated)
       .slice(0, RECENT)
       .map((session) => ({
@@ -101,9 +132,10 @@ const items = computed<Item[]>(() => {
         score: 0,
         time: session.updated,
       }))
+    return [...commandItems(""), ...recent]
   }
 
-  const found: Item[] = []
+  const found: Item[] = [...commandItems(needle)]
   const said = new Map(hits.value.map((hit) => [hit.sessionID, hit]))
   for (const session of visible.value) {
     const title = sessionTitle(session.title)
@@ -168,16 +200,24 @@ const items = computed<Item[]>(() => {
   return found.sort((a, b) => b.score - a.score || b.time - a.time).slice(0, RECENT * artifactPages.value)
 })
 
-const ORDER: Kind[] = ["convo", "project", "artifact"]
+const ORDER: Kind[] = ["command", "convo", "project", "artifact"]
 const HEAD: Record<Kind | "recent", string> = {
   recent: "searchOverlay.recent",
+  command: "searchOverlay.commands",
   convo: "searchOverlay.convos",
   project: "searchOverlay.projects",
   artifact: "searchOverlay.artifacts",
 }
 
 const groups = computed(() => {
-  if (!query.value.trim()) return items.value.length ? [{ kind: "recent" as const, items: items.value }] : []
+  if (!query.value.trim()) {
+    const commands = items.value.filter((item) => item.kind === "command")
+    const recent = items.value.filter((item) => item.kind !== "command")
+    const out: { kind: Kind | "recent"; items: Item[] }[] = []
+    if (commands.length) out.push({ kind: "command", items: commands })
+    if (recent.length) out.push({ kind: "recent", items: recent })
+    return out
+  }
   return ORDER.map((kind) => ({ kind, items: items.value.filter((item) => item.kind === kind) }))
     .filter((group) => group.items.length > 0)
     .sort((a, b) => b.items[0].score - a.items[0].score)
@@ -297,6 +337,13 @@ function close() {
 
 function choose(item?: Item) {
   if (!item) return
+  if (item.kind === "command") {
+    if (item.command === "theme") emit("theme")
+    else if (item.command === "models") emit("settings", "models")
+    else emit("settings", item.target || "general")
+    close()
+    return
+  }
   if (item.kind === "project") emit("project", item.target)
   else emit("open", item.target, item.messageID)
   close()
@@ -319,7 +366,7 @@ defineExpose({ close })
 <template>
   <!-- MiMo closes on the click, not on the press: a drag out of the card never closes it. -->
   <div class="search-overlay" :class="{ closing }" @click.self="close">
-    <div v-modal class="search-card" role="dialog" data-new-task-clears :aria-label="t('searchOverlay.placeholder')">
+    <div v-modal class="search-card" role="dialog" data-new-task-clears :aria-label="t('searchOverlay.placeholderWithCommands')">
       <div class="search-bar">
         <svg class="i" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <circle cx="11" cy="11" r="7" />
@@ -328,7 +375,7 @@ defineExpose({ close })
         <input
           ref="field"
           v-model="query"
-          :placeholder="t('searchOverlay.placeholder')"
+          :placeholder="t('searchOverlay.placeholderWithCommands')"
           spellcheck="false"
           autocomplete="off"
         />
