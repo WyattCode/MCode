@@ -2258,7 +2258,10 @@ function queuesMessage(event: KeyboardEvent): boolean {
 }
 
 /** 撤回 from the queue: the message back in the box to be changed, ahead of anything already typed. */
-function restoreQueued(item: QueuedPrompt) {
+function restoreQueued(item: QueuedPrompt, from: string) {
+  // QueueBar can finish removeQueued after a session switch: Composer stays
+  // mounted, so only paste back while that conversation still owns this box.
+  if (from !== sessionID.value) return
   const draft = text.value.trim()
   text.value = draft ? `${item.text}\n${draft}` : item.text
   attachments.value = [...(item.attachments ?? []), ...attachments.value]
