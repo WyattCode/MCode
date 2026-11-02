@@ -444,7 +444,11 @@ async function submitProjectRename(name: string) {
 
 /* MiMo's revealInFinder: the file manager's name once it is shown, or why it could not be. */
 async function revealFolder(directory: string) {
+  // Hold the toast to the place the person started from; leaving mid-await
+  // must not flash the reveal outcome onto another conversation.
+  const id = app.currentID
   const result = await window.mcode.revealFile(directory, "")
+  if (app.currentID !== id) return
   if (result.ok) notify(revealLabel())
   else notifyFailure(t("rp.files.revealFailed", { error: result.error || t("rp.files.pathNotExist") }))
 }
