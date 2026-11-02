@@ -2193,6 +2193,8 @@ export const useApp = defineStore("app", () => {
     const preferReady = Boolean(prefer && providers.value.some((entry) => entry.id === prefer && entry.configured && entry.models.length))
     if ((!prefer || !preferReady) && modelAvailable(providers.value, chosen)) return
 
+    // Hold the open conversation across awaits: a mid-await switch must not retarget session.model onto a different chat.
+    const openID = currentID.value
     const ref = fallbackModel(availableModels(providers.value), preferReady ? prefer : undefined)
     if (!ref) {
       // Not at launch: a profile with nothing connected yet is not one that just lost its models.
@@ -2201,7 +2203,7 @@ export const useApp = defineStore("app", () => {
     }
     await patchConfig({ model: ref })
     // An open session keeps its own model, so it has to be moved explicitly; the others follow on their next turn.
-    const open = currentID.value ? sessions.value.find((entry) => entry.id === currentID.value) : undefined
+    const open = openID ? sessions.value.find((entry) => entry.id === openID) : undefined
     if (open && !modelAvailable(providers.value, open.model)) await api().request({ type: "session.model", sessionID: open.id, model: ref })
     else if (open && preferReady) await api().request({ type: "session.model", sessionID: open.id, model: ref })
   }
