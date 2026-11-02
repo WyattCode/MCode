@@ -422,6 +422,12 @@ svg path {
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
+.search input:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 .search input::placeholder {
   color: var(--text-weak);
 }
