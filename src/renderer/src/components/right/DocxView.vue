@@ -917,22 +917,28 @@ watch(
     const ended = [...runningBefore].filter((id) => !now.has(id))
     runningBefore = now
     if (!ended.length) return
-    const [dir, base] = splitPath()
+    const path = props.path
+    const origin = props.origin
+    const [dir, base] = splitFilePath(path)
     if (localConvo && ended.includes(localConvo)) {
       localConvo = null
       // The reload below is the one that was deferred.
       deferReload = false
       const read = await window.mcode.readFileBytes(dir, base)
+      if (props.path !== path) return
       if (read.ok && !read.unchanged && read.base64 !== lastBase64) {
         const summary = diffSummary(await paragraphsOf(lastBase64), await paragraphsOf(read.base64))
-        await versions.record(props.path, read.base64, "ai_local", summary ? `${localNote};${summary}` : localNote)
+        if (props.path !== path) return
+        await versions.record(path, read.base64, "ai_local", summary ? `${localNote};${summary}` : localNote)
+        if (props.path !== path) return
       }
       reload()
       return
     }
-    const watching = ended.some((id) => id === props.origin || watchedFilesOf(id).includes(props.path))
+    const watching = ended.some((id) => id === origin || watchedFilesOf(id).includes(path))
     if (watching) {
       const read = await window.mcode.readFileBytes(dir, base, lastStat)
+      if (props.path !== path) return
       if (read.ok && !read.unchanged) reload()
       return
     }
