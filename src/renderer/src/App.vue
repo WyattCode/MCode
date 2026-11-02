@@ -1958,13 +1958,16 @@ async function confirmDeleteSession() {
   const target = deletingSession.value
   deletingSession.value = undefined
   if (!target) return
+  // Hold the toast to the place the person started from: leaving mid-await must not
+  // flash the delete outcome onto another chat.
+  const held = app.currentID
   try {
     await app.remove(target)
   } catch (err) {
-    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    if (app.currentID === held) notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
     return
   }
-  notify(t("toast.convoDeleted"), { level: "success" })
+  if (app.currentID === held) notify(t("toast.convoDeleted"), { level: "success" })
 }
 
 /* A project ticked or unticked in project selection mode. */
