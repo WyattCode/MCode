@@ -11,7 +11,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { EditTool } from "../src/server/tool/edit"
 import { recordRead } from "../src/server/tool/read-tracker"
-import { postEditCheck, postEditCheckDetailed, runWithTimeout, timeoutResult } from "../src/server/tool/post-edit-check"
+import { postEditCheck, postEditCheckDetailed, runWithTimeout, timeoutResult, which } from "../src/server/tool/post-edit-check"
 
 let passed = 0
 let failed = 0
@@ -123,7 +123,7 @@ async function main(): Promise<void> {
     // Python syntax error via py_compile, if python is available.
     currentScenario = "python syntax error"
     try {
-      const python = (await whichForSmoke("python3")) ?? (await whichForSmoke("python"))
+      const python = (await which("python3")) ?? (await which("python"))
       const ruff = await whichForSmoke("ruff")
       const pyright = await whichForSmoke("pyright")
 
