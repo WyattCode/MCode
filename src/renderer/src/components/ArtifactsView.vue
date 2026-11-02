@@ -269,19 +269,15 @@ function preview(row: Row) {
 
 /** MiMo's download hands the file over where it lies: its folder opens with it selected. */
 async function download(row: Row) {
-  // Hold the reveal failure toasts to the place the person started from;
-  // leaving mid-await must not flash the file-manager outcome onto another conversation.
-  const held = app.currentID
   const absolute = /^([A-Za-z]:)?[\\/]/.test(row.path)
   if (absolute) {
     const result = await window.mcode.revealPath(artifactAbsolute(row.session.directory, row.path)).catch(() => ({ ok: false }))
-    if (!result.ok && app.currentID === held) notifyFailure(t("art.revealMissing"))
+    if (!result.ok) notifyFailure(t("art.revealMissing"))
     return
   }
   const result = await window.mcode
     .revealFile(row.session.directory, row.path)
     .catch((failure: unknown) => ({ ok: false, missing: false, error: String(failure) }))
-  if (app.currentID !== held) return
   if (result.ok) return
   if (result.missing) notifyFailure(t("art.revealMissing"))
   else notifyFailure(t("art.revealFailed", { error: result.error ?? "" }))
@@ -324,8 +320,10 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
           <button
             v-for="filter in FILTERS"
             :key="filter.id"
+            type="button"
             class="chip"
             :class="{ on: kind === filter.id }"
+            :aria-pressed="kind === filter.id"
             @click="kind = filter.id"
           >
             <span class="chip-label">{{ t(filter.label) }}</span>
@@ -336,6 +334,7 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
         <!-- MiMo's two layouts, at the end of the filter row. -->
         <div class="view-toggle" role="group" :aria-label="t('art.viewMode')">
           <button
+            type="button"
             class="view-btn"
             data-view="grid"
             :aria-pressed="layout === 'grid'"
@@ -351,6 +350,7 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
             </svg>
           </button>
           <button
+            type="button"
             class="view-btn"
             data-view="list"
             :aria-pressed="layout === 'list'"
@@ -368,7 +368,7 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
         </div>
       </div>
 
-      <div v-if="failed" class="notice failed" data-empty="error">
+      <div v-if="failed" class="notice failed" data-empty="error" role="status">
         <span>{{ t("art.loadError") }}</span>
         <button type="button" class="page-btn" data-act="retry" @click="load">{{ t("art.retry") }}</button>
       </div>
@@ -383,10 +383,12 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
           :key="row.key"
           class="tile"
           :title="row.name"
+          :aria-label="row.name"
           role="button"
           tabindex="0"
           @click="preview(row)"
           @keydown.enter="preview(row)"
+          @keydown.space.prevent="preview(row)"
         >
           <div class="well">
             <svg class="well-mark" width="38" height="38" viewBox="0 0 24 24" fill="none" :stroke="row.badge.fg" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -396,17 +398,17 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
               <span class="badge-dot" :style="{ background: row.badge.fg }" />{{ t(row.badge.key) }}
             </span>
             <div class="acts">
-              <button class="act" data-act="preview" :aria-label="t('art.preview')" :title="t('art.preview')" @click.stop="preview(row)">
+              <button type="button" class="act" data-act="preview" :aria-label="t('art.preview')" :title="t('art.preview')" @click.stop="preview(row)">
                 <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                   <path d="M1.8 8s2.3-4.2 6.2-4.2S14.2 8 14.2 8s-2.3 4.2-6.2 4.2S1.8 8 1.8 8zM8 6.2a1.8 1.8 0 1 1 0 3.6a1.8 1.8 0 1 1 0-3.6" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
                 </svg>
               </button>
-              <button class="act" data-act="download" :aria-label="t('art.download')" :title="t('art.download')" @click.stop="download(row)">
+              <button type="button" class="act" data-act="download" :aria-label="t('art.download')" :title="t('art.download')" @click.stop="download(row)">
                 <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                   <path d="M8 2.5v7M5 6.8l3 3 3-3M3 11.5v2h10v-2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
                 </svg>
               </button>
-              <button class="act" data-act="enter" :aria-label="t('art.back')" :title="t('art.back')" @click.stop="enter(row)">
+              <button type="button" class="act" data-act="enter" :aria-label="t('art.back')" :title="t('art.back')" @click.stop="enter(row)">
                 <!-- MiMo's 进入对话 is an arrow leaving to the top right, not a speech bubble. -->
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                   <path d="M7 7h10v10M7 17 17 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
@@ -428,10 +430,12 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
           :key="row.key"
           class="row"
           :title="row.name"
+          :aria-label="row.name"
           role="button"
           tabindex="0"
           @click="preview(row)"
           @keydown.enter="preview(row)"
+          @keydown.space.prevent="preview(row)"
         >
           <span class="file-box">
             <svg class="file-mark" width="18" height="18" viewBox="0 0 24 24" fill="none" :stroke="row.badge.fg" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -446,17 +450,17 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
           <span class="file-name">{{ row.name }}</span>
           <span class="when">{{ when(row.at) }}</span>
           <div class="acts">
-            <button class="act" data-act="preview" :aria-label="t('art.preview')" :title="t('art.preview')" @click.stop="preview(row)">
+            <button type="button" class="act" data-act="preview" :aria-label="t('art.preview')" :title="t('art.preview')" @click.stop="preview(row)">
               <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M1.8 8s2.3-4.2 6.2-4.2S14.2 8 14.2 8s-2.3 4.2-6.2 4.2S1.8 8 1.8 8zM8 6.2a1.8 1.8 0 1 1 0 3.6a1.8 1.8 0 1 1 0-3.6" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
               </svg>
             </button>
-            <button class="act" data-act="download" :aria-label="t('art.download')" :title="t('art.download')" @click.stop="download(row)">
+            <button type="button" class="act" data-act="download" :aria-label="t('art.download')" :title="t('art.download')" @click.stop="download(row)">
               <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M8 2.5v7M5 6.8l3 3 3-3M3 11.5v2h10v-2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
             </button>
-            <button class="act" data-act="enter" :aria-label="t('art.back')" :title="t('art.back')" @click.stop="enter(row)">
+            <button type="button" class="act" data-act="enter" :aria-label="t('art.back')" :title="t('art.back')" @click.stop="enter(row)">
               <!-- MiMo's 进入对话 is an arrow leaving to the top right, not a speech bubble. -->
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <path d="M7 7h10v10M7 17 17 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
@@ -467,9 +471,9 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
       </div>
 
       <!-- A search that found nothing says so, rather than claiming there is nothing at all. -->
-      <p v-else-if="loaded && answered.trim()" class="notice" data-empty="no-match" role="status">{{ t("art.noMatch") }}</p>
+      <p v-else-if="loaded && answered.trim()" class="notice" data-empty="no-match">{{ t("art.noMatch") }}</p>
 
-      <div v-else-if="loaded" class="none" data-empty="none" role="status">
+      <div v-else-if="loaded" class="none" data-empty="none">
         <!-- MCode's own drawing: two sheets, the front one with a folded corner and a spark. -->
         <svg class="illo" width="168" height="120" viewBox="0 0 168 120" fill="none" aria-hidden="true">
           <rect class="illo-back" x="46" y="18" width="62" height="80" rx="8" transform="rotate(-8 77 58)" />
@@ -479,7 +483,6 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
           <path class="illo-spark" d="M132 20v14M125 27h14M36 84v8M32 88h8" />
         </svg>
         <span>{{ t("art.empty") }}</span>
-        <span class="empty-tip">{{ t("art.emptyTip") }}</span>
       </div>
 
       <!-- MiMo shows 加载更多 only when there is something above it. -->
@@ -599,11 +602,6 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
   color: var(--text-weak);
 }
 
-.search:focus-within {
-  border-color: var(--text-strong);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--text-strong) 12%, transparent);
-}
-
 /*
  * The filter tabs take the row; the layout toggle sits at its end, as MiMo's
  * does. The 18 below it belongs to this row rather than to the grid, so the
@@ -611,8 +609,7 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
  */
 .bar {
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
+  align-items: center;
   gap: 12px;
   margin-top: 16px;
   margin-bottom: 18px;
@@ -632,7 +629,6 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
   flex: none;
   align-items: center;
   gap: 2px;
-  margin-inline-start: auto;
   padding: 2px;
   background: #fffefd;
   border: 1px solid var(--border-weak);
@@ -958,11 +954,13 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
   opacity: 0.5;
 }
 
-.empty-tip {
-  margin-top: 0;
-  color: var(--text-weak);
-  font-size: calc(12px * var(--ui-font-scale, 1));
-  line-height: 1.4;
-  text-align: center;
+.chip:focus-visible,
+.view-btn:focus-visible,
+.act:focus-visible,
+.tile:focus-visible,
+.row:focus-visible,
+.page-btn:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: -2px;
 }
 </style>

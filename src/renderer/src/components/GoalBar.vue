@@ -371,6 +371,11 @@ async function leave() {
   cursor: not-allowed;
 }
 
+.goal-act:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: 2px;
+}
+
 .goal-act svg {
   width: 13px;
   height: 13px;
