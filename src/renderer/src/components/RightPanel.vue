@@ -317,6 +317,10 @@ function onTabAuxClick(event: MouseEvent, id: string) {
 watch(
   () => [props.sessionID, props.directory] as const,
   ([session, directory], [sessionBefore, directoryBefore]) => {
+    if (session !== sessionBefore) {
+      pendingClose.value = []
+      tabMenu.value = undefined
+    }
     if (session === sessionBefore && directory !== directoryBefore) rp.reroot()
   },
 )

@@ -161,6 +161,7 @@ function attached(id: number) {
 
 watch(here, () => {
   dismissed.value = new Set()
+  pendingClose.value = undefined
   for (const term of terms.value) respawn(term)
 })
 
