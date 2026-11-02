@@ -24,7 +24,7 @@ useEscapeLayer(() => emit("close"))
 
 <template>
   <div class="scrim" @mousedown.self="emit('close')">
-    <div v-modal class="dialog" data-voice-usage data-modal-keep-focus role="dialog" aria-labelledby="voice-usage-title">
+    <div v-modal class="dialog" data-voice-usage data-modal-keep-focus role="dialog" aria-modal="true" aria-labelledby="voice-usage-title">
       <h2 id="voice-usage-title">{{ t("voice.usage.title") }}</h2>
       <button class="close" type="button" :aria-label="t('common.close')" data-voice-usage-close @click="emit('close')">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -58,7 +58,7 @@ useEscapeLayer(() => emit("close"))
   position: relative;
   box-sizing: border-box;
   width: min(480px, 90vw);
-  max-height: 86vh;
+  max-height: min(86vh, 100dvh);
   padding: 22px 24px;
   overflow-y: auto;
   background: var(--surface-raised);

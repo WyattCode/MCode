@@ -28,14 +28,14 @@ onMounted(() => {
 
 <template>
   <div class="scrim" @mousedown.self="emit('close')">
-    <div v-modal class="dialog" data-third-party data-modal-keep-focus role="dialog" aria-labelledby="third-party-title">
+    <div v-modal class="dialog" data-third-party data-modal-keep-focus role="dialog" aria-modal="true" aria-labelledby="third-party-title" aria-describedby="third-party-intro">
       <h2 id="third-party-title">{{ t("licenses.title") }}</h2>
       <button class="close" type="button" :aria-label="t('common.close')" data-third-party-close @click="emit('close')">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
         </svg>
       </button>
-      <p class="intro">{{ t("licenses.intro") }}</p>
+      <p id="third-party-intro" class="intro">{{ t("licenses.intro") }}</p>
       <div class="entries">
         <details v-for="notice in THIRD_PARTY" :key="notice.id" class="entry" :data-third-party-entry="notice.id">
           <summary>
@@ -65,7 +65,7 @@ onMounted(() => {
   position: relative;
   box-sizing: border-box;
   width: min(560px, 90vw);
-  max-height: 86vh;
+  max-height: min(86vh, 100dvh);
   padding: 22px 24px;
   overflow-y: auto;
   background: var(--surface-page);
@@ -136,6 +136,11 @@ summary {
 
 summary:hover {
   background: var(--surface-hover);
+}
+
+summary:focus-visible {
+  outline: 2px solid var(--text-strong);
+  outline-offset: -2px;
 }
 
 .name {
