@@ -83,10 +83,7 @@ async function finishEdit() {
   el.textContent = next
   el.scrollLeft = 0
   const session = app.current
-  if (!session || next === previous) {
-    el.focus()
-    return
-  }
+  if (!session || next === previous) return
   try {
     await app.rename(session.id, next)
   } catch (err) {
@@ -94,7 +91,6 @@ async function finishEdit() {
     el.scrollLeft = 0
     notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
   }
-  el.focus()
 }
 
 function cancelEdit() {
@@ -104,7 +100,6 @@ function cancelEdit() {
   el.textContent = title.value
   el.contentEditable = "false"
   el.scrollLeft = 0
-  el.focus()
 }
 
 /* Past the cap, what was typed is cut back and the caret goes to the end. */
@@ -125,13 +120,7 @@ function clampInput() {
 
 /* Enter saves unless an IME is still composing; Escape cancels. */
 function onTitleKey(event: KeyboardEvent) {
-  if (!editing.value) {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault()
-      beginEdit()
-    }
-    return
-  }
+  if (!editing.value) return
   if (event.key === "Enter" && !(event.isComposing || event.keyCode === 229)) {
     event.preventDefault()
     finishEdit()
@@ -194,7 +183,6 @@ function openMenu(event: MouseEvent) {
       <span
         v-if="pinned"
         class="pin-mark"
-        role="img"
         :aria-label="t('header.pinnedTip')"
         :title="t('header.pinnedTip')"
       >
@@ -209,8 +197,6 @@ function openMenu(event: MouseEvent) {
         :class="{ editing }"
         data-header-title
         spellcheck="false"
-        tabindex="0"
-        :aria-label="t('header.renameTip')"
         v-tip="card && !editing ? { card, placement: 'bottom' } : ''"
         @click="beginEdit"
         @keydown="onTitleKey"
@@ -224,14 +210,7 @@ function openMenu(event: MouseEvent) {
         The buttons at the other end drive the panels, which are not the
         conversation.
       -->
-      <button
-        class="ico options"
-        :aria-label="t('header.moreTip')"
-        :aria-expanded="Boolean(menuOpen)"
-        aria-haspopup="menu"
-        v-tip="{ label: t('header.moreTip'), disabled: menuOpen }"
-        @click="openMenu"
-      >
+      <button type="button" class="ico options" v-tip="{ label: t('header.moreTip'), disabled: menuOpen }" @click="openMenu">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
           <circle cx="5" cy="12" r="1.7" />
           <circle cx="12" cy="12" r="1.7" />
@@ -248,6 +227,7 @@ function openMenu(event: MouseEvent) {
       -->
       <div v-if="openShown && directory" class="open-with">
         <button
+          type="button"
           class="open-face"
           :aria-label="t('header.openDirTip', { name: openLabel })"
           v-tip="t('header.openDirTip', { name: openLabel })"
@@ -265,6 +245,7 @@ function openMenu(event: MouseEvent) {
           <span>{{ t("header.openLocation") }}</span>
         </button>
         <button
+          type="button"
           class="open-caret"
           :aria-label="t('header.pickApp')"
           v-tip="{ label: t('header.pickApp'), disabled: Boolean(appMenu) }"
@@ -279,6 +260,7 @@ function openMenu(event: MouseEvent) {
       <!-- The info card beside the conversation; lit while it is up, as MiMo's toggle is. -->
       <button
         v-if="hasContent"
+        type="button"
         class="ico info"
         :aria-pressed="Boolean(infoOpen)"
         :aria-label="t('info.tip')"
@@ -296,6 +278,7 @@ function openMenu(event: MouseEvent) {
         lives in the composer, where MiMo keeps it.
       -->
       <button
+        type="button"
         class="ico bottom"
         :aria-pressed="Boolean(bottomOpen)"
         :aria-label="t('key.bottomPanel')"
@@ -331,13 +314,6 @@ function openMenu(event: MouseEvent) {
   /* MiMo's row: pin, title and menu 8 apart. */
   gap: 8px;
   min-width: 0;
-}
-
-
-.title:focus-visible,
-.ico:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
 }
 
 .pin-mark {
