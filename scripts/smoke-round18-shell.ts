@@ -17,7 +17,7 @@ import { UPDATE_REASONS, interruptedReason, readOnlyInstall } from "../src/share
 import { subagentsAtWork } from "../src/renderer/src/lib/subagent-chip"
 import { PREVIEW_CLOSE_MS, PREVIEW_OPEN_MS, sidePreview } from "../src/renderer/src/lib/side-preview"
 
-const read = (relative: string) => fs.readFile(path.join(process.cwd(), relative), "utf8")
+const read = async (relative: string) => (await fs.readFile(path.join(process.cwd(), relative), "utf8")).replace(/\r\n/g, "\n")
 
 /** How many of the 18 tables carry `key`, counted in the source where every table is written. */
 async function carrying(key: string): Promise<number> {

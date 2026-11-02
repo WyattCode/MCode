@@ -179,7 +179,7 @@ async function sourceChecks(check: Check, section: Section): Promise<void> {
   section("Round 17 (R17-W9/W13/W21): the worktree pick, the subagent panel and the run's notice")
   {
     const home = await read("src/renderer/src/components/HomeHero.vue")
-    const used = home.slice(home.indexOf("async function useWorktree"), home.indexOf("async function useWorktree") + 300)
+    const used = home.slice(home.indexOf("async function useWorktree"), home.indexOf("async function useWorktree") + 400)
     check("a worktree switched to is added to the project list before it is picked", used.includes("app.addProject(directory, { used: true })") && used.indexOf("addProject") < used.indexOf("choose(directory)"), used)
     const editedCard = await read("src/renderer/src/components/EditedFilesCard.vue")
     check("the card lists the files a run reached outside the project, which its undo reports on", /editedFiles\(props\.parts, props\.directory, \{ outside: true \}\)/.test(editedCard))

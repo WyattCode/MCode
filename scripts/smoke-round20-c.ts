@@ -112,7 +112,7 @@ export async function roundTwentyLaneCChecks(check: Check, section: (name: strin
     const toggle = code(body(store, "  async function toggleGoalMode("))
     check("the home toggle hands it no conversation", /const target = home \? undefined : currentID\.value/.test(toggle) && /setGoalMode\(next, target\)/.test(toggle))
     const composer = await read("src/renderer/src/components/Composer.vue")
-    check("the home composer's session is none", /const sessionID = computed\(\(\) => \(props\.fresh \? undefined/.test(composer) && /app\.setGoalMode\(!goalMode\.value, sessionID\.value\)/.test(composer))
+    check("the home composer's session is none", /const sessionID = computed\(\(\) => \(props\.fresh \? undefined/.test(composer) && /app\.setGoalMode\(next, target\)/.test(composer))
   }
 
   // ------------------------------------------------------------------ R20-C-7

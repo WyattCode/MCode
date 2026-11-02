@@ -1813,7 +1813,8 @@ onBeforeUnmount(() => {
       <!--
         MiMo 26.920's account row: a 46px cell holding a 28px round avatar, then
         the name. MCode signs nobody in, so the row names this machine and opens
-        the menu of what it can honour.
+        the menu of what it can honour. A dedicated gear opens Settings in one
+        click (UI trust review: settings were buried behind This device).
       -->
       <button
         class="account"
@@ -1831,6 +1832,18 @@ onBeforeUnmount(() => {
           </span>
         </span>
         <span class="account-label">{{ t("side.thisDevice") }}</span>
+      </button>
+      <button
+        type="button"
+        class="settings-gear"
+        data-settings-open
+        :aria-label="t('side.settingsGearTip')"
+        v-tip="{ label: t('side.settingsGearTip'), hint: 'Ctrl+,' }"
+        @click="emit('settings')"
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M8 6a2 2 0 1 1 0 4a2 2 0 1 1 0-4M8 2.5v1.5M8 12v1.5M2.5 8H4M12 8h1.5M4.1 4.1l1.1 1.1M10.8 10.8l1.1 1.1M4.1 11.9l1.1-1.1M10.8 5.2l1.1-1.1" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
       </button>
       <!-- MiMo's update capsule, beside the row. -->
       <UpdatePill />
@@ -2657,6 +2670,22 @@ button.section-head:focus-visible {
   line-height: calc(20px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.settings-gear {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  color: var(--text-muted);
+  border-radius: 8px;
+  transition: background var(--motion-fast, 0.12s), color var(--motion-fast, 0.12s);
+}
+
+.settings-gear:hover {
+  color: var(--text-strong);
+  background: var(--surface-hover);
 }
 
 /*
