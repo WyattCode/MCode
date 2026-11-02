@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue"
+import { computed, ref, useId } from "vue"
 import type { PermissionRecord, ToolPart } from "@shared/protocol"
 import DiffView from "./DiffView.vue"
 import StepIcon from "./StepIcon.vue"
@@ -52,6 +52,7 @@ const detail = computed(() => (props.record.preview && isUnifiedDiff(props.recor
 
 const showCmd = ref(false)
 const showDiff = ref(false)
+const uid = useId()
 </script>
 
 <template>
@@ -63,17 +64,40 @@ const showDiff = ref(false)
         <span v-if="bash?.desc" class="hs-bash-desc" dir="auto">{{ redactText(bash.desc) }}</span>
         <span class="hs-decided" data-decided-label>{{ decided }}</span>
       </div>
-      <pre class="hs-perm-cmd" data-perm-row-cmd>{{ folded.lossy && !showCmd ? folded.text : full }}</pre>
-      <button v-if="folded.lossy" type="button" class="hs-perm-toggle" data-perm-row-toggle="cmd" @click="showCmd = !showCmd">
+      <pre :id="`perm-cmd-${uid}`" class="hs-perm-cmd" data-perm-row-cmd>{{ folded.lossy && !showCmd ? folded.text : full }}</pre>
+      <button
+        v-if="folded.lossy"
+        type="button"
+        class="hs-perm-toggle"
+        data-perm-row-toggle="cmd"
+        :aria-expanded="showCmd"
+        :aria-controls="`perm-cmd-${uid}`"
+        @click="showCmd = !showCmd"
+      >
         {{ (showCmd ? "▾ " : "▸ ") + (showCmd ? t("perm.hideCmd") : t("perm.viewCmd")) }}
       </button>
-      <button v-if="detail" type="button" class="hs-perm-toggle" data-perm-row-toggle="diff" @click="showDiff = !showDiff">
+      <button
+        v-if="detail"
+        type="button"
+        class="hs-perm-toggle"
+        data-perm-row-toggle="diff"
+        :aria-expanded="showDiff"
+        :aria-controls="`perm-diff-${uid}`"
+        @click="showDiff = !showDiff"
+      >
         {{ (showDiff ? "▾ " : "▸ ") + (showDiff ? t("perm.hideDiff") : t("perm.viewDiff")) }}
       </button>
-      <div v-if="detail && showDiff" class="hs-diff"><DiffView :diff="detail" /></div>
+      <div v-if="detail && showDiff" :id="`perm-diff-${uid}`" class="hs-diff"><DiffView :diff="detail" /></div>
       <div v-if="record.decided === 'reject-with-reason' && record.reason" class="hs-perm-reason" data-perm-reason>
         {{ t("perm.rejectedReason", { reason: record.reason }) }}
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.hs-perm-toggle:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 1px;
+}
+</style>

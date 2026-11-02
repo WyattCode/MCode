@@ -10,7 +10,7 @@ const emit = defineEmits<{ toggle: [] }>()
 
 <template>
   <section class="section" :data-info-section="name">
-    <button type="button" class="head" :aria-expanded="open" @click="emit('toggle')">
+    <button type="button" class="head" :aria-expanded="open" :aria-controls="`info-body-${name}`" @click="emit('toggle')">
       <span class="title">{{ title }}</span>
       <svg v-if="open" class="chev" width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
         <path d="M4.5 6.5 8 10l3.5-3.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
@@ -20,7 +20,7 @@ const emit = defineEmits<{ toggle: [] }>()
       </svg>
       <span v-if="count" class="count" :class="{ complete }" data-info-count>{{ count }}</span>
     </button>
-    <div v-if="open" class="body">
+    <div v-if="open" :id="`info-body-${name}`" class="body">
       <slot />
     </div>
   </section>
@@ -54,6 +54,12 @@ const emit = defineEmits<{ toggle: [] }>()
   font-weight: 500;
   line-height: calc(18px * var(--ui-font-scale, 1));
   text-align: start;
+}
+
+.head:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 1px;
+  border-radius: 4px;
 }
 
 .chev {
