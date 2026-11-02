@@ -37,6 +37,8 @@ const needle = ref("")
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 watch(query, (value) => {
   if (searchTimer) clearTimeout(searchTimer)
+  // Drop previous search tiles/counts during debounce — same idea as RpFiles / SearchOverlay.
+  if (value !== needle.value) clearStaleResults()
   searchTimer = setTimeout(() => (needle.value = value), 150)
 })
 onBeforeUnmount(() => {
@@ -128,6 +130,16 @@ const FILTERS = [
 let generation = 0
 /** The search the shown rows answer - the typed one may be ahead of it. */
 const answered = ref("")
+
+/** Wipe shown rows so a new query/tab cannot look matched by the previous answer. Not used by building refresh `load()`. */
+function clearStaleResults() {
+  groups.value = []
+  nextCursor.value = undefined
+  facets.value = undefined
+  answered.value = ""
+  failed.value = false
+}
+
 /** What the page asks the server for: the search and the tab. */
 const asking = () => ({ type: "artifact.list" as const, query: needle.value, limit: ARTIFACT_PAGE, ...(kind.value === "all" ? {} : { category: kind.value }) })
 
@@ -218,6 +230,7 @@ onBeforeUnmount(() => {
  */
 watch(kind, () => {
   if (searchTimer) clearTimeout(searchTimer)
+  clearStaleResults()
   needle.value = query.value
 })
 watch([needle, kind], () => void load())
@@ -473,7 +486,7 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
       <!-- A search that found nothing says so, rather than claiming there is nothing at all. -->
       <p v-else-if="loaded && answered.trim()" class="notice" data-empty="no-match">{{ t("art.noMatch") }}</p>
 
-      <div v-else-if="loaded" class="none" data-empty="none">
+      <div v-else-if="loaded && !query.trim()" class="none" data-empty="none">
         <!-- MCode's own drawing: two sheets, the front one with a folded corner and a spark. -->
         <svg class="illo" width="168" height="120" viewBox="0 0 168 120" fill="none" aria-hidden="true">
           <rect class="illo-back" x="46" y="18" width="62" height="80" rx="8" transform="rotate(-8 77 58)" />
