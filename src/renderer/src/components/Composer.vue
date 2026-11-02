@@ -1221,9 +1221,22 @@ function pickFirstSkill(event: KeyboardEvent) {
 
 function removeSkill(name: string) {
   leavingSkill.value = name
+  const key = draftKey.value
   setTimeout(() => {
-    skills.value = skills.value.filter((entry) => entry !== name)
     if (leavingSkill.value === name) leavingSkill.value = undefined
+    if (draftKey.value === key) {
+      skills.value = skills.value.filter((entry) => entry !== name)
+      return
+    }
+    // Left for another conversation while the chip leave animation was in
+    // flight: do not strip the chip from this draft, but still apply the
+    // remove to the parked draft so it sticks when the user comes back.
+    const kept = drafts.get(key)
+    if (!kept) return
+    const nextSkills = kept.skills.filter((entry) => entry !== name)
+    if (kept.text || kept.attachments.length || nextSkills.length) {
+      drafts.set(key, { ...kept, skills: nextSkills })
+    } else drafts.delete(key)
   }, 200)
 }
 
@@ -1942,7 +1955,17 @@ watch(
   draftKey,
   (next, previous) => {
     historyIndex.value = null
-    if (previous) saveDraft(previous)
+    if (previous) {
+      // A chip dismissed just before leaving was still animating; apply the
+      // pending remove to the live box before parking it, so the draft does
+      // not keep a skill the user already dismissed.
+      if (leavingSkill.value !== undefined) {
+        const leaving = leavingSkill.value
+        skills.value = skills.value.filter((entry) => entry !== leaving)
+        leavingSkill.value = undefined
+      }
+      saveDraft(previous)
+    }
     const kept = drafts.get(next)
     text.value = kept?.text ?? ""
     attachments.value = kept?.attachments ?? []
