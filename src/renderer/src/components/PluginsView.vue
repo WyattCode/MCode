@@ -328,6 +328,7 @@ function pickFilter(key: string) {
         <h1 class="title">{{ t("plugins.title") }}</h1>
         <div class="actions">
           <button
+            type="button"
             class="icon-btn refresh"
             :aria-label="t('plugins.refresh')"
             v-tip="{ label: t('plugins.refresh'), placement: 'bottom' }"
@@ -363,9 +364,11 @@ function pickFilter(key: string) {
           />
         </div>
         <button
+          type="button"
           class="filter"
           :class="{ active: filtering }"
           :aria-label="t('plugins.filter')"
+          :aria-pressed="filtering"
           :aria-expanded="Boolean(filterMenu)"
           aria-haspopup="menu"
           v-tip="{ label: t('plugins.filter'), placement: 'bottom' }"
@@ -380,16 +383,16 @@ function pickFilter(key: string) {
 
       <div class="head">
         <span class="head-label">{{ t("plugins.installed") }}</span>
-        <button class="manage" @click="emit('manage')">{{ t("plugins.manage") }}</button>
+        <button type="button" class="manage" @click="emit('manage')">{{ t("plugins.manage") }}</button>
       </div>
 
       <!--
         A list that could not be read is said, with Retry, rather than read as
         nothing installed - above what the other half did bring back, where it is seen.
       -->
-      <p v-if="loaded && listFailed" class="empty failed" data-plugins-failed>
+      <p v-if="loaded && listFailed" class="empty failed" role="status" data-plugins-failed>
         <span>{{ t("plugins.listUnavailable") }}</span>
-        <button class="retry" @click="retryLists">{{ t("common.retry") }}</button>
+        <button type="button" class="retry" @click="retryLists">{{ t("common.retry") }}</button>
       </p>
       <div v-if="shown.length" class="cards">
         <div
@@ -419,6 +422,7 @@ function pickFilter(key: string) {
           <template v-if="entry.server">
             <span class="card-state">{{ t(`mcp.status.${entry.server.status}`) }}</span>
             <button
+              type="button"
               class="switch"
               :class="{ on: entry.server.status === 'connected' }"
               role="switch"
@@ -435,6 +439,7 @@ function pickFilter(key: string) {
             <!-- MiMo's row action: a switched-off skill offers its install button, which switches it back on; otherwise the "…" menu. -->
             <button
               v-if="!entry.enabled"
+              type="button"
               class="enable"
               :data-skill-enable-row="entry.skill.name"
               @click.stop="setSkillEnabled(entry.skill.name, true)"
@@ -443,6 +448,7 @@ function pickFilter(key: string) {
             </button>
             <button
               v-else
+              type="button"
               class="icon-btn more"
               :data-skill-more="entry.skill.name"
               :aria-label="t('plugins.moreActions')"
@@ -461,7 +467,7 @@ function pickFilter(key: string) {
         </div>
       </div>
 
-      <p v-if="loaded && !listFailed && !shown.length" class="empty">{{ entries.length ? t("plugins.noMatch") : t("plugins.none") }}</p>
+      <p v-if="loaded && !listFailed && !shown.length" class="empty" role="status">{{ entries.length ? t("plugins.noMatch") : t("plugins.none") }}</p>
     </div>
     <ContextMenu
       v-if="filterMenu"
@@ -588,6 +594,17 @@ function pickFilter(key: string) {
 
 .filter:hover {
   background: color-mix(in srgb, var(--text-strong) 4%, transparent);
+}
+
+.filter:focus-visible,
+.manage:focus-visible,
+.enable:focus-visible,
+.icon-btn:focus-visible,
+.switch:focus-visible,
+.card.opens:focus-visible,
+.retry:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: -2px;
 }
 
 .dot {
