@@ -416,10 +416,15 @@ async function submitSessionRename(title: string) {
   const target = renamingSession.value
   renamingSession.value = undefined
   if (!target || title === target.title) return
+  // Hold the rename failure toast to the place the person started from;
+  // leaving mid-await must not flash it onto another chat.
+  const held = app.currentID
   try {
     await app.rename(target.id, title)
   } catch (err) {
-    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    if (app.currentID === held) {
+      notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    }
   }
 }
 
