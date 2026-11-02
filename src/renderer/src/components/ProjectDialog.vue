@@ -102,10 +102,10 @@ async function save() {
 
 <template>
   <div class="scrim" @mousedown.self="emit('close')">
-    <div v-modal class="dialog" role="dialog" aria-labelledby="proj-edit-title">
+    <div v-modal class="dialog">
       <header>
-        <h2 id="proj-edit-title">{{ t("proj.editTitle") }}</h2>
-        <button class="x" type="button" :aria-label="t('common.close')" v-tip="t('common.close')" @click="emit('close')">
+        <h2>{{ t("proj.editTitle") }}</h2>
+        <button type="button" class="x" v-tip="t('common.close')" @click="emit('close')">
           <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
             <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
           </svg>
@@ -125,9 +125,8 @@ async function save() {
       <label class="label">{{ t("proj.icon") }}</label>
       <div class="icon-row">
         <button
-          class="preview"
           type="button"
-          :aria-label="t('proj.iconPick')"
+          class="preview"
           :class="{ dragging }"
           :style="{ '--h': color }"
           @click="file?.click()"
@@ -139,23 +138,20 @@ async function save() {
           <span v-else>{{ initial }}</span>
         </button>
         <div class="icon-text">
-          <button class="link" @click="file?.click()">{{ t("proj.iconPick") }}</button>
+          <button type="button" class="link" @click="file?.click()">{{ t("proj.iconPick") }}</button>
           <div class="hint">{{ t("proj.iconHint") }}</div>
-          <button v-if="icon" class="link" @click="icon = ''">{{ t("proj.iconClear") }}</button>
+          <button v-if="icon" type="button" class="link" @click="icon = ''">{{ t("proj.iconClear") }}</button>
         </div>
         <input ref="file" class="hidden" type="file" accept="image/*" @change="onPick" />
       </div>
 
-      <label id="proj-color-label" class="label">{{ t("proj.color") }}</label>
-      <div class="swatches" role="radiogroup" aria-labelledby="proj-color-label">
+      <label class="label">{{ t("proj.color") }}</label>
+      <div class="swatches">
         <button
           v-for="entry in COLORS"
           :key="entry"
-          class="swatch"
           type="button"
-          role="radio"
-          :aria-checked="entry===color"
-          :aria-label="t('proj.color') + ' ' + entry"
+          class="swatch"
           :class="{ on: entry === color }"
           :style="{ '--h': entry }"
           @click="color = entry"
@@ -164,11 +160,11 @@ async function save() {
         </button>
       </div>
 
-      <div v-if="error" class="error" role="alert">{{ error }}</div>
+      <div v-if="error" class="error">{{ error }}</div>
 
       <footer>
-        <button class="ghost" @click="emit('close')">{{ t("common.cancel") }}</button>
-        <button class="go" @click="save">{{ t("common.save") }}</button>
+        <button type="button" class="ghost" @click="emit('close')">{{ t("common.cancel") }}</button>
+        <button type="button" class="go" @click="save">{{ t("common.save") }}</button>
       </footer>
     </div>
   </div>
@@ -360,5 +356,15 @@ footer {
 
 .link:hover {
   color: var(--text-strong);
+}
+
+.x:focus-visible,
+.preview:focus-visible,
+.link:focus-visible,
+.swatch:focus-visible,
+.ghost:focus-visible,
+.go:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 </style>
