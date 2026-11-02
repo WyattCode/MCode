@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue"
+import { computed, onMounted, ref } from "vue"
 import { t } from "../lib/i18n"
 import { useEscapeLayer } from "../lib/escape-layer"
 
@@ -36,6 +36,8 @@ function clamp(text: string): string {
 
 const draft = ref(clamp(props.value))
 const field = ref<HTMLInputElement>()
+const used = computed(() => Array.from(draft.value).length)
+const countLabel = computed(() => t("rename.count", { n: used.value, max: props.maxLength }))
 
 function onInput(event: Event) {
   const input = event.target as HTMLInputElement
@@ -67,7 +69,7 @@ onMounted(() => {
 
 <template>
   <div class="scrim" @mousedown.self="emit('close')">
-    <div v-modal class="dialog" data-rename-dialog role="dialog" aria-labelledby="rename-title">
+    <div v-modal class="dialog" data-rename-dialog role="dialog" aria-labelledby="rename-title" aria-describedby="rename-count">
       <div class="head">
         <div class="head-text">
           <h2 id="rename-title">{{ heading ?? t("cmd.rename") }}</h2>
@@ -81,13 +83,17 @@ onMounted(() => {
       </div>
       <input
         ref="field"
+        id="rename-field"
         :value="draft"
         class="field"
         spellcheck="false"
         :maxlength="maxLength"
+        aria-labelledby="rename-title"
+        aria-describedby="rename-count"
         @input="onInput"
         @keydown.enter="onEnter"
       />
+      <div id="rename-count" class="count" aria-live="polite">{{ countLabel }}</div>
       <footer>
         <button class="ghost" type="button" @click="emit('close')">{{ t("common.cancel") }}</button>
         <button class="go" type="button" data-rename-save :disabled="!draft.trim()" @click="submit">
@@ -197,6 +203,14 @@ h2 {
   :root:not([data-theme="light"]) .field:focus {
     border-color: #777777;
   }
+}
+
+.count {
+  margin: 6px 2px 0;
+  color: var(--color-mut);
+  font-size: 12px;
+  text-align: end;
+  line-height: 1.2;
 }
 
 footer {

@@ -982,7 +982,13 @@ export const useApp = defineStore("app", () => {
           if (booted) {
             if (reconnectTimer !== undefined) clearTimeout(reconnectTimer)
             reconnectTimer = undefined
-            notice.danger(t("error.connectionRecovering"), { id: RECONNECT_TOAST, body: t("error.connectionStillDown"), duration: 0, closable: false })
+            notice.danger(t("error.connectionRecovering"), {
+              id: RECONNECT_TOAST,
+              body: t("error.connectionStillDown"),
+              duration: 0,
+              closable: true,
+              action: { label: t("error.connectionRelaunch"), run: () => window.mcode.relaunch() },
+            })
           }
         }, 2500)
       }
@@ -1003,7 +1009,12 @@ export const useApp = defineStore("app", () => {
       // Once escalated it stays so until the socket is back.
       else if (booted && !offline.value) {
         reconnectTimer = setTimeout(() => {
-          notice.warning(t("error.connectionRecovering"), { id: RECONNECT_TOAST, duration: 0, closable: false })
+          notice.warning(t("error.connectionRecovering"), {
+            id: RECONNECT_TOAST,
+            duration: 0,
+            closable: true,
+            action: { label: t("error.connectionRelaunch"), run: () => window.mcode.relaunch() },
+          })
         }, RECONNECT_DELAY)
       }
     })

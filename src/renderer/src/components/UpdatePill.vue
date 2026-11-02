@@ -141,10 +141,17 @@ function place() {
 }
 
 async function toggle() {
-  open.value = !open.value
-  if (!open.value) return
+  const willOpen = !open.value
+  open.value = willOpen
+  if (!willOpen) {
+    await nextTick()
+    pill.value?.focus()
+    return
+  }
   place()
   await nextTick()
+  const first = bubble.value?.querySelector<HTMLElement>("button:not([disabled]), [href], input, textarea, [tabindex]:not([tabindex='-1'])")
+  first?.focus()
 }
 
 function onPointerDown(event: MouseEvent) {
@@ -157,7 +164,9 @@ function onPointerDown(event: MouseEvent) {
 function onKeydown(event: KeyboardEvent) {
   if (open.value && event.key === "Escape") {
     event.stopPropagation()
+    event.preventDefault()
     open.value = false
+    void nextTick(() => pill.value?.focus())
   }
 }
 
@@ -183,7 +192,11 @@ onBeforeUnmount(() => {
       data-update-pill
       :disabled="updateState.phase === 'installing'"
       :title="tip"
+      :aria-label="tip"
+      aria-haspopup="dialog"
       :aria-expanded="open"
+      :aria-controls="open ? 'mcode-update-bubble' : undefined"
+      :aria-busy="updateState.phase === 'installing'"
       @click="toggle"
     >
       {{ label }}
@@ -192,10 +205,12 @@ onBeforeUnmount(() => {
     <Teleport to="body">
       <div
         v-if="open"
+        id="mcode-update-bubble"
         ref="bubble"
         class="update-bubble"
         data-update-bubble
         role="dialog"
+        aria-modal="false"
         :aria-label="t('update.panelTitle', { version: updateState.version })"
         :style="{ left: `${spot.left}px`, bottom: `${spot.bottom}px` }"
       >
@@ -269,6 +284,11 @@ onBeforeUnmount(() => {
 .update-pill:disabled {
   opacity: 0.6;
   cursor: default;
+}
+
+.update-pill:focus-visible {
+  outline: 2px solid var(--focus-ring, #0077fa);
+  outline-offset: 2px;
 }
 
 .update-pill.failed {
