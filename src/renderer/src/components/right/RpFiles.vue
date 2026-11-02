@@ -322,7 +322,10 @@ async function reveal(rel: string | undefined) {
 
 function openInBrowser(rel: string | undefined) {
   if (!root.value || !rel) return
+  const held = app.currentID
   void window.mcode.openFile(root.value, rel).then((failure) => {
+    // Hold the toast to the place the person started from; leaving mid-await must not flash the open-in-browser outcome onto another conversation.
+    if (app.currentID !== held) return
     if (failure) notifyFailure(t("rp.files.openInBrowserFailed", { error: failure }))
   })
 }
