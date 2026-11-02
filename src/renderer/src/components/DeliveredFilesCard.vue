@@ -161,7 +161,10 @@ async function pick(key: string) {
     if (app.currentID !== held) return
     if (!result.ok) notifyFailure(t("officeCard.revealFailed", { error: result.error ?? "" }))
   } else if (key === "saveCopy") {
+    // Hold the save-copy toasts to the place the person started from; leaving mid-await must not flash the download-copy outcome onto another conversation.
+    const held = app.currentID
     const result = await window.mcode.saveCopy(target.path).catch((error: unknown) => ({ ok: false as const, error: String(error) }))
+    if (app.currentID !== held) return
     if (result.ok) notify(t("officeCard.savedTo", { path: result.savedPath }))
     else notifyFailure(t("officeCard.saveFailed", { error: result.error }))
   } else if (key.startsWith("app.")) {
