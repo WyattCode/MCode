@@ -5,6 +5,7 @@ import type { MenuItem } from "../../lib/menu"
 import { t } from "../../lib/i18n"
 import { savePng, saveText } from "../../lib/native-pick"
 import { notifyFailure } from "../../lib/toast"
+import { useApp } from "../../stores/app"
 import { openImagePreview } from "../../lib/image-preview"
 import { svgSize } from "../../lib/svg-safe"
 import {
@@ -151,11 +152,16 @@ async function copyImage() {
 }
 
 async function copyCode() {
+  // Hold the toast to the place the person started from; leaving mid-await
+  // must not flash the copy outcome onto another conversation.
+  const held = useApp().currentID
   try {
     await writeText(source.value)
+    if (useApp().currentID !== held) return
     copiedCode.value = true
     setTimeout(() => (copiedCode.value = false), 2000)
   } catch {
+    if (useApp().currentID !== held) return
     notifyFailure(t("code.copyFailed"))
   }
 }
