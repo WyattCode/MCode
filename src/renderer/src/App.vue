@@ -1792,18 +1792,21 @@ const PROJECT_ACTIONS: Record<string, (directory: string) => void | Promise<void
    * icon, colour and pin the project had come along with it.
    */
   relocate: async (directory) => {
+    // Hold the toast to the place the person started from: leaving mid-await must not
+    // flash the relocate outcome onto another chat.
+    const held = app.currentID
     const [next] = await pickDirectory(t("menu.relocateProject"), false)
     if (!next || next === directory) return
     // MiMo refuses a folder that is already another project's, rather than merging the two.
     if (app.projects.includes(next) || app.sessions.some((entry) => entry.directory === next && !entry.archived)) {
-      notifyFailure(t("toast.projectPathTaken", { name: projectName(next, app.config?.projectNames) }))
+      if (app.currentID === held) notifyFailure(t("toast.projectPathTaken", { name: projectName(next, app.config?.projectNames) }))
       return
     }
     // Refuse before move: without config the name/icon/pin rewrite cannot run, and a silent
     // early return used to leave sessions already moved on the new path.
     const config = app.config
     if (!config) {
-      notifyFailure(t("common.requestFailed"))
+      if (app.currentID === held) notifyFailure(t("common.requestFailed"))
       return
     }
     for (const session of app.sessions.filter((entry) => entry.directory === directory)) await app.move(session.id, next)
@@ -1819,10 +1822,10 @@ const PROJECT_ACTIONS: Record<string, (directory: string) => void | Promise<void
         closedProjects: swap(config.closedProjects),
       })
     } catch (err) {
-      notifyFailure(t("common.requestFailed"), reasonOf(err))
+      if (app.currentID === held) notifyFailure(t("common.requestFailed"), reasonOf(err))
       return
     }
-    notify(t("toast.projectPathChanged", { name: projectName(next, app.config?.projectNames) }), { level: "success" })
+    if (app.currentID === held) notify(t("toast.projectPathChanged", { name: projectName(next, app.config?.projectNames) }), { level: "success" })
   },
   /* Asked first, as MiMo asks: the project leaves the list, its conversations stay. */
   remove: (directory) => {
