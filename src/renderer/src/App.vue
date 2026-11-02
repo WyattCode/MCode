@@ -1988,6 +1988,9 @@ async function runProjectBatch(action: "archive" | "remove" | "exit" | "all" | "
   const chosen = selectingProjects.value ?? []
   if (!chosen.length) return
   if (action === "archive") {
+    // Hold the batch-archive toast to the place the person started from: leaving mid-await
+    // must not flash the archive outcome onto another chat.
+    const held = app.currentID
     let archived = 0
     let failed = false
     let err: unknown
@@ -2002,10 +2005,10 @@ async function runProjectBatch(action: "archive" | "remove" | "exit" | "all" | "
     }
     selectingProjects.value = undefined
     // MiMo's batch project archive is silent per project and says the count once, with no links.
-    if (failed) {
+    if (failed && app.currentID === held) {
       notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
     }
-    if (archived) notify(t("toast.projectsArchivedN", { count: archived }), { level: "success" })
+    if (archived && app.currentID === held) notify(t("toast.projectsArchivedN", { count: archived }), { level: "success" })
     return
   }
   removingProjects.value = { directories: [...chosen], batch: true }
