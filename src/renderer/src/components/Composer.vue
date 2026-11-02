@@ -825,7 +825,7 @@ const placeholder = computed(() => {
   if (mode.value === "shell") return t("composer.shellPlaceholder")
   // MiMo 26.920's order: compacting, then sending, then a restricted conversation, then the mode's own line, then the everyday one. Attachments do not blank it.
   if (compactingHere.value) return t("composer.compacting")
-  if (sendingHere.value) return t("composer.sending")
+  if (sending.value) return t("composer.sending")
   if (restrictedHere.value) return t("composer.reviewRestricted")
   if (!props.side && agent.value === "plan") return t("composer.placeholderPlan")
   return t("composer.placeholder")
@@ -1202,8 +1202,7 @@ async function toggleGoalMode() {
     notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
     return
   }
-  // Left for another conversation mid-flight: do not flash goal on/off there.
-  if (sessionID.value === target) notify(t(next ? "toast.goalOn" : "toast.goalOff"))
+  notify(t(next ? "toast.goalOn" : "toast.goalOff"))
 }
 
 /* MiMo's skill chip: a picked skill waits above the text and goes with the next message. */
@@ -1222,9 +1221,22 @@ function pickFirstSkill(event: KeyboardEvent) {
 
 function removeSkill(name: string) {
   leavingSkill.value = name
+  const key = draftKey.value
   setTimeout(() => {
-    skills.value = skills.value.filter((entry) => entry !== name)
     if (leavingSkill.value === name) leavingSkill.value = undefined
+    if (draftKey.value === key) {
+      skills.value = skills.value.filter((entry) => entry !== name)
+      return
+    }
+    // Left for another conversation while the chip leave animation was in
+    // flight: do not strip the chip from this draft, but still apply the
+    // remove to the parked draft so it sticks when the user comes back.
+    const kept = drafts.get(key)
+    if (!kept) return
+    const nextSkills = kept.skills.filter((entry) => entry !== name)
+    if (kept.text || kept.attachments.length || nextSkills.length) {
+      drafts.set(key, { ...kept, skills: nextSkills })
+    } else drafts.delete(key)
   }, 200)
 }
 
@@ -1272,29 +1284,19 @@ async function openSkillFrom(from: HTMLElement) {
 
 /* Set while attached audio is being read before a send, so a second Enter does not start another. */
 let probingAudio = false
-/* Which draftKey owns the audio probe, so a switch does not lock the next box. */
-let probingKey: string | null = null
 
 /* From the draft leaving the box until the message is taken or handed back: the new conversation, the mentioned files, the send itself. */
 const sending = ref(false)
-/* Which draftKey owns the in-flight send; only that box shows busy and refuses a second send. */
-const sendingKey = ref<string | null>(null)
-const sendingHere = computed(() => sending.value && sendingKey.value === draftKey.value)
 let composerMounted = true
 onBeforeUnmount(() => { composerMounted = false })
 
 async function submit(delivery?: "queue") {
-  const owned = draftKey.value
-  if (sendingHere.value || (probingAudio && probingKey === owned)) return
+  if (sending.value || probingAudio) return
   sending.value = true
-  sendingKey.value = owned
   try {
     await prepareSend(delivery)
   } finally {
-    if (sendingKey.value === owned) {
-      sending.value = false
-      sendingKey.value = null
-    }
+    sending.value = false
   }
 }
 
@@ -1393,9 +1395,6 @@ async function prepareSend(delivery?: "queue") {
   await nextTick(resize)
 
   // MiMo's 发送中…: the box says so from here until the message is taken or handed back.
-  // Own with originKey (captured at prepareSend entry), not live draftKey — a mid-flight
-  // switch must not retarget the busy lock onto the newly selected conversation.
-  const owned = originKey
   sending.value = true
   try {
     /*
@@ -1413,7 +1412,6 @@ async function prepareSend(delivery?: "queue") {
     const audio = sent.filter((file) => isAudioFile(file.path))
     if (audio.length) {
       probingAudio = true
-      probingKey = owned
       try {
         for (const file of audio) {
           const verdict = audioVerdict(await probeAudio(file))
@@ -1424,10 +1422,7 @@ async function prepareSend(delivery?: "queue") {
           }
         }
       } finally {
-        if (probingKey === owned) {
-          probingAudio = false
-          probingKey = null
-        }
+        probingAudio = false
       }
       if (!stillHere()) {
         restoreOrigin()
@@ -1505,10 +1500,7 @@ async function prepareSend(delivery?: "queue") {
       await nextTick(resize)
     }
   } finally {
-    if (sendingKey.value === owned) {
-      sending.value = false
-      sendingKey.value = null
-    }
+    sending.value = false
   }
 }
 
@@ -1540,7 +1532,7 @@ async function compactFromBox(line: string, rebuild = false) {
   notify(t("composer.compact.starting"))
   try {
     await app.compact(id)
-    if (sessionID.value === id) notice.success(t("composer.compact.success"))
+    notice.success(t("composer.compact.success"))
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err)
     const timedOut = /timed? ?out|ETIMEDOUT/i.test(reason)
@@ -1964,7 +1956,14 @@ watch(
   (next, previous) => {
     historyIndex.value = null
     if (previous) {
-      if (mine.value) dropVoice()
+      // A chip dismissed just before leaving was still animating; apply the
+      // pending remove to the live box before parking it, so the draft does
+      // not keep a skill the user already dismissed.
+      if (leavingSkill.value !== undefined) {
+        const leaving = leavingSkill.value
+        skills.value = skills.value.filter((entry) => entry !== leaving)
+        leavingSkill.value = undefined
+      }
       saveDraft(previous)
     }
     const kept = drafts.get(next)
@@ -2259,10 +2258,7 @@ function queuesMessage(event: KeyboardEvent): boolean {
 }
 
 /** 撤回 from the queue: the message back in the box to be changed, ahead of anything already typed. */
-function restoreQueued(item: QueuedPrompt, from: string) {
-  // QueueBar can finish removeQueued after a session switch: Composer stays
-  // mounted, so only paste back while that conversation still owns this box.
-  if (from !== sessionID.value) return
+function restoreQueued(item: QueuedPrompt) {
   const draft = text.value.trim()
   text.value = draft ? `${item.text}\n${draft}` : item.text
   attachments.value = [...(item.attachments ?? []), ...attachments.value]
@@ -2744,8 +2740,7 @@ async function chooseAccess(next: Access) {
     confirmingFull.value = true
     return
   }
-  const held = sessionID.value ?? null
-  await applyAccess(next, held)
+  await applyAccess(next)
 }
 
 async function confirmFull() {
@@ -2753,6 +2748,7 @@ async function confirmFull() {
   const held = pendingFullFor.value
   pendingFullFor.value = undefined
   await applyAccess("full", held)
+  if (await applyAccess("full")) confirmingFull.value = false
 }
 
 /*
@@ -3164,14 +3160,17 @@ async function chooseAgent(next: (typeof AGENTS)[number]) {
   const before = app.modeOf(target)
   // No session on the home screen, so the choice is the app's default - which
   // is what the task this box creates will start as.
+  if (!target) await app.patchConfig({ agent: next })
+  else await app.setAgent(next, target)
+  app.announceMode(before, target)
   try {
-    if (!target) await app.patchConfig({ agent: next })
-    else await app.setAgent(next, target)
+    if (!sessionID.value) await app.patchConfig({ agent: next }, { quiet: true })
+    else await app.setAgent(next)
   } catch (err) {
     notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
     return
   }
-  app.announceMode(before, target)
+  app.announceMode(before, sessionID.value)
 }
 
 async function chooseModel(provider: string, model: string) {
