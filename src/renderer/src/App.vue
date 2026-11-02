@@ -2482,7 +2482,11 @@ async function stepProject(by: 1 | -1) {
   const newest = app.sessions
     .filter((session) => session.directory === target && !session.archived)
     .sort((a, b) => b.updated - a.updated)[0]
-  if (newest) await app.open(newest.id)
+  if (newest) {
+    await app.open(newest.id)
+    // Left for another conversation while open was in flight: do not force the session view for the abandoned project step.
+    if (app.currentID === newest.id) view.value = "session"
+  }
 }
 
 /**
