@@ -194,7 +194,7 @@ const Actions: FunctionalComponent = () => {
 
 <template>
   <div class="confirm-question" :class="{ collapsed }" data-confirm-question>
-    <div class="q-head" :class="{ clickable: collapsed }" :data-confirm-head-clickable="collapsed ? 'true' : undefined" @click="collapsed && (collapsed = false)">
+    <div class="q-head" :class="{ clickable: collapsed }" :data-confirm-head-clickable="collapsed ? 'true' : undefined" :role="collapsed ? 'button' : undefined" :tabindex="collapsed ? 0 : undefined" @click="collapsed && (collapsed = false)" @keydown.enter.space.prevent="collapsed && (collapsed = false)">
       <span class="q-icon" aria-hidden="true"><StepIcon name="question" :size="15" /></span>
       <span v-if="collapsed" id="confirm-dock-title" class="q-title" data-confirm-qtitle data-confirm-collapsed>
         {{ tn("questionDock.collapsedSummary", total) }}
@@ -205,8 +205,8 @@ const Actions: FunctionalComponent = () => {
         <span class="q-header" data-confirm-qheader :title="planHeader(current)">{{ planHeader(current) }}</span>
       </template>
       <span class="q-right">
-        <span v-if="queueTotal > 1" class="q-queue" data-confirm-queue :title="t('perm.queueTitle', { total: queueTotal })">
-          {{ t("perm.queueChip", { at: 1, total: queueTotal }) }}
+        <span v-if="queueTotal > 1" class="q-queue" data-confirm-queue :title="t('perm.queueTitle', { total: queueTotal })" :aria-label="t('perm.queueTitle', { total: queueTotal })">
+          1/{{ queueTotal }}
         </span>
         <span v-if="total > 1 && !collapsed" class="q-pager" data-confirm-pager>
           <button
@@ -244,6 +244,7 @@ const Actions: FunctionalComponent = () => {
           :title="t(collapsed ? 'questionDock.expand' : 'questionDock.collapse')"
           :aria-label="t(collapsed ? 'questionDock.expand' : 'questionDock.collapse')"
           :aria-expanded="!collapsed"
+          aria-controls="confirm-q-body"
           @click.stop="collapsed = !collapsed"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -267,10 +268,10 @@ const Actions: FunctionalComponent = () => {
       </span>
     </div>
 
-    <div v-if="!collapsed" :key="page" class="confirm-q-body" data-confirm-qbody>
+    <div v-if="!collapsed" :key="page" id="confirm-q-body" class="confirm-q-body" data-confirm-qbody>
       <div id="confirm-dock-desc" class="q-text" data-confirm-qtext>{{ questionText }}</div>
       <!-- plan: MiMo's 查看方案, which opens the plan file beside the conversation. -->
-      <button v-if="plan" type="button" class="q-plan" data-confirm-plan :title="plan" @click="openPlan(plan, app.current?.directory)">
+      <button v-if="plan" type="button" class="q-plan" data-confirm-plan :title="plan" :aria-label="t('question.viewPlan')" @click="openPlan(plan, app.current?.directory)">
         {{ t("question.viewPlan") }}
       </button>
       <div class="q-opts" data-confirm-opts :role="multiple ? 'group' : 'radiogroup'" :aria-label="questionText">
@@ -332,6 +333,7 @@ const Actions: FunctionalComponent = () => {
               data-confirm-custom-input
               :value="custom[page] ?? ''"
               :placeholder="t('questionDock.customPlaceholder')"
+              :aria-label="t('questionDock.customPlaceholder')"
               :disabled="sending"
               @input="onCustom"
               @keydown="onCustomKey"
@@ -466,6 +468,12 @@ const Actions: FunctionalComponent = () => {
   background: #f8f7f5;
 }
 
+.q-page:focus-visible,
+.q-dismiss:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 1px;
+}
+
 .q-page:disabled,
 .q-dismiss:disabled {
   cursor: default;
@@ -517,6 +525,12 @@ const Actions: FunctionalComponent = () => {
 
 .q-plan:hover {
   color: var(--primary);
+}
+
+.q-plan:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 .q-opts {
