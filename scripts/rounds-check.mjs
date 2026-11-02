@@ -23,6 +23,12 @@ const NEEDS_THE_MACHINE = /BrowserWindow|\badb\b|launchBrowser|_electron|playwri
 /** Needs a program this suite cannot assume, named with what it needs. */
 const NEEDS = { "smoke-round14-packaging": "openssl on the PATH" }
 
+/*
+ * macOS's temp folder is /var/folders/..., a link to /private/var/folders/...: git, realpath and the tools report
+ * the second spelling, so a module that compares paths by text wants the one spelling used throughout. Children inherit it.
+ */
+if (process.platform === "darwin") process.env.TMPDIR = fs.realpathSync(process.env.TMPDIR || "/tmp").replace(/\/?$/, "/")
+
 const asked = process.argv.slice(2)
 const files = fs.readdirSync("scripts").filter((file) => /^smoke-.*\.ts$/.test(file) && (!asked.length || asked.some((name) => file.includes(name))))
 const out = path.resolve("out")
