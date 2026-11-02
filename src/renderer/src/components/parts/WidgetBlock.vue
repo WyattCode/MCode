@@ -97,8 +97,8 @@ watch([source, reduceMotion], () => void serve())
 </script>
 
 <template>
-  <div class="md-widget" data-widget-block>
-    <div v-if="failed" class="md-widget-failed" data-widget-failed>{{ t("widget.failed") }}</div>
+  <div class="md-widget" role="region" :aria-label="t('widget.label')" data-widget-block>
+    <div v-if="failed" class="md-widget-failed" role="alert" data-widget-failed>{{ t("widget.failed") }}</div>
     <iframe
       v-else-if="src"
       ref="frame"

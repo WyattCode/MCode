@@ -69,6 +69,7 @@ function play(url: string) {
       type="button"
       class="media-card"
       :title="single.title || t('mediaCard.openInBrowser')"
+      :aria-label="`${platformName(single)}: ${single.title || t('mediaCard.openInBrowser')}`"
       data-media-card
       :data-media-url="single.url"
       @click="play(single.url)"
