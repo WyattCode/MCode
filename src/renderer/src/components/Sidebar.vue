@@ -1139,6 +1139,7 @@ onBeforeUnmount(() => {
     -->
     <div v-if="collapsed" ref="toolsEl" class="rail-tools" data-collapsed-tools>
       <button
+        type="button"
         ref="toggleEl"
         class="ico"
         data-toggle-side
@@ -1154,7 +1155,7 @@ onBeforeUnmount(() => {
         </svg>
       </button>
       <!-- The same speech bubble with a plus as the column's 新建任务, on MiMo's lighter 1.75 line. -->
-      <button class="ico" data-collapsed-new-task :aria-label="t('side.newTask')" v-tip="{ label: t('side.newTask'), hint: 'Ctrl+N' }" @click="closePreview(), emit('newTask')">
+      <button type="button" class="ico" data-collapsed-new-task :aria-label="t('side.newTask')" v-tip="{ label: t('side.newTask'), hint: 'Ctrl+N' }" @click="closePreview(), emit('newTask')">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M20.3 15.4A9 9 0 1 0 16.5 19.8L21 21z" />
           <path d="M12 9.5v5M9.5 12h5" />
@@ -1177,18 +1178,18 @@ onBeforeUnmount(() => {
       :aria-hidden="collapsed && !preview ? 'true' : undefined"
     >
     <div class="top" :class="{ mac: app.platform === 'darwin' }">
-      <button class="ico side-toggle" :aria-label="t('side.toggle')" v-tip="{ label: t('side.toggle'), hint: 'Ctrl+B' }" @click="toggleColumn">
+      <button type="button" class="ico side-toggle" :aria-label="t('side.toggle')" v-tip="{ label: t('side.toggle'), hint: 'Ctrl+B' }" @click="toggleColumn">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <rect x="2.5" y="2.5" width="19" height="19" rx="4" />
           <path d="M9 2.5v19" />
         </svg>
       </button>
-      <button class="ico side-way" :disabled="!canBack" :aria-label="t('side.back')" v-tip="{ label: t('side.back'), hint: 'Ctrl+[' }" @click="emit('back')">
+      <button type="button" class="ico side-way" :disabled="!canBack" :aria-label="t('side.back')" v-tip="{ label: t('side.back'), hint: 'Ctrl+[' }" @click="emit('back')">
         <svg class="way" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M19.5 12h-15M11 5.5 4.5 12l6.5 6.5" />
         </svg>
       </button>
-      <button class="ico side-way" :disabled="!canForward" :aria-label="t('title.forward')" v-tip="{ label: t('title.forward'), hint: 'Ctrl+]' }" @click="emit('forward')">
+      <button type="button" class="ico side-way" :disabled="!canForward" :aria-label="t('title.forward')" v-tip="{ label: t('title.forward'), hint: 'Ctrl+]' }" @click="emit('forward')">
         <svg class="way" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M4.5 12h15M13 5.5l6.5 6.5-6.5 6.5" />
         </svg>
@@ -1204,7 +1205,7 @@ onBeforeUnmount(() => {
         less 72).
       -->
       <span class="brand-actions" data-brand-actions>
-        <button class="ico" data-search :aria-label="t('side.search')" v-tip="{ label: t('side.search'), hint: 'Ctrl+K' }" @click="closePreview(), emit('search')">
+        <button type="button" class="ico" data-search :aria-label="t('side.search')" v-tip="{ label: t('side.search'), hint: 'Ctrl+K' }" @click="closePreview(), emit('search')">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="10.5" cy="10.5" r="6.9" />
             <path d="m15.6 15.6 4.8 4.8" />
@@ -1212,6 +1213,7 @@ onBeforeUnmount(() => {
         </button>
         <!-- MiMo's priority filter: the column led by what wants attention, then the rest of the week by day. -->
         <button
+          type="button"
           class="ico bell"
           :class="{ on: priority }"
           :aria-pressed="Boolean(priority)"
@@ -1229,7 +1231,7 @@ onBeforeUnmount(() => {
 
     <nav class="nav" :aria-label="t('key.groupNavigation')">
       <!-- MiMo's 新建任务: a round speech bubble, its tail at the lower end, a plus inside - 24 grid, 2 line, 18px. -->
-      <button class="row" data-new-task @click="emit('newTask')">
+      <button type="button" class="row" data-new-task @click="emit('newTask')">
         <svg class="row-ico" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M20.3 15.4A9 9 0 1 0 16.5 19.8L21 21z" />
           <path d="M12 9.5v5M9.5 12h5" />
@@ -1238,6 +1240,7 @@ onBeforeUnmount(() => {
       </button>
       <!-- MiMo's plugins row sits between these two; the user asked for it hidden. -->
       <button
+        type="button"
         class="row"
         :class="{ on: page === 'artifacts' }"
         @click="emit('artifacts')"
@@ -1274,14 +1277,14 @@ onBeforeUnmount(() => {
       <template v-for="block in columnBlocks" :key="block.key">
         <!-- MiMo's 置顶 section: pinned conversations, then pinned projects. -->
         <div v-if="block.kind === 'pinned-head'" class="section pinned-head" data-pinned-section>
-          <button class="section-head" :aria-expanded="pinnedOpen" @click="togglePinnedOpen">
+          <button type="button" class="section-head" :aria-expanded="pinnedOpen" @click="togglePinnedOpen">
             <span>{{ t("side.priorityPinned") }}</span>
             <svg class="chev" :class="{ shut: !pinnedOpen }" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path d="M5 6.5L8 9.5L11 6.5" stroke="currentColor" />
             </svg>
           </button>
         </div>
-        <button v-else-if="block.kind === 'pinned-more'" class="pinned-more" data-pin-show-more @click="pinnedMore = true">
+        <button type="button" v-else-if="block.kind === 'pinned-more'" class="pinned-more" data-pin-show-more @click="pinnedMore = true">
           {{ t("side.expandPinned") }}
         </button>
         <div
@@ -1300,7 +1303,7 @@ onBeforeUnmount(() => {
           @dragend="endCarry"
           @contextmenu.prevent="openMenu(block.session.id, $event)"
         >
-          <button class="row-open" @click="press(block.session.id)">
+          <button type="button" class="row-open" @click="press(block.session.id)">
             <span v-if="picking" class="tick" :class="{ on: ticked(block.session.id) }" aria-hidden="true">
               <svg v-if="ticked(block.session.id)" width="12" height="12" viewBox="0 0 24 24" fill="none">
                 <path d="M20 6 9 17l-5-5" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
@@ -1341,6 +1344,7 @@ onBeforeUnmount(() => {
           </button>
           <span class="row-actions">
             <button
+              type="button"
               class="row-menu"
               :aria-label="t('session.options')"
               v-tip="{ label: t('side.priorityMore'), disabled: menuSession === block.session.id }"
@@ -1352,7 +1356,7 @@ onBeforeUnmount(() => {
                 <circle cx="13" cy="8" r="1.1" fill="currentColor" />
               </svg>
             </button>
-            <button class="row-pin on" :aria-label="t('menu.unpin')" v-tip="t('side.unpinTip')" @click.stop="app.togglePinned(block.session.id)">
+            <button type="button" class="row-pin on" :aria-label="t('menu.unpin')" v-tip="t('side.unpinTip')" @click.stop="app.togglePinned(block.session.id)">
               <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
               </svg>
@@ -1365,7 +1369,7 @@ onBeforeUnmount(() => {
           :class="{ held: Boolean(newProjectMenu) }"
           data-project-zone
         >
-        <button class="section-head" :aria-expanded="projectsOpen" @click="toggleProjectsOpen">
+        <button type="button" class="section-head" :aria-expanded="projectsOpen" @click="toggleProjectsOpen">
           <span>{{ t("side.projects") }}</span>
           <svg class="chev" :class="{ shut: !projectsOpen }" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M5 6.5L8 9.5L11 6.5" stroke="currentColor" />
@@ -1374,6 +1378,7 @@ onBeforeUnmount(() => {
         <!-- MiMo's "+", out of sight until the heading is hovered, opening its two-row menu. -->
         <span class="sec-actions">
           <button
+            type="button"
             class="ico add project-new"
             data-new-project-button
             :aria-label="t('side.newProject')"
@@ -1421,6 +1426,7 @@ onBeforeUnmount(() => {
               </svg>
             </span>
             <button
+              type="button"
               class="project-toggle"
               :aria-expanded="isExpanded(project.directory)"
               :aria-label="project.directory"
@@ -1499,6 +1505,7 @@ onBeforeUnmount(() => {
             -->
             <span v-if="!pickingProjects" class="row-actions">
               <button
+                type="button"
                 class="row-menu"
                 :aria-label="t('side.projectOptions')"
                 v-tip="{ label: t('side.priorityMore'), disabled: menuDirectory === project.directory }"
@@ -1511,6 +1518,7 @@ onBeforeUnmount(() => {
                 </svg>
               </button>
               <button
+                type="button"
                 class="ico inline"
                 :aria-label="t('side.newTaskIn', { name: projectLabel(project.directory) })"
                 v-tip="{ label: t('side.newTaskIn', { name: projectLabel(project.directory) }) }"
@@ -1537,7 +1545,7 @@ onBeforeUnmount(() => {
               @dragend="endCarry"
               @contextmenu.prevent="openMenu(session.id, $event, true)"
             >
-              <button class="row-open" @click="press(session.id)">
+              <button type="button" class="row-open" @click="press(session.id)">
                 <span v-if="picking" class="tick" :class="{ on: ticked(session.id) }" aria-hidden="true">
                   <svg v-if="ticked(session.id)" width="12" height="12" viewBox="0 0 24 24" fill="none">
                     <path d="M20 6 9 17l-5-5" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
@@ -1575,6 +1583,7 @@ onBeforeUnmount(() => {
               </button>
               <span class="row-actions">
                 <button
+                  type="button"
                   class="row-menu"
                   :aria-label="t('session.options')"
                   v-tip="{ label: t('side.priorityMore'), disabled: menuSession === session.id }"
@@ -1587,6 +1596,7 @@ onBeforeUnmount(() => {
                   </svg>
                 </button>
                 <button
+                  type="button"
                   class="row-pin"
                   :class="{ on: app.isPinned(session.id) }"
                   :aria-label="t(app.isPinned(session.id) ? 'menu.unpin' : 'menu.pin')"
@@ -1600,6 +1610,7 @@ onBeforeUnmount(() => {
               </span>
             </div>
             <button
+              type="button"
               v-if="project.children.length > PROJECT_TASKS && !allTasks.has(project.directory)"
               class="project-show-all"
               :data-project-show-all="project.directory"
@@ -1613,17 +1624,17 @@ onBeforeUnmount(() => {
         </template>
         <div v-else-if="block.kind === 'projects-empty'" class="empty" data-projects-empty data-project-zone>{{ t("side.noProjects") }}</div>
         <div v-else-if="block.kind === 'projects-pages'" class="projects-pages" data-projects-pagination data-project-zone>
-          <button v-if="projectsLeft > 0" class="pages-more" data-projects-show-more :aria-expanded="projectsPaged" @click="moreProjects">
+          <button type="button" v-if="projectsLeft > 0" class="pages-more" data-projects-show-more :aria-expanded="projectsPaged" @click="moreProjects">
             {{ projectsPaged ? t("side.moreProjectsLeft", { count: projectsLeft }) : t("side.moreProjects") }}
           </button>
-          <button v-if="projectsPaged" class="pages-collapse" data-projects-collapse @click="projectsShown = PROJECT_PAGE">
+          <button type="button" v-if="projectsPaged" class="pages-collapse" data-projects-collapse @click="projectsShown = PROJECT_PAGE">
             {{ t("side.collapseProjects") }}
           </button>
         </div>
       </template>
 
       <div v-if="!priority" class="section recent-head" :class="{ held: Boolean(recentMenu) }">
-        <button class="section-head" :aria-expanded="recentOpen" @click="toggleRecentOpen">
+        <button type="button" class="section-head" :aria-expanded="recentOpen" @click="toggleRecentOpen">
           <span>{{ t("side.recent") }}</span>
           <svg class="chev" :class="{ shut: !recentOpen }" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M5 6.5L8 9.5L11 6.5" stroke="currentColor" />
@@ -1632,6 +1643,7 @@ onBeforeUnmount(() => {
         <!-- MiMo's two heading actions, out of sight until the heading is hovered. -->
         <span class="sec-actions">
           <button
+            type="button"
             class="ico add recent-more"
             :aria-label="t('side.priorityMore')"
             v-tip="{ label: t('side.priorityMore'), disabled: Boolean(recentMenu) }"
@@ -1645,6 +1657,7 @@ onBeforeUnmount(() => {
           </button>
           <!-- MiMo's heading new task names no shortcut, unlike the folded rail's. -->
           <button
+            type="button"
             class="ico add recent-new"
             :aria-label="t('side.newTask')"
             v-tip="t('side.newTask')"
@@ -1670,6 +1683,7 @@ onBeforeUnmount(() => {
         <div v-if="entry.section" class="section priority-head">
           <span class="section-head">{{ t(entry.section === "priority" ? "side.priority" : "side.priorityPinned") }}</span>
           <button
+            type="button"
             v-if="entry.section === 'priority'"
             class="ico add more"
             :aria-label="t('side.priorityMore')"
@@ -1690,7 +1704,7 @@ onBeforeUnmount(() => {
           :class="{ on: app.currentID === entry.session.id, noted: Boolean(entry.note) }"
           @contextmenu.prevent="openMenu(entry.session.id, $event)"
         >
-          <button class="row-open" @click="press(entry.session.id)">
+          <button type="button" class="row-open" @click="press(entry.session.id)">
             <span v-if="picking" class="tick" :class="{ on: ticked(entry.session.id) }" aria-hidden="true">
               <svg v-if="ticked(entry.session.id)" width="12" height="12" viewBox="0 0 24 24" fill="none">
                 <path d="M20 6 9 17l-5-5" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
@@ -1732,6 +1746,7 @@ onBeforeUnmount(() => {
           </button>
           <span class="row-actions">
             <button
+              type="button"
               class="row-menu"
               :aria-label="t('session.options')"
               v-tip="{ label: t('side.priorityMore'), disabled: menuSession === entry.session.id }"
@@ -1744,6 +1759,7 @@ onBeforeUnmount(() => {
               </svg>
             </button>
             <button
+              type="button"
               class="row-pin"
               :class="{ on: app.isPinned(entry.session.id) }"
               :aria-label="t(app.isPinned(entry.session.id) ? 'menu.unpin' : 'menu.pin')"
@@ -1757,7 +1773,7 @@ onBeforeUnmount(() => {
           </span>
         </div>
         </template>
-        <button v-if="!priority && recentLeft > 0" class="show-more" @click="recentShown += RECENT_PAGE">
+        <button type="button" v-if="!priority && recentLeft > 0" class="show-more" @click="recentShown += RECENT_PAGE">
           {{ t("side.showMore", { count: recentLeft }) }}
         </button>
       </template>
@@ -1771,6 +1787,7 @@ onBeforeUnmount(() => {
     <div v-if="picking && !pickingProjects" class="select-bar" data-select-bar="threads">
       <div class="sb-row">
         <button
+          type="button"
           class="sb-text"
           data-select-all
           @click="allTicked ? emit('batch', 'none') : emit('batch', 'all', selectableIDs)"
@@ -1778,13 +1795,13 @@ onBeforeUnmount(() => {
           {{ allTicked ? t("batch.selectNone") : t("batch.selectAll") }}
         </button>
         <span class="sb-count">{{ t("batch.selected", { n: String(selecting?.length ?? 0) }) }}</span>
-        <button class="sb-text" data-select-exit @click="emit('batch', 'cancel')">{{ t("batch.cancel") }}</button>
+        <button type="button" class="sb-text" data-select-exit @click="emit('batch', 'cancel')">{{ t("batch.cancel") }}</button>
       </div>
       <div class="sb-row sb-actions">
-        <button class="sb-btn" data-batch="archive" :disabled="!selecting?.length" @click="emit('batch', 'archive')">
+        <button type="button" class="sb-btn" data-batch="archive" :disabled="!selecting?.length" @click="emit('batch', 'archive')">
           {{ t("batch.archiveShort") }}
         </button>
-        <button class="sb-btn danger" data-batch="delete" :disabled="!selecting?.length" @click="emit('batch', 'delete')">
+        <button type="button" class="sb-btn danger" data-batch="delete" :disabled="!selecting?.length" @click="emit('batch', 'delete')">
           {{ t("batch.deleteShort") }}
         </button>
       </div>
@@ -1794,6 +1811,7 @@ onBeforeUnmount(() => {
     <div v-if="pickingProjects" class="select-bar" data-select-bar="projects">
       <div class="sb-row">
         <button
+          type="button"
           class="sb-text"
           data-select-all
           @click="allProjectsTicked ? emit('projectBatch', 'none') : emit('projectBatch', 'all', selectableProjects)"
@@ -1801,13 +1819,13 @@ onBeforeUnmount(() => {
           {{ allProjectsTicked ? t("batch.projectsSelectNone") : t("batch.projectsSelectAll") }}
         </button>
         <span class="sb-count">{{ t("batch.selected", { n: String(selectingProjects?.length ?? 0) }) }}</span>
-        <button class="sb-text" data-select-exit @click="emit('projectBatch', 'exit')">{{ t("batch.projectsExit") }}</button>
+        <button type="button" class="sb-text" data-select-exit @click="emit('projectBatch', 'exit')">{{ t("batch.projectsExit") }}</button>
       </div>
       <div class="sb-row sb-actions">
-        <button class="sb-btn" data-batch="archive" :disabled="!selectingProjects?.length" @click="emit('projectBatch', 'archive')">
+        <button type="button" class="sb-btn" data-batch="archive" :disabled="!selectingProjects?.length" @click="emit('projectBatch', 'archive')">
           {{ t("batch.projectsArchive") }}
         </button>
-        <button class="sb-btn" data-batch="remove" :disabled="!selectingProjects?.length" @click="emit('projectBatch', 'remove')">
+        <button type="button" class="sb-btn" data-batch="remove" :disabled="!selectingProjects?.length" @click="emit('projectBatch', 'remove')">
           {{ t("batch.projectsRemove") }}
         </button>
       </div>
@@ -1821,6 +1839,7 @@ onBeforeUnmount(() => {
         click (UI trust review: settings were buried behind This device).
       -->
       <button
+        type="button"
         class="account"
         data-account-menu
         :aria-expanded="Boolean(footMenu)"
@@ -2030,6 +2049,11 @@ onBeforeUnmount(() => {
 .ico:hover {
   color: var(--text-body);
   background: var(--surface-hover);
+}
+
+.ico:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
 }
 
 /*
@@ -2660,6 +2684,11 @@ button.section-head:focus-visible {
   background: var(--surface-hover);
 }
 
+.account:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
 .account-cell {
   display: grid;
   flex: none;
@@ -2860,6 +2889,17 @@ button.section-head:focus-visible {
 
 .sb-text:hover {
   color: var(--text-strong);
+}
+
+.sb-text:focus-visible,
+.sb-btn:focus-visible,
+.show-more:focus-visible,
+.pages-more:focus-visible,
+.pages-collapse:focus-visible,
+.pinned-more:focus-visible,
+.project-show-all:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 .sb-count {
