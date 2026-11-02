@@ -63,4 +63,9 @@ const emit = defineEmits<{ toggle: [] }>()
   color: var(--text-strong);
   background: var(--surface-hover);
 }
+
+.panel-expand:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
 </style>

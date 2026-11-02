@@ -53,6 +53,9 @@ const summary = computed(() =>
     .join(" · "),
 )
 
+/** Stable id linking the summary disclosure to its StepCollapse panel. */
+const panelId = computed(() => `step-group-${props.items[0]?.id ?? "x"}`)
+
 const touched = ref(false)
 const open = ref(props.defaultOpen || stepsOpen.value)
 /** Only a fold the reader asked for animates. */
@@ -91,7 +94,7 @@ function toggle() {
   </div>
   <ToolPart v-else-if="single" :part="single" summary :title-max="SINGLE_TITLE_MAX" />
   <div v-else class="hs-group" data-step-group>
-    <button type="button" class="hs-h hs-summary" :aria-expanded="open" data-group-head @click="toggle">
+    <button type="button" class="hs-h hs-summary" :aria-expanded="open" :aria-controls="panelId" data-group-head @click="toggle">
       <span class="hs-ic"><StepIcon :name="icon" /></span>
       <span class="hs-text" :class="{ 'running-shimmer': running }">
         <span data-group-summary>{{ summary }}</span>
@@ -99,6 +102,7 @@ function toggle() {
           v-if="failed"
           class="hs-group-err"
           data-group-err
+          role="img"
           :aria-label="t('stepList.groupHasError')"
           v-tip="{ label: t('stepList.groupHasError'), placement: 'top' }"
         >
@@ -111,7 +115,7 @@ function toggle() {
         </svg>
       </span>
     </button>
-    <StepCollapse :show="open" :animate="animate">
+    <StepCollapse :id="panelId" :show="open" :animate="animate">
       <template v-for="item in items" :key="item.id">
         <ToolPart v-if="item.kind === 'tool'" :part="item.part" indent />
         <PermissionRow v-else-if="item.kind === 'permission'" :part="item.part" :record="item.record" />
@@ -121,3 +125,11 @@ function toggle() {
     </StepCollapse>
   </div>
 </template>
+
+<style scoped>
+.hs-summary:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+</style>
