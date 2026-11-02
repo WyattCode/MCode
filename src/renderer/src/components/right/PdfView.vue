@@ -264,17 +264,21 @@ function reload() {
 
 /* A change on disk becomes a version - the assistant's when it touched the file - and the view reloads. */
 async function onDiskChange() {
-  const { ai, prompt } = aiTouch(props.path)
+  const path = props.path
+  const { ai, prompt } = aiTouch(path)
   try {
-    const [dir, base] = splitPath()
+    const [dir, base] = splitFilePath(path)
     const read = await window.mcode.readFileBytes(dir, base)
+    if (props.path !== path) return
     if (read.ok && !read.unchanged && read.base64 !== lastBase64) {
+      await versions.record(path, read.base64, ai ? "ai_local" : "external", ai ? prompt.trim() : t("office.versionNoteExternal"))
+      if (props.path !== path) return
       lastBase64 = read.base64
-      await versions.record(props.path, read.base64, ai ? "ai_local" : "external", ai ? prompt.trim() : t("office.versionNoteExternal"))
     }
   } catch (err) {
     console.error("[PdfView] fs-watch record error:", err)
   }
+  if (props.path !== path) return
   reload()
 }
 

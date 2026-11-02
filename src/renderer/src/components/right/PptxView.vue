@@ -733,18 +733,27 @@ watch(annotationFlash, (request) => {
 /* ------------------------------------------------------------ disk and runs */
 
 async function onDiskChange() {
-  const { ai, prompt } = aiTouch(props.path)
+  const path = props.path
+  const { ai, prompt } = aiTouch(path)
   const aiRunning = ai && app.running.size > 0
   if (aiRunning) deferReload = true
-  const [dir, base] = splitPath()
+  const [dir, base] = splitFilePath(path)
   const read = await window.mcode.readFileBytes(dir, base, lastStat)
+  if (props.path !== path) {
+    deferReload = false
+    return
+  }
   if (!read.ok) return
   if (read.unchanged) {
     if (aiRunning) deferReload = false
     return
   }
+  await versions.record(path, read.base64, ai ? "ai_local" : "external", ai ? prompt.trim() : t("office.versionNoteExternal"))
+  if (props.path !== path) {
+    deferReload = false
+    return
+  }
   if (!aiRunning) lastStat = { size: read.size, mtimeMs: read.mtimeMs }
-  await versions.record(props.path, read.base64, ai ? "ai_local" : "external", ai ? prompt.trim() : t("office.versionNoteExternal"))
   if (!aiRunning) reload()
 }
 
