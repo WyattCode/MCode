@@ -27,19 +27,21 @@ export const useOfficeVersions = defineStore("officeVersions", () => {
 
   async function record(path: string, base64: string, source: OfficeVersionSource, note: string) {
     const before = byPath.value[path]?.versions.length ?? 0
+    const target = useApp().currentID
     const result = await window.mcode.officeVersionRecord(path, base64, source, note)
     if (!result.ok) return
     keep(path, result.state)
     // MiMo tells the model on the next send when a person, not the model, made a new version.
     if ((source === "user" || source === "external") && result.state.versions.length > before) {
-      noteFileChange(useApp().currentID, { path, source, note })
+      noteFileChange(target, { path, source, note })
     }
   }
 
   async function restore(path: string, id: string) {
+    const target = useApp().currentID
     const result = await window.mcode.officeVersionRestore(path, id)
     if (result.ok) {
-      noteFileChange(useApp().currentID, { path, source: "restore" })
+      noteFileChange(target, { path, source: "restore" })
       keep(path, result.state)
       reloadTick.value = { ...reloadTick.value, [path]: (reloadTick.value[path] ?? 0) + 1 }
       return
