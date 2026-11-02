@@ -207,7 +207,6 @@ function onReasonKey(event: KeyboardEvent) {
         class="reason-input"
         :aria-label="t('perm.reasonPlaceholder')"
         :placeholder="t('perm.reasonPlaceholder')"
-        :aria-label="t('perm.reasonPlaceholder')"
         :disabled="busy"
         @keydown="onReasonKey"
       />

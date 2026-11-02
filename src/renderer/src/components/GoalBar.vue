@@ -202,7 +202,6 @@ async function leave() {
             class="goal-edit"
             :aria-label="t('composer.goalBar.edit')"
             type="text"
-            :aria-label="t('composer.goalBar.edit')"
             spellcheck="false"
             data-goal-edit-box
             @blur="commitEdit"

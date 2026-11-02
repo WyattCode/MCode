@@ -6,7 +6,6 @@ import type { MenuItem } from "./menu"
 import { mediaOf, type PathKind } from "./markdown"
 import { base64ToBlob, toPng, writeClipboardPng } from "./diagram"
 import { writeText } from "./clipboard"
-import { useApp } from "../stores/app"
 
 /**
  * What a path in a reply does, as MiMo has it: a file goes to its default

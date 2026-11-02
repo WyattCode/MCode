@@ -1734,7 +1734,6 @@ defineExpose({ stepMessage, scroller })
               rows="1"
               :aria-label="t('stream.editPlaceholder')"
               :placeholder="t('stream.editPlaceholder')"
-              :aria-label="t('stream.editPlaceholder')"
               spellcheck="false"
               @input="fitEdit($event.target as HTMLTextAreaElement)"
               @keydown="onEditKey($event, turn)"
