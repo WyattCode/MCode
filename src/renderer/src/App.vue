@@ -432,6 +432,9 @@ async function submitProjectRename(name: string) {
     notifyFailure(t("toast.projectNameTaken", { name }))
     return
   }
+  // Hold the project-rename success toast to the place the person started from;
+  // leaving mid-await must not flash it onto another chat.
+  const held = app.currentID
   try {
     await app.patchConfig({ projectNames: { ...names, [directory]: name } })
   } catch {
@@ -439,7 +442,9 @@ async function submitProjectRename(name: string) {
     return
   }
   renamingProject.value = undefined
-  notify(t("toast.projectRenamedTo", { name }), { level: "success" })
+  if (app.currentID === held) {
+    notify(t("toast.projectRenamedTo", { name }), { level: "success" })
+  }
 }
 
 /* MiMo's revealInFinder: the file manager's name once it is shown, or why it could not be. */
