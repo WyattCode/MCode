@@ -1967,7 +1967,8 @@ export const useApp = defineStore("app", () => {
       notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
       return
     }
-    notify(t(next ? "toast.goalOn" : "toast.goalOff"))
+    // Left for another conversation mid-flight: do not flash goal on/off there.
+    if (home || currentID.value === target) notify(t(next ? "toast.goalOn" : "toast.goalOff"))
   }
 
   /** 追求目标: writes the goal itself, or - with null - takes it off the conversation. */
