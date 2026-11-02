@@ -1,6 +1,7 @@
 import { openFileInViewer } from "./office-open"
 import { notify, notifyFailure } from "./toast"
 import { t } from "./i18n"
+import { useApp } from "../stores/app"
 import type { MenuItem } from "./menu"
 import { mediaOf, type PathKind } from "./markdown"
 import { base64ToBlob, toPng, writeClipboardPng } from "./diagram"
@@ -165,10 +166,14 @@ export async function runPathMenu(key: string, target: PathTarget, platform: str
     return
   }
   if (key === "copyPath") {
+    // Hold the toast to the conversation the copy started in; leaving mid-await must not flash it elsewhere.
+    const held = useApp().currentID
     try {
       await writeText(target.path)
+      if (useApp().currentID !== held) return
       notify(t("officeCard.copied"))
     } catch {
+      if (useApp().currentID !== held) return
       notifyFailure(t("officeCard.copyFailed"))
     }
     return
