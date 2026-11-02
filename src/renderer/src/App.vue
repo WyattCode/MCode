@@ -2126,7 +2126,11 @@ function reasonOf(failure: unknown): string {
 
 async function exportSession() {
   if (!app.messages.length) return
-  await exportConversationMarkdown(app.current ? sessionTitle(app.current.title) : "", app.messages)
+  const id = app.currentID
+  // Hold the export toast to the conversation the person started from (#343).
+  await exportConversationMarkdown(app.current ? sessionTitle(app.current.title) : "", app.messages, {
+    stillHere: () => app.currentID === id,
+  })
 }
 
 /**
