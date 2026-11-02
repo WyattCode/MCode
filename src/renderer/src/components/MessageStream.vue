@@ -388,11 +388,16 @@ async function copyCode(event: MouseEvent) {
   const button = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>("[data-copy-code]")
   if (!button) return
   const code = button.closest(".md-codeblock")?.querySelector("pre code")?.textContent ?? ""
+  // Hold the toast to the place the person started from; leaving mid-await
+  // must not flash the copy outcome onto another conversation.
+  const held = app.currentID
   try {
     await writeText(code)
+    if (app.currentID !== held) return
     button.classList.add("copied")
     window.setTimeout(() => button.classList.remove("copied"), 2000)
   } catch {
+    if (app.currentID !== held) return
     notifyFailure(t("code.copyFailed"))
   }
 }
