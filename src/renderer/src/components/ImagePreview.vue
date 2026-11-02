@@ -231,7 +231,10 @@ async function copyImage() {
 async function reveal() {
   const file = imagePreview.value?.path
   if (!file) return
+  // Hold the reveal failure toast to the place the person started from; leaving mid-await must not flash the file-manager outcome onto another conversation.
+  const held = app.currentID
   const result = await window.mcode.revealNativePath(file).catch((error: unknown) => ({ ok: false as const, error: String(error) }))
+  if (app.currentID !== held) return
   if (!result.ok) notice.danger(t("officeCard.revealFailed", { error: result.error }))
 }
 
