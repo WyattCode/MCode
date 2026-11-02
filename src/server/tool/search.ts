@@ -7,11 +7,8 @@ import type { ToolContext, ToolDefinition } from "./types"
 import { ToolError } from "./types"
 import { relative, resolvePath } from "./fs-util"
 import { SearchStopped } from "./ignore"
-import { lineText, MAX_LINE_LENGTH, type Row, type GrepOutcome, type GlobOutcome } from "./search-fallback"
+import { LIMIT, lineText, mtimeOf, rankMatches, MAX_LINE_LENGTH, type GrepOutcome, type Row } from "./search-fallback"
 import { runFallback } from "./search-run"
-
-/** MiMo lists at most 100 files for a glob and 100 matches for a grep. */
-const LIMIT = 100
 
 /*
  * glob and grep run the ripgrep the app ships, as MiMo's do: its regular
@@ -97,10 +94,8 @@ function runRipgrep(
 /** ripgrep names a path it found relative to where it ran, as `.\src\a.ts`. */
 const cleaned = (file: string) => path.normalize(file.replace(/^\.[\\/]/, ""))
 
-async function mtimeOf(file: string): Promise<number | undefined> {
-  const stat = await fs.stat(file).catch(() => undefined)
-  return stat && !stat.isDirectory() ? stat.mtimeMs : undefined
-}
+/** Said when a walk stopped before covering every file, so what follows is not mistaken for the whole answer. */
+const RAN_OUT = "(The search ran out of time before it had looked at every file, so these results are incomplete. Narrow the path or the include.)"
 
 /** MiMo's refusal for a folder to search that is not there, in this app's words. */
 function noFolder(folder: string): ToolError {
@@ -114,7 +109,7 @@ function stopped(error: unknown): never {
 }
 
 /** The files a glob matches, in the order they were found, at most `limit`. */
-async function globFiles(root: string, pattern: string, limit: number, signal: AbortSignal): Promise<string[]> {
+async function globFiles(root: string, pattern: string, limit: number, signal: AbortSignal): Promise<{ files: string[]; timedOut?: boolean }> {
   const found: string[] = []
   const binary = ripgrepBinary()
   if (binary) {
@@ -123,10 +118,10 @@ async function globFiles(root: string, pattern: string, limit: number, signal: A
       return found.length >= limit
     })
     if (code !== 0 && code !== 1 && !found.length) throw new ToolError(stderr.trim() || `ripgrep failed with code ${code}`)
-    return found
+    return { files: found }
   }
-  const outcome = (await runFallback({ kind: "glob", root, pattern, limit }, signal)) as GlobOutcome
-  return outcome.paths
+  const outcome = await runFallback({ kind: "glob", root, pattern, limit }, signal)
+  return { files: outcome.paths, ...(outcome.timedOut ? { timedOut: true } : {}) }
 }
 
 export const GlobTool: ToolDefinition = {
@@ -155,7 +150,7 @@ export const GlobTool: ToolDefinition = {
     if (!stat) throw noFolder(root)
 
     // As MiMo's: the first 101 files the search finds, so it can say there were more, then the newest first.
-    const files = await globFiles(root, String(input.pattern), LIMIT + 1, context.signal).catch(stopped)
+    const { files, timedOut } = await globFiles(root, String(input.pattern), LIMIT + 1, context.signal).catch(stopped)
     const found = await Promise.all(files.map(async (file) => ({ path: file, mtime: (await mtimeOf(file)) ?? 0 })))
     const truncated = found.length > LIMIT
     if (truncated) found.length = LIMIT
@@ -165,7 +160,8 @@ export const GlobTool: ToolDefinition = {
       found.length === 0
         ? "No files found"
         : found.map((entry) => entry.path).join("\n") +
-          (truncated ? `\n\n(Only the first ${LIMIT} files found are listed. Narrow the path or the pattern to see the rest.)` : "")
+          (truncated ? `\n\n(Only the first ${LIMIT} files found are listed. Narrow the path or the pattern to see the rest.)` : "") +
+          (timedOut ? `\n\n${RAN_OUT}` : "")
     return {
       output,
       title: relative(context.directory, root),
@@ -232,28 +228,22 @@ export const GrepTool: ToolDefinition = {
     if (!(await fs.stat(cwd).then((found) => found.isDirectory(), () => false))) throw noFolder(cwd)
 
     const binary = ripgrepBinary()
-    const { rows, partial } = await (binary
-      ? grepWithRipgrep(binary, cwd, pattern, include, isDir ? undefined : path.relative(cwd, target), context.signal)
+    const outcome: GrepOutcome = await (binary
+      ? grepWithRipgrep(binary, cwd, pattern, include, isDir ? undefined : path.relative(cwd, target), context.signal).then(async ({ rows, partial }) => ({ ...(await rankMatches(rows)), partial }))
       : stat
-        ? (runFallback({ kind: "grep", target, isFile: !isDir, pattern, include }, context.signal) as Promise<GrepOutcome>)
-        : Promise.resolve({ rows: [] as Row[], partial: true })
+        ? runFallback({ kind: "grep", target, isFile: !isDir, pattern, include }, context.signal)
+        : Promise.resolve({ rows: [] as Row[], total: 0, partial: true })
     ).catch(stopped)
 
+    // The rows are already the newest files' first hundred and `total` counts them all (see rankMatches).
     const empty = { output: "No files found", title: pattern, metadata: { matches: 0 } }
-    if (rows.length === 0) return empty
-    const times = new Map<string, number>()
-    for (const file of new Set(rows.map((row) => row.path))) {
-      const mtime = await mtimeOf(file)
-      if (mtime !== undefined) times.set(file, mtime)
-    }
-    const matches = rows.filter((row) => times.has(row.path)).sort((a, b) => times.get(b.path)! - times.get(a.path)!)
-    if (matches.length === 0) return empty
+    if (outcome.total === 0) return empty
 
-    const total = matches.length
+    const { rows: matches, total, partial, timedOut } = outcome
     const truncated = total > LIMIT
     const lines = [`Found ${total} matches${truncated ? ` (showing the first ${LIMIT})` : ""}`]
     let current = ""
-    for (const match of matches.slice(0, LIMIT)) {
+    for (const match of matches) {
       if (current !== match.path) {
         if (current) lines.push("")
         current = match.path
@@ -264,6 +254,7 @@ export const GrepTool: ToolDefinition = {
     }
     if (truncated) lines.push("", `(${LIMIT} of ${total} matches shown. Narrow the path or the pattern to see the rest.)`)
     if (partial) lines.push("", "(Some paths could not be read and were skipped.)")
+    if (timedOut) lines.push("", RAN_OUT)
     // As glob above: 100 matches of up to 2 000 characters each is four times the shared byte cap, so that cap still has to run over this.
     return { output: lines.join("\n"), title: pattern, metadata: { matches: total } }
   },

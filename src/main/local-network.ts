@@ -2,9 +2,10 @@ import dgram from "node:dgram"
 import fs from "node:fs"
 import path from "node:path"
 import { app } from "electron"
+import { alreadyAsked, buildStamp, sendQuery } from "./local-network-core"
 
 /*
- * Asks for Local Network access once, at first launch.
+ * Asks for Local Network access once per installed build, at first launch.
  *
  * The app's own sockets are all loopback, which macOS exempts - but a provider
  * can be pointed at a runtime on another machine (LM Studio on the desk next
@@ -19,19 +20,14 @@ import { app } from "electron"
  */
 const MARKER = "local-network-asked"
 
-/** The service-enumeration query every Bonjour browse opens with. */
-function serviceQuery(): Buffer {
-  const labels = ["_services", "_dns-sd", "_udp", "local"]
-  const name = Buffer.concat([
-    ...labels.map((label) => Buffer.concat([Buffer.from([label.length]), Buffer.from(label, "ascii")])),
-    Buffer.from([0]),
-  ])
-  const header = Buffer.alloc(12)
-  header.writeUInt16BE(1, 4) // one question, no answers
-  const question = Buffer.alloc(4)
-  question.writeUInt16BE(12, 0) // PTR
-  question.writeUInt16BE(1, 2) // IN
-  return Buffer.concat([header, name, question])
+function build(): string {
+  let stamp = 0
+  try {
+    stamp = fs.statSync(app.getPath("exe")).mtimeMs
+  } catch {
+    // No executable to stat: the version alone still tells most builds apart.
+  }
+  return buildStamp(app.getVersion(), stamp)
 }
 
 export function askForLocalNetwork(): void {
@@ -40,9 +36,16 @@ export function askForLocalNetwork(): void {
   if (process.platform !== "darwin") return
 
   const marker = path.join(app.getPath("userData"), MARKER)
-  // Asked once. The answer lives in System Settings from then on, and asking
-  // again would neither change it nor re-open the prompt.
-  if (fs.existsSync(marker)) return
+  const current = build()
+  // Asked once of this build. The answer lives in System Settings from then on,
+  // and asking again would neither change it nor re-open the prompt.
+  let written: string | undefined
+  try {
+    written = fs.readFileSync(marker, "utf8")
+  } catch {
+    // No marker yet: ask.
+  }
+  if (alreadyAsked(written, current)) return
 
   let socket: dgram.Socket
   try {
@@ -50,26 +53,13 @@ export function askForLocalNetwork(): void {
   } catch {
     return
   }
-
-  const done = () => {
+  sendQuery(socket, () => {
     try {
-      socket.close()
+      fs.mkdirSync(path.dirname(marker), { recursive: true })
+      fs.writeFileSync(marker, current, "utf8")
     } catch {
-      // Already closed by the error path.
+      // Worst case the packet is sent again next launch, which macOS ignores
+      // once the user has answered.
     }
-  }
-
-  // Denied permission surfaces here as a send error, which is not a failure to
-  // report: the user answered the question, and that answer is theirs to make.
-  socket.once("error", done)
-  const query = serviceQuery()
-  socket.send(query, 5353, "224.0.0.251", () => done())
-
-  try {
-    fs.mkdirSync(path.dirname(marker), { recursive: true })
-    fs.writeFileSync(marker, new Date().toISOString(), "utf8")
-  } catch {
-    // Worst case the prompt is provoked again next launch, which macOS ignores
-    // once the user has answered.
-  }
+  })
 }

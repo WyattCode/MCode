@@ -24,6 +24,8 @@ import { PlanExitTool } from "./plan-exit"
 import { SpeakTool } from "./speak"
 import { AppTool } from "./app"
 import { LspTool } from "./lsp"
+import { FanoutTool } from "./fanout"
+import { VerifyPageTool } from "./verify-page"
 import { offlineByEnv } from "./offline"
 
 /**
@@ -98,6 +100,9 @@ export const TOOLS: ToolDefinition[] = [
   AppTool,
   // MCode's lsp tool (P1): appended, for the same reason. Read-only diagnostics/definition/references/hover.
   LspTool,
+  // fanout and verify_page: appended, for the same reason. Side-by-side single-shot generation, and the check of a page it helped write.
+  FanoutTool,
+  VerifyPageTool,
 ]
 
 /**
@@ -279,6 +284,8 @@ const READS = new Set([
   "plan_exit",
   // speak: a line read aloud by the window touches nothing.
   "speak",
+  // verify_page: runs a page in a throwaway browser profile, and writes nothing to the project.
+  "verify_page",
 ])
 
 /**
@@ -297,8 +304,8 @@ const READS = new Set([
 export type ToolReach = "reads" | "reports" | "opaque"
 
 export function reachOf(name: string): ToolReach {
-  // notebook_edit records its file before writing, as edit does.
-  if (name === "write" || name === "edit" || name === "notebook_edit" || name === "patch") return "reports"
+  // notebook_edit records its file before writing, as edit does; fanout records each answer's file the same way.
+  if (name === "write" || name === "edit" || name === "notebook_edit" || name === "patch" || name === "fanout") return "reports"
   if (READS.has(name)) return "reads"
   return "opaque"
 }

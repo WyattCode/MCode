@@ -16,7 +16,7 @@ import { dialogOpen, dismissMenus, escapeLayer, layerOpen, useEscapeLayerWhile }
 import { composing } from "../src/renderer/src/lib/keys"
 import { typeAheadBuffer, typeAheadMatch } from "../src/renderer/src/lib/type-ahead"
 
-const read = (relative: string) => fs.readFile(path.join(process.cwd(), relative), "utf8")
+const read = async (relative: string) => (await fs.readFile(path.join(process.cwd(), relative), "utf8")).replace(/\r\n/g, "\n")
 const component = (name: string) => read(`src/renderer/src/components/${name}.vue`)
 
 /** A keydown as the page would get it, with only the fields the handlers read. */

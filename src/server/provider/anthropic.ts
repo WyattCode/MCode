@@ -182,7 +182,13 @@ export interface AnthropicReasoning {
  * is returned and the caller omits the field - a budget at or above
  * `max_tokens` is rejected outright.
  */
-function budget(level: "high" | "max", outputLimit: number, maxTokens: number): number | undefined {
+function budget(level: "low" | "medium" | "high" | "max", outputLimit: number, maxTokens: number): number | undefined {
+  // `low` and `medium` exist for a custom model that names those levels; the reference computes only the two below them.
+  if (level === "low" || level === "medium") {
+    const wanted = Math.min(level === "low" ? 4_000 : 8_000, Math.floor(outputLimit / 2 - 1))
+    const capped = Math.min(wanted, maxTokens - 1)
+    return capped < 1_024 ? undefined : capped
+  }
   const wanted = level === "max" ? Math.min(31_999, outputLimit - 1) : Math.min(16_000, Math.floor(outputLimit / 2 - 1))
   const capped = Math.min(wanted, maxTokens - 1)
   return capped < 1_024 ? undefined : capped
@@ -199,7 +205,11 @@ function budget(level: "high" | "max", outputLimit: number, maxTokens: number): 
  *     `thinking: {type:"adaptive"}` with the level in `output_config.effort`;
  *   - Opus 4.5 gets a thinking budget AND the level;
  *   - anything older gets a budget alone, `high` and `max` being the only two
- *     levels it offers because they are the only two budgets computed;
+ *     levels it offers because they are the only two budgets computed (a custom
+ *     model that names `low` or `medium` gets a smaller budget of its own, and
+ *     `xhigh` the `max` one);
+ *   - `none`, which only a custom model's own thinking setting can offer, is no
+ *     thinking at all;
  *   - and a level the model does not accept - including every level, for a
  *     model that takes no effort parameter - is not sent at all. The
  *     reference's `anthropicEffort` returns undefined there and its `variants`
@@ -222,6 +232,9 @@ export function reasoningRequest(
   outputLimit = maxTokens,
 ): AnthropicReasoning {
   const id = model.toLowerCase()
+  // `none` is a custom model's "do not think" (its thinking setting says it can be turned off): no thinking field at all,
+  // not a level that happens to be in the list.
+  if (effort === "none") return {}
   if (variants && !variants.includes(effort)) {
     /*
      * Kimi K2.5 takes no effort level, but MiMo turns its thinking on over this
@@ -264,7 +277,7 @@ export function reasoningRequest(
     }
   }
 
-  const thinkingBudget = budget(effort === "max" ? "max" : "high", outputLimit, maxTokens)
+  const thinkingBudget = budget(effort === "max" || effort === "xhigh" ? "max" : effort === "low" || effort === "medium" ? effort : "high", outputLimit, maxTokens)
   return thinkingBudget === undefined
     ? {}
     : { thinking: { type: "enabled", budget_tokens: thinkingBudget, display } }
