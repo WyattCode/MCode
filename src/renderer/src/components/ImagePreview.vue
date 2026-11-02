@@ -221,8 +221,11 @@ function download() {
 async function copyImage() {
   const file = imagePreview.value?.path
   if (!file) return
+  // Hold the copy-image toasts to the place the person started from; leaving mid-await must not flash the clipboard-copy outcome onto another conversation.
+  const held = app.currentID
   const direct = await window.mcode.copyImageFromPath(file).catch(() => ({ ok: false as const, error: "" }))
   const ok = direct.ok || (await copyImageFile(file).then(() => true, () => false))
+  if (app.currentID !== held) return
   if (ok) notice.info(t("imagePreview.copied"))
   else notice.danger(t("imagePreview.copyFailed"))
 }
