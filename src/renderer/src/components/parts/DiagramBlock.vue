@@ -5,6 +5,7 @@ import type { MenuItem } from "../../lib/menu"
 import { t } from "../../lib/i18n"
 import { savePng, saveText } from "../../lib/native-pick"
 import { notifyFailure } from "../../lib/toast"
+import { useApp } from "../../stores/app"
 import { openImagePreview } from "../../lib/image-preview"
 import { svgSize } from "../../lib/svg-safe"
 import {
@@ -180,7 +181,13 @@ async function pick(key: string) {
     return
   }
   if (key === "copyCode") {
-    await writeText(source.value).catch(() => notifyFailure(t("code.copyFailed")))
+    // Hold the toast to the place the person started from; leaving mid-await
+    // must not flash the copy outcome onto another conversation.
+    const held = useApp().currentID
+    await writeText(source.value).catch(() => {
+      if (useApp().currentID !== held) return
+      notifyFailure(t("code.copyFailed"))
+    })
     return
   }
   if (key === "downloadSvg") {
