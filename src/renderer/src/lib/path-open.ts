@@ -71,8 +71,11 @@ export async function openNative(file: string): Promise<boolean> {
 }
 
 export async function revealPath(file: string, platform: string): Promise<void> {
+  const held = useApp().currentID
   const result = await window.mcode.revealNativePath(file).catch((error: unknown) => ({ ok: false as const, error: String(error) }))
   const manager = fileManagerName(platform)
+  // Hold the toast to the place the person started from; leaving mid-await must not flash the reveal outcome onto another conversation.
+  if (useApp().currentID !== held) return
   if (result.ok) notify(t("menu.revealedIn", { manager }))
   else notifyFailure(t("officeCard.revealFailed", { error: result.error }))
 }
