@@ -705,14 +705,13 @@ async function onDrop(event: DragEvent) {
     else attach.push(file)
   }
   if (inside.length) {
-    const folders = new Set(await window.mcode.directoriesOf(inside.map((entry) => entry.absolute)).catch(() => [] as string[]))
-    // The reader may have left this draft while the directories were read.
-    if (!composerMounted || draftKey.value !== originKey) return
-    addDroppedMentions(inside.map((entry) => ({ rel: entry.rel, file: !folders.has(entry.absolute) })))
     try {
       const folders = new Set(await window.mcode.directoriesOf(inside.map((entry) => entry.absolute)))
+      // The reader may have left this draft while the directories were read.
+      if (!composerMounted || draftKey.value !== originKey) return
       addDroppedMentions(inside.map((entry) => ({ rel: entry.rel, file: !folders.has(entry.absolute) })))
     } catch (err) {
+      if (!composerMounted || draftKey.value !== originKey) return
       // Never guess "file" on IPC failure — that mis-mentions folders.
       notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
     }
