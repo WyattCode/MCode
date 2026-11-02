@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from "vue"
-import { LIMIT, dismiss, hold, release, toasts, type ToastLink } from "../lib/toast"
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { dismiss, hold, release, toasts, visibleToastIds, type ToastLink } from "../lib/toast"
 import { t } from "../lib/i18n"
 
 /*
@@ -12,6 +12,8 @@ import { t } from "../lib/i18n"
  */
 const centre = ref<string>()
 let watching: ResizeObserver | undefined
+
+const shownIds = computed(() => visibleToastIds(toasts.value))
 
 /*
  * This is a CSS pixel written onto the page, so it goes wrong in two ways, not
@@ -187,11 +189,11 @@ onBeforeUnmount(() => {
         v-for="(toast, at) in toasts"
         :key="toast.id"
         class="notice"
-        :class="[toast.level, { over: at >= LIMIT }]"
+        :class="[toast.level, { over: !shownIds.has(toast.id) }]"
         :data-level="toast.level"
-        :data-over="at >= LIMIT ? 'true' : undefined"
+        :data-over="shownIds.has(toast.id) ? undefined : 'true'"
         role="alert"
-        :tabindex="at >= LIMIT ? -1 : 0"
+        :tabindex="shownIds.has(toast.id) ? 0 : -1"
         @mousedown="keepFocus"
         @mouseenter="hold(toast.id)"
         @mouseleave="release(toast.id)"

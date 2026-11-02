@@ -335,7 +335,12 @@ function syntaxRerunHint(checker: string, rel: string): string {
   return `${checker} ${rel}`
 }
 
-function syntaxRunResult(
+/** A checker that never started says nothing about the file, and must not read as a problem in it. */
+function neverStarted(run: RunResult): boolean {
+  return run.code === null && !run.timedOut && !run.aborted
+}
+
+export function syntaxRunResult(
   checker: string,
   run: RunResult,
   rel: string,
@@ -346,6 +351,7 @@ function syntaxRunResult(
   if (run.aborted) return undefined
   if (run.timedOut) return timeoutResult(checker, rel, timeoutSeconds)
   if (run.code === 0) return formatResult(checker, rel, [], 0)
+  if (neverStarted(run)) return undefined
 
   const raw = `${run.stderr}\n${run.stdout}`
   const lines = syntaxCheckLines(raw, file, projectDir)
@@ -400,6 +406,7 @@ function diagnosticRunResult(
   // violations all exit 0, and lines may still carry advisory text. Judging by
   // the exit code first keeps warnings from costing a verify round.
   if (run.code === 0) return formatResult(checker, rel, [], 0)
+  if (neverStarted(run)) return undefined
   if (matching.length > 0) return formatResult(checker, rel, lines, matching.length, diagnostics, rerunHint)
 
   const fallback = all.slice(0, 15)
@@ -575,6 +582,7 @@ async function checkTypeScript(
 
   if (edited.length === 0 && other.length === 0) {
     if (run.code === 0) return formatResult("tsc", rel, [], 0)
+    if (neverStarted(run)) return undefined
     const lines = nonEmptyLines(localize(raw, file, projectDir)).slice(0, 15)
     return formatResult("tsc", rel, lines.length ? lines : [`tsc failed with exit code ${run.code ?? "unknown"}`], 1, undefined, rerunHint)
   }

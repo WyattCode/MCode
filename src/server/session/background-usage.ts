@@ -7,7 +7,7 @@ export interface BackgroundUse {
   sessionID: string
   model: ModelRef
   usage: Usage
-  kind: "title" | "smart" | "compaction" | "review" | "goal"
+  kind: "title" | "smart" | "compaction" | "review" | "goal" | "fanout"
 }
 
 const KEY = "usage-background"

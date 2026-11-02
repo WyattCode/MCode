@@ -38,6 +38,19 @@ const updatePhase = computed(() =>
 
 const emit = defineEmits<{ close: []; "check-updates": [] }>()
 const app = useApp()
+const secureRechecking = ref(false)
+async function recheckSecureStorage() {
+  if (secureRechecking.value) return
+  secureRechecking.value = true
+  try {
+    const ok = await app.recheckSecureStorage()
+    notify(ok ? t("set.secureStorageOk") : t("set.secureStorageUnavailable"))
+  } catch (err) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+  } finally {
+    secureRechecking.value = false
+  }
+}
 
 type Section =
   | "general"
@@ -1941,6 +1954,24 @@ onBeforeUnmount(() => {
                 :model-value="app.config?.language ?? ''"
                 @update:model-value="app.patchConfig({ language: $event })"
               />
+            </div>
+
+
+            <!-- Secure storage status (Linux keyring / Secret Service). -->
+            <div class="line" data-secure-storage-row>
+              <div class="line-text">
+                <div class="line-title">{{ t("set.secureStorage") }}</div>
+                <div class="line-sub">
+                  {{ app.credentialsPlaintext ? t("set.secureStorageUnavailable") : t("set.secureStorageOk") }}
+                  · {{ t("set.secureStorageSub") }}
+                  <template v-if="app.credentialsPlaintext">
+                    <br />{{ t("set.secureStorageHelp") }}
+                  </template>
+                </div>
+              </div>
+              <button class="ctl-btn" type="button" data-secure-storage-recheck :disabled="secureRechecking" @click="recheckSecureStorage">
+                {{ t("set.secureStorageRecheck") }}
+              </button>
             </div>
 
             <!-- MiMo's 显示服务器, Linux only: 自动 names the backend in use; a change takes a restart. -->

@@ -233,7 +233,10 @@ async function main(): Promise<void> {
         { stdio: "ignore" },
       )
       const electron = createRequire(import.meta.url)("electron") as unknown as string
+      // Where this check itself runs on Electron as Node, the child must not inherit that, or it is no GUI process and `require("electron")` fails.
+      const { ELECTRON_RUN_AS_NODE: _asNode, ...childEnv } = process.env
       const child = spawn(electron, [path.resolve("scripts", "tool-check-nested-electron.cjs"), bundle, verdict, project], {
+        env: childEnv,
         // Electron gets an open pipe for stdin that this side never closes -
         // the shape it has when launched from a terminal with `&`, which is how
         // the hang was hit. With "ignore" here it cannot be reproduced at all.

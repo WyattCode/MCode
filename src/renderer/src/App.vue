@@ -1035,8 +1035,20 @@ function resizeSide(width: number, done: boolean) {
 
 /* P6-3: a project picked, brought in or made on the home screen opens the side column, as MiMo's does. */
 const revealSide = () => setSide(true)
-onMounted(() => window.addEventListener("mcode:reveal-side", revealSide))
-onBeforeUnmount(() => window.removeEventListener("mcode:reveal-side", revealSide))
+function fillPrompt(event: Event) {
+  const prompt = (event as CustomEvent<string>).detail
+  if (typeof prompt !== "string" || !prompt.trim()) return
+  composer.value?.set({ text: prompt, attachments: [], mentioned: new Set() })
+  composer.value?.focus()
+}
+onMounted(() => {
+  window.addEventListener("mcode:reveal-side", revealSide)
+  window.addEventListener("mcode:fill-prompt", fillPrompt)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener("mcode:reveal-side", revealSide)
+  window.removeEventListener("mcode:fill-prompt", fillPrompt)
+})
 let sideAutoFolded = false
 watch(
   [windowWidth, leftPanel, () => rp.open, () => rp.width, () => rp.fullscreen],

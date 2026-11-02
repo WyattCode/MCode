@@ -2,7 +2,7 @@
   "name": "mcode",
   "productName": "MCode",
   "desktopName": "mcode.desktop",
-  "version": "1.0.1",
+  "version": "1.0.4",
   "description": "A keyboard-first, command-palette-driven AI coding agent.",
   "author": "MCode",
   "main": "./out/main/index.js",
@@ -37,6 +37,9 @@
     "shellcheck": "esbuild scripts/shell-check.ts --bundle --platform=node --format=esm --target=node22 --alias:@shared=./src/shared --outfile=out/shell-check.mjs --packages=external && node out/shell-check.mjs",
     "providercheck": "esbuild scripts/provider-check.ts --bundle --platform=node --format=esm --target=node22 --alias:@shared=./src/shared --outfile=out/provider-check.mjs --packages=external && node out/provider-check.mjs",
     "pathscheck": "esbuild scripts/paths-check.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/paths-check.mjs --packages=external && node out/paths-check.mjs",
+    "turncheck": "esbuild scripts/turn-check.ts --bundle --platform=node --format=esm --target=node22 --alias:@shared=./src/shared --packages=external --outfile=out/turn-check.mjs && node out/turn-check.mjs",
+    "roundscheck": "node scripts/rounds-check.mjs",
+    "fanoutcheck": "esbuild scripts/fanout-check.ts --bundle --platform=node --format=esm --target=node22 --alias:@shared=./src/shared --packages=external --outfile=out/fanout-check.mjs && node out/fanout-check.mjs",
     "gencheck": "node scripts/gen-cockpit.mjs --check",
     "prebuild": "npm run gencheck",
     "androidtheme": "esbuild scripts/android-theme-check.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/android-theme-check.mjs --packages=external && node out/android-theme-check.mjs"

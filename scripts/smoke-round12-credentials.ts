@@ -228,9 +228,10 @@ const PLAIN = JSON.stringify({ keys: { openai: KEY, anthropic: OTHER }, oauth: {
  * unable to open what another one sealed - which is what DPAPI does for a
  * profile copied to another Windows user or computer.
  */
-function testBox(machine: string, options: { available?: boolean; openable?: boolean } = {}): SecretBox & { sealed: number } {
+function testBox(machine: string, options: { available?: boolean; openable?: boolean } = {}): SecretBox & { sealed: number; options: { available?: boolean; openable?: boolean } } {
   const box = {
     sealed: 0,
+    options,
     available: () => options.available ?? true,
     seal(plain: string) {
       box.sealed++
@@ -281,12 +282,31 @@ async function sealingChecks(check: Check, logged: string[]): Promise<void> {
   check("and is kept aside byte for byte", aside.length === 1 && (await fs.readFile(path.join(dir, aside[0]!), "utf8")) === sealedText)
   await backend.close()
 
-  // Plain node with no box at all reads a sealed file as unreadable too.
+  // Plain node with no box at all reads a sealed file as unreadable too —
+  // but must leave the file in place (Linux keyring locked / no box yet).
   const bare = await profile("bare")
-  await fs.writeFile(path.join(bare, "credentials.json"), sealedText)
+  const bareFile = path.join(bare, "credentials.json")
+  await fs.writeFile(bareFile, sealedText)
   const noBox = new Config(new Storage(path.join(bare, "storage")), new Bus(), path.join(bare, "credentials.json"))
   await noBox.load()
   check("without secure storage a sealed file is unreadable as well", Boolean(noBox.credentialsUnreadable))
+  check("and the sealed file is left in place for a later unlock", (await fs.readFile(bareFile, "utf8")) === sealedText)
+  check("with no corrupt aside created", !(await listed(bare)).some((name) => name.startsWith("credentials.json.corrupt-")))
+
+  // Locked keyring (box present, available false): same keep behaviour, then recheck opens it.
+  const locked = await profile("keyring-locked")
+  const lockedFile = path.join(locked, "credentials.json")
+  await fs.writeFile(lockedFile, sealedText)
+  const lockedBox = testBox("machine-a", { available: false })
+  const lockedBackend = await startBackend(locked, { secrets: lockedBox })
+  check("a locked keyring leaves the sealed file where it is", (await fs.readFile(lockedFile, "utf8")) === sealedText)
+  check("and reports credentials unreadable", Boolean(lockedBackend.runtime.config.credentialsUnreadable))
+  check("with no corrupt aside for a temporary lock", !(await listed(locked)).some((name) => name.startsWith("credentials.json.corrupt-")))
+  lockedBox.options.available = true
+  const rechecked = await lockedBackend.runtime.config.recheckCredentials()
+  check("recheck after unlock clears the unreadable flag", !rechecked.credentialsUnreadable && !lockedBackend.runtime.config.credentialsUnreadable)
+  check("and restores the sealed keys", lockedBackend.runtime.config.apiKey("anthropic") === OTHER)
+  await lockedBackend.close()
 
   // A sealing that does not read back leaves the plain file and retries next launch.
   const failing = await profile("failing")

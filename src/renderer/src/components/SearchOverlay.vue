@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import type { MessageHit, SessionArtifacts } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { sessionTitle, t } from "../lib/i18n"
@@ -16,8 +16,8 @@ import { badgeOf } from "../lib/artifact-kind"
  * what was said in them (read by the server, which holds every transcript),
  * project names and paths, and the files conversations wrote; each kind gets a
  * heading, the kind with the best match first, and the words are marked where
- * they were found. As in MiMo, rows are chosen with the pointer; only Escape is
- * bound.
+ * they were found. Arrow keys move a highlight through the rows; Enter opens
+ * it. Escape still closes.
  */
 const emit = defineEmits<{ close: []; open: [sessionID: string, messageID?: string]; project: [directory: string] }>()
 
@@ -185,6 +185,52 @@ const groups = computed(() => {
 
 const flat = computed(() => groups.value.flatMap((group) => group.items))
 
+/** Keyboard highlight into `flat`; -1 means none. */
+const active = ref(-1)
+
+watch(flat, (rows) => {
+  active.value = rows.length ? Math.min(Math.max(active.value, 0), rows.length - 1) : -1
+})
+
+watch(query, () => {
+  active.value = flat.value.length ? 0 : -1
+})
+
+function moveActive(delta: number) {
+  const rows = flat.value
+  if (!rows.length) {
+    active.value = -1
+    return
+  }
+  const start = active.value < 0 ? (delta > 0 ? -1 : 0) : active.value
+  active.value = (start + delta + rows.length) % rows.length
+  void nextTick(() => {
+    document
+      .querySelector<HTMLElement>(`.search-results .sr-item[data-active="1"]`)
+      ?.scrollIntoView({ block: "nearest" })
+  })
+}
+
+function onSearchKeys(event: KeyboardEvent) {
+  if (event.key === "ArrowDown") {
+    event.preventDefault()
+    moveActive(1)
+    return
+  }
+  if (event.key === "ArrowUp") {
+    event.preventDefault()
+    moveActive(-1)
+    return
+  }
+  if (event.key === "Enter") {
+    const item = flat.value[active.value]
+    if (!item) return
+    event.preventDefault()
+    choose(item)
+  }
+}
+
+
 /** A span cut into plain runs and marked ones. */
 function pieces(span: Span) {
   const out: { text: string; mark: boolean }[] = []
@@ -331,6 +377,7 @@ defineExpose({ close })
           :placeholder="t('searchOverlay.placeholder')"
           spellcheck="false"
           autocomplete="off"
+          @keydown="onSearchKeys"
         />
       </div>
       <div class="search-results" @scroll.passive="onResultsScroll">
@@ -350,7 +397,10 @@ defineExpose({ close })
             v-for="item in group.items"
             :key="item.kind + item.id"
             class="sr-item"
+            :class="{ hot: flat[active]?.id === item.id && flat[active]?.kind === item.kind }"
             :data-kind="item.kind"
+            :data-active="flat[active]?.id === item.id && flat[active]?.kind === item.kind ? '1' : undefined"
+            @mouseenter="active = flat.findIndex((row) => row.id === item.id && row.kind === item.kind)"
             @click="choose(item)"
           >
             <span class="sr-line">
@@ -481,6 +531,10 @@ defineExpose({ close })
 }
 
 .sr-item:hover {
+  background: var(--surface-hover);
+}
+
+.sr-item.hot {
   background: var(--surface-hover);
 }
 

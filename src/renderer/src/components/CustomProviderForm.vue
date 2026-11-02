@@ -237,6 +237,7 @@ async function testConnection(quiet = false) {
   const turn = ++probeTurn
   probe.value = { ...probe.value, status: "busy", text: t("set.models.probeBusy") }
   try {
+    const started = Date.now()
     const result = await app.probeProvider({
       baseURL: normalizeBaseURL(form.value.baseURL),
       apiKey: form.value.apiKey.trim(),
@@ -245,8 +246,9 @@ async function testConnection(quiet = false) {
       protocol: form.value.protocol,
     })
     if (turn !== probeTurn) return
+    const ms = Math.max(0, Date.now() - started)
     probe.value = result.ok
-      ? { status: "ok", models: result.models, text: t("set.models.probeOk", { n: result.models.length }) }
+      ? { status: "ok", models: result.models, text: t("set.models.probeOkMs", { n: result.models.length, ms }) }
       : {
           status: "fail",
           models: [],

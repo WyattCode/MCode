@@ -58,13 +58,21 @@ async function main(): Promise<void> {
 
   // A link with no extension at all, pointing at the bundle: the hole this check exists for.
   const disguised = path.join(root, "innocent")
-  await fs.symlink(bundle, disguised)
+  // A junction on Windows, which needs no special right to make; elsewhere the type is ignored and it is a plain symlink.
+  await fs.symlink(bundle, disguised, "junction")
   // A link that keeps an ordinary extension while pointing at the bundle.
   const disguisedText = path.join(root, "notes.txt")
-  await fs.symlink(bundle, disguisedText)
-  // A link to an ordinary file, which must still open.
+  await fs.symlink(bundle, disguisedText, "junction")
+  // A link to an ordinary file, which must still open. Windows has no junction for a file, and a real
+  // symlink needs Developer Mode or elevation, so without those this one case is skipped, and says so.
   const linkToNote = path.join(root, "link.md")
-  await fs.symlink(noteFile, linkToNote)
+  const linkedNote = await fs.symlink(noteFile, linkToNote).then(
+    () => true,
+    (error: NodeJS.ErrnoException) => {
+      if (process.platform !== "win32" || error.code !== "EPERM") throw error
+      return false
+    },
+  )
 
   console.log("\nthe folder gate")
   note("a bundle by its own name is refused", await isBundleProgram(bundle))
@@ -80,7 +88,8 @@ async function main(): Promise<void> {
   const plainStat = await fs.stat(plain)
   note("a bundle is a program whatever it is called", await isProgram(bundle, bundleStat))
   note("a .md file is not", !(await isProgram(noteFile, noteStat)))
-  note("a link to a .md file is not", !(await isProgram(linkToNote, noteStat)))
+  if (linkedNote) note("a link to a .md file is not", !(await isProgram(linkToNote, noteStat)))
+  else console.log("  skip a link to a .md file is not - this account may not create file symlinks")
   note("an executable script is", await isProgram(script, scriptStat))
   note("an extension-less file without the execute bits is not", !(await isProgram(plain, plainStat)))
   note("a path whose target cannot be read is refused, the safe side", await isProgram(path.join(root, "gone.txt"), plainStat))

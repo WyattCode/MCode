@@ -15,6 +15,8 @@
  *
  * Each round's fixes get their checks added here as they are made.
  */
+import "./fenced-home"
+import "./safe-listen"
 import { createRequire } from "node:module"
 import fs from "node:fs/promises"
 import os from "node:os"

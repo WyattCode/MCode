@@ -807,15 +807,49 @@ export class Config {
       this.credentials = read.credentials.keys
       this.oauth = read.credentials.oauth
       this.credentialsInPlainText = !read.sealed
+      this.credentialsUnreadable = undefined
+      this.credentialsBlocked = false
       return
     }
     this.credentials = {}
     this.oauth = {}
-    if (read.state === "absent") return
+    if (read.state === "absent") {
+      this.credentialsUnreadable = undefined
+      this.credentialsBlocked = false
+      return
+    }
+    /*
+     * Linux keyring locked (or no secret box yet): leave the sealed file in
+     * place. Quarantining it was how a temporary unlock failure permanently
+     * lost every saved key until the user renamed the .corrupt-* file back.
+     */
+    if (read.keep) {
+      this.credentialsUnreadable = { problem: read.problem }
+      this.credentialsBlocked = true
+      console.warn(`[config] ${read.problem}; left in place so a later unlock can open it`)
+      return
+    }
     const aside = await quarantine(this.credentialFile)
     this.credentialsUnreadable = { problem: read.problem, evidence: aside }
     this.credentialsBlocked = aside === undefined
     console.warn(`[config] ${read.problem}; ${aside ? `kept as ${path.basename(aside)}` : "it could not be moved, so saving keys is refused until it is"}`)
+  }
+
+  /**
+   * Linux keyring edge: try the credential file again after secure storage
+   * becomes available (or the user unlocks the session keyring). Seals a
+   * plain-text file when the box can, the same as a normal launch.
+   */
+  async recheckCredentials(): Promise<{
+    credentialsUnreadable?: { problem: string; evidence?: string }
+    credentialsPlaintext?: boolean
+  }> {
+    await this.loadCredentials()
+    if (!this.credentialsUnreadable) await this.migrateCredentials()
+    return {
+      ...(this.credentialsUnreadable ? { credentialsUnreadable: this.credentialsUnreadable } : {}),
+      ...(this.credentialsPlaintext ? { credentialsPlaintext: true } : {}),
+    }
   }
 
   /** Set when credentials.json was there but could not be read, with where it was kept. */
