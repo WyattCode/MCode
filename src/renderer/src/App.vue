@@ -1211,6 +1211,9 @@ async function addDroppedProjects(directories: string[]) {
 
 /* MiMo's add then browseProject: listed, the last one the latest pick, and home with it chosen. */
 async function addAndBrowse(directories: string[]) {
+  // Hold the add-projects failure toast to the place the person started from;
+  // leaving mid-await must not flash it onto another chat.
+  const held = app.currentID
   const last = directories[directories.length - 1]!
   let failed = false
   let failure: unknown = null
@@ -1223,7 +1226,9 @@ async function addAndBrowse(directories: string[]) {
     }
   }
   if (failed) {
-    notifyFailure(t("common.requestFailed"), failure instanceof Error ? failure.message : String(failure))
+    if (app.currentID === held) {
+      notifyFailure(t("common.requestFailed"), failure instanceof Error ? failure.message : String(failure))
+    }
     return
   }
   startIn(last)
@@ -1260,10 +1265,15 @@ function newTaskFromSide() {
 
 async function newSessionIn(directory: string) {
   if (alreadyNewTask(directory)) return
+  // Hold the new-session failure toast to the place the person started from;
+  // leaving mid-await must not flash it onto another chat.
+  const held = app.currentID
   try {
     await app.addProject(directory, { used: true, silent: true })
   } catch (err) {
-    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    if (app.currentID === held) {
+      notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    }
     return
   }
   startIn(directory)
