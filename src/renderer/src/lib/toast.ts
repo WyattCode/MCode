@@ -47,6 +47,8 @@ export interface Toast {
   title: string
   links: ToastLink[]
   closable: boolean
+  /** Stays until dismissed (duration 0); timed notices win LIMIT slots over these. */
+  sticky: boolean
 }
 
 /** The one line a notice shows: the title, and any detail folded in after it. */
@@ -112,7 +114,15 @@ export function show(level: ToastLevel, heading: string, options: ToastOptions =
   const title = toastTitle(heading, options.body)
   const id = options.id ?? toastID(level, title)
   const links = [...(options.links ?? []), ...(options.action ? [options.action] : [])].slice(0, LINKS)
-  const entry: Toast = { id, level, title, links, closable: options.closable !== false }
+  const duration = options.duration ?? DURATION
+  const entry: Toast = {
+    id,
+    level,
+    title,
+    links,
+    closable: options.closable !== false,
+    sticky: duration <= 0,
+  }
   if (toasts.value.some((item) => item.id === id)) {
     // A notice raised again keeps its place in the column, as MiMo's does.
     toasts.value = toasts.value.map((item) => (item.id === id ? entry : item))
@@ -126,12 +136,26 @@ export function show(level: ToastLevel, heading: string, options: ToastOptions =
   }
   // A replacement starts its time again, as a fresh notice would.
   stop(id)
-  const duration = options.duration ?? DURATION
   if (duration > 0) {
     clocks.set(id, { left: duration, since: 0, held: false })
     start(id)
   }
   return id
+}
+
+/**
+ * Which notices fill the three on-screen slots.
+ *
+ * Timed (non-sticky) notices always take priority: a burst of sticky boot
+ * warnings used to push a success/error toast into `.over` { display:none }
+ * until something was dismissed. Sticky ones fill whatever slots remain.
+ */
+export function visibleToastIds(list: Toast[] = toasts.value): Set<string> {
+  const timed = list.filter((item) => !item.sticky)
+  const sticky = list.filter((item) => item.sticky)
+  const picked = [...timed.slice(0, LIMIT)]
+  if (picked.length < LIMIT) picked.push(...sticky.slice(0, LIMIT - picked.length))
+  return new Set(picked.map((item) => item.id))
 }
 
 /** The pointer is resting on a notice: its time stops. */
