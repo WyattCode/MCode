@@ -2364,6 +2364,8 @@ async function stepUnread(by: 1 | -1) {
     const candidate = chats[(at + by * step + chats.length * step) % chats.length]
     if (candidate && app.unread(candidate)) {
       await app.open(candidate)
+      // Left for another conversation while open was in flight: do not force the session view for the abandoned unread.
+      if (app.currentID === candidate) view.value = "session"
       return
     }
   }
