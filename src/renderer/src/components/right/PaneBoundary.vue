@@ -110,6 +110,11 @@ function retry() {
   background: #fee2e2;
 }
 
+.pe-retry:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: -2px;
+}
+
 :root[data-theme="dark"] .pe-title {
   color: #f87171;
 }

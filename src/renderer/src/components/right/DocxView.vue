@@ -1034,7 +1034,7 @@ const noteInside = (target: Node) => Boolean(wrap.value?.contains(target))
       <aside v-if="railShown" class="docx-rail" data-docx-revisions>
         <div class="rail-head">
           <span>{{ t("office.revisions", { count: railItems.length }) }}</span>
-          <button type="button" class="rail-close" :title="t('office.revisionsHide')" @click="railOpen = false">×</button>
+          <button type="button" class="rail-close" :title="t('office.revisionsHide')" :aria-label="t('office.revisionsHide')" @click="railOpen = false">×</button>
         </div>
         <div
           v-for="item in railItems"
@@ -1069,14 +1069,14 @@ const noteInside = (target: Node) => Boolean(wrap.value?.contains(target))
     </template>
 
     <div v-if="!loading && !error && pageWidth > 0" class="docx-toolbar" data-docx-toolbar>
-      <button type="button" class="docx-tool" data-docx-zoom-out :title="t('rp.pdf.zoomOut')" @click="setZoom(zoom - 0.1)">
+      <button type="button" class="docx-tool" data-docx-zoom-out :title="t('rp.pdf.zoomOut')" :aria-label="t('rp.pdf.zoomOut')" @click="setZoom(zoom - 0.1)">
         <LucideIcon name="zoom-out" :size="14" />
       </button>
-      <span class="docx-zoom" data-docx-zoom>{{ Math.round(zoom * 100) }}%</span>
-      <button type="button" class="docx-tool" data-docx-zoom-in :title="t('rp.pdf.zoomIn')" @click="setZoom(zoom + 0.1)">
+      <span class="docx-zoom" data-docx-zoom role="status">{{ Math.round(zoom * 100) }}%</span>
+      <button type="button" class="docx-tool" data-docx-zoom-in :title="t('rp.pdf.zoomIn')" :aria-label="t('rp.pdf.zoomIn')" @click="setZoom(zoom + 0.1)">
         <LucideIcon name="zoom-in" :size="14" />
       </button>
-      <button type="button" class="docx-tool" data-docx-fit :title="t('rp.pdf.fitWidth')" @click="zoom = 1">
+      <button type="button" class="docx-tool" data-docx-fit :title="t('rp.pdf.fitWidth')" :aria-label="t('rp.pdf.fitWidth')" @click="zoom = 1">
         <LucideIcon name="move-horizontal" :size="14" />
       </button>
     </div>
@@ -1107,7 +1107,7 @@ const noteInside = (target: Node) => Boolean(wrap.value?.contains(target))
       <div class="ins-tip-text">{{ insTip.text }}</div>
     </div>
 
-    <button v-if="railItems.length && !railShown" type="button" class="rail-pill" :title="t('office.revisionsShow')" @click="railOpen = true">
+    <button v-if="railItems.length && !railShown" type="button" class="rail-pill" :title="t('office.revisionsShow')" :aria-label="t('office.revisionsShow')" @click="railOpen = true">
       {{ t("office.revisions", { count: railItems.length }) }}
     </button>
   </div>
@@ -1185,6 +1185,11 @@ const noteInside = (target: Node) => Boolean(wrap.value?.contains(target))
   border-radius: 4px;
   font-size: calc(16px * var(--ui-font-scale, 1));
   line-height: 1;
+}
+
+.rail-close:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: -2px;
 }
 
 .rail-card {
@@ -1309,6 +1314,11 @@ const noteInside = (target: Node) => Boolean(wrap.value?.contains(target))
   font-weight: 500;
 }
 
+.rail-pill:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: -2px;
+}
+
 .docx-toolbar {
   position: absolute;
   right: 14px;
@@ -1336,6 +1346,11 @@ const noteInside = (target: Node) => Boolean(wrap.value?.contains(target))
   background: transparent;
   border: none;
   border-radius: 6px;
+}
+
+.docx-tool:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: -2px;
 }
 
 .docx-zoom {
