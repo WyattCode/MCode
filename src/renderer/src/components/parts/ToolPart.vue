@@ -225,10 +225,15 @@ const avatarSeed = computed(() => {
             data-step-title
           ><code :class="{ openable }" dir="auto" :title="codeTip" @click="onTitleClick">{{ shortTitle }}</code></span>
           <!-- MiMo's hs-diffstat: what the step added and took away, zeroes left out. -->
-          <span v-if="diffstat.add || diffstat.del" class="hs-diffstat" data-diffstat>
-            <span v-if="diffstat.add" class="add">+{{ diffstat.add }}</span>
+          <span
+            v-if="diffstat.add || diffstat.del"
+            class="hs-diffstat"
+            data-diffstat
+            :aria-label="t('info.changeStats', { add: diffstat.add, del: diffstat.del })"
+          >
+            <span v-if="diffstat.add" class="add" aria-hidden="true">+{{ diffstat.add }}</span>
             <template v-if="diffstat.add && diffstat.del">{{ " " }}</template>
-            <span v-if="diffstat.del" class="del">-{{ diffstat.del }}</span>
+            <span v-if="diffstat.del" class="del" aria-hidden="true">-{{ diffstat.del }}</span>
           </span>
           <!-- MiMo's trailing dots mark a running call inside a group; a row standing alone has none. -->
           <span v-if="state === 'running' && !summary" class="hs-dim" aria-hidden="true">…</span>
@@ -267,3 +272,11 @@ const avatarSeed = computed(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.hs-h:focus-visible:not([aria-disabled="true"]) {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+</style>
