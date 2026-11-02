@@ -785,7 +785,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
             <div ref="gutter" class="fv-editor-ln" data-ft-editor-ln aria-hidden="true">
               <div v-for="n in draftLineCount" :key="n">{{ n }}</div>
             </div>
-            <textarea v-model="draft" class="fv-editor" data-ft-editor spellcheck="false" wrap="off" @scroll="syncGutter" />
+            <textarea v-model="draft" class="fv-editor" data-ft-editor spellcheck="false" wrap="off" :aria-label="t('rp.files.edit')" @scroll="syncGutter" />
           </div>
           <div v-else-if="loadingFile || (!opened && !readError)" class="fv-empty"><div class="fv-empty-desc">{{ t("rp.files.loading") }}</div></div>
           <div v-else-if="readError" class="fv-empty"><div class="fv-empty-desc">{{ readError }}</div></div>
@@ -807,10 +807,10 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
               />
             </div>
             <div v-else-if="opened.video && mediaUrl" class="fv-media">
-              <video :key="mediaVersion" class="fv-video" data-ft-video :src="mediaUrl" controls preload="metadata" @error="mediaFailed = true" />
+              <video :key="mediaVersion" class="fv-video" data-ft-video :src="mediaUrl" :aria-label="baseName(viewFile)" controls preload="metadata" @error="mediaFailed = true" />
             </div>
             <div v-else-if="opened.kind === 'audio' && mediaUrl" class="fv-media" data-ft-audio>
-              <audio :key="mediaVersion" class="fv-audio" :src="mediaUrl" controls preload="metadata" @error="mediaFailed = true" />
+              <audio :key="mediaVersion" class="fv-audio" :src="mediaUrl" :aria-label="baseName(viewFile)" controls preload="metadata" @error="mediaFailed = true" />
             </div>
             <div v-else-if="opened.kind === 'binary'" class="fv-empty"><div class="fv-empty-desc">{{ t("rp.files.errBinary") }}</div></div>
             <div v-else-if="isAbc" class="fv-doc text" data-ft-abc><AbcBlock :code="opened.content" /></div>
@@ -1304,6 +1304,11 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
   line-height: 1.6;
 }
 
+.fv-editor:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: -2px;
+}
+
 /* Markdown as a document: 18 by 22. */
 .fv-doc {
   padding: 18px 22px;
@@ -1343,6 +1348,11 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
   cursor: zoom-in;
 }
 
+.fv-img:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
 .fv-video {
   max-width: 100%;
   max-height: 100%;
@@ -1350,10 +1360,20 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
   outline: none;
 }
 
+.fv-video:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
 .fv-audio {
   width: min(100%, 480px);
   max-width: 100%;
   outline: none;
+}
+
+.fv-audio:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 /* MiMo's ft-empty: over the whole viewer, a 40px icon, a 14px title, a 12px line, 8 apart. */
