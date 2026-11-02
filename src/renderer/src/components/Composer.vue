@@ -2391,8 +2391,11 @@ function onKeydown(event: KeyboardEvent) {
     if (!box) return
     handled(event)
     const start = box.selectionStart
+    const originKey = draftKey.value
     rewrite(`${text.value.slice(0, start)}\n${text.value.slice(box.selectionEnd)}`)
     void nextTick(() => {
+      // Skip if the draft changed mid-tick; the watcher already persisted the origin.
+      if (!composerMounted || draftKey.value !== originKey) return
       resize()
       box.setSelectionRange(start + 1, start + 1)
       caret.value = start + 1
@@ -2408,8 +2411,11 @@ function onKeydown(event: KeyboardEvent) {
       const next = mentionBackspace(text.value, box.selectionStart, known)
       if (next) {
         handled(event)
+        const originKey = draftKey.value
         rewrite(next.text)
         void nextTick(() => {
+          // Skip if the draft changed mid-tick; the watcher already persisted the origin.
+          if (!composerMounted || draftKey.value !== originKey) return
           resize()
           box.setSelectionRange(next.caret, next.caret)
           caret.value = next.caret
