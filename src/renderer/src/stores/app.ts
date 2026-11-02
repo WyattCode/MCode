@@ -1862,7 +1862,9 @@ export const useApp = defineStore("app", () => {
       }
     }
     // The turn is still running, and stays marked so; what the reader must not have is silence.
-    notifyFailure(t("error.abortFailed"), failure instanceof Error ? failure.message : String(failure))
+    // Only surface the failure while still on the session that owns it.
+    if (currentID.value === target)
+      notifyFailure(t("error.abortFailed"), failure instanceof Error ? failure.message : String(failure))
   }
 
   /**
