@@ -1762,12 +1762,13 @@ const PROJECT_ACTIONS: Record<string, (directory: string) => void | Promise<void
   },
   /* MiMo's pinToFront: the latest pin heads 置顶, and a toast says what happened. */
   pin: async (directory) => {
+    const held = app.currentID
     const pinned = app.config?.pinnedProjects ?? []
     const was = pinned.includes(directory)
     await app.patchConfig({
       pinnedProjects: was ? pinned.filter((entry) => entry !== directory) : [directory, ...pinned],
     })
-    notify(t(was ? "side.projectUnpinnedToast" : "side.projectPinnedToast"))
+    if (app.currentID === held) notify(t(was ? "side.projectUnpinnedToast" : "side.projectPinnedToast"))
   },
   archive: async (directory) => {
     await archiveSessions(projectSessions(directory).map((session) => session.id))
