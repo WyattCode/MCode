@@ -380,7 +380,20 @@ function toggleSearch() {
 }
 const settingsOpen = ref(false)
 /** Non-default landing page for the settings dialog, when opened from a shortcut. */
-const settingsSection = ref<"general" | "appearance" | "keys" | "models" | "mcp" | "archive">()
+const settingsSection = ref<
+  | "general"
+  | "appearance"
+  | "personal"
+  | "keys"
+  | "archive"
+  | "files"
+  | "environment"
+  | "usage"
+  | "updates"
+  | "models"
+  | "mcp"
+  | "lab"
+>()
 /*
  * The header, so the rename command, its chord and the header menu's 重命名 can
  * start the title's own in-place editor, as MiMo's requestRename does.
@@ -395,7 +408,19 @@ function renameInHeader() {
  * does; the MCP command and Ctrl+; land on the MCP page, MiMo's only MCP screen.
  */
 function openSettings(section?: unknown) {
-  const known = section === "general" || section === "models" || section === "mcp" || section === "archive" || section === "appearance" || section === "keys"
+  const known =
+    section === "general" ||
+    section === "appearance" ||
+    section === "personal" ||
+    section === "keys" ||
+    section === "archive" ||
+    section === "files" ||
+    section === "environment" ||
+    section === "usage" ||
+    section === "updates" ||
+    section === "models" ||
+    section === "mcp" ||
+    section === "lab"
   settingsSection.value = known ? (section as typeof settingsSection.value) : undefined
   settingsOpen.value = true
 }
@@ -4278,6 +4303,8 @@ onBeforeUnmount(() => {
       @project="startIn"
       @settings="openSettings"
       @theme="toggleThemeFromSearch"
+      @newTask="newTaskFromSide"
+      @artifacts="goArtifacts"
     />
 
     <!-- MiMo's settings boundary: a page that fails to draw shows its strip, not the fatal page. -->
