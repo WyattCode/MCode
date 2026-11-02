@@ -2194,8 +2194,11 @@ export const useApp = defineStore("app", () => {
   /** MiMo's remove: off the list, conversations kept. */
   async function removeProjects(directories: string[]) {
     if (!directories.length) return
+    // Hold the toast to the place the person started from; leaving mid-await
+    // must not flash the remove outcome onto another chat.
+    const held = currentID.value
     config.value = (await api().request({ type: "project.remove", directories })).config
-    notify(directories.length > 1 ? t("side.projectsRemoved", { count: directories.length }) : t("side.projectRemoved"), { level: "success" })
+    if (currentID.value === held) notify(directories.length > 1 ? t("side.projectsRemoved", { count: directories.length }) : t("side.projectRemoved"), { level: "success" })
   }
 
   /**
