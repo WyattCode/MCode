@@ -1572,10 +1572,13 @@ const ROW_ACTIONS: Record<string, (sessionID: string, header: boolean) => void |
       notifyFailure(t("menu.moveOut"), t("common.requestFailed"))
       return
     }
+    // Hold the toast to the place the person started from; leaving mid-await
+    // must not flash the move outcome onto another chat.
+    const held = app.currentID
     try {
       await client.request({ type: "session.moveOut", sessionID })
     } catch (failure) {
-      notifyFailure(t("menu.moveOut"), reasonOf(failure))
+      if (app.currentID === held) notifyFailure(t("menu.moveOut"), reasonOf(failure))
     }
   },
   "row.newProjectMove": (sessionID) => {
@@ -1630,11 +1633,16 @@ const ROW_ACTIONS: Record<string, (sessionID: string, header: boolean) => void |
       notifyFailure(t("menu.restrictConversation"), t("common.requestFailed"))
       return
     }
+    // Hold the toast to the place the person started from; leaving mid-await
+    // must not flash the restriction outcome onto another chat.
+    const held = app.currentID
     try {
       await client.request({ type: "session.reviewRestricted", sessionID, restricted: !target.reviewRestricted })
-      notify(t(target.reviewRestricted ? "menu.allowContinue" : "menu.restrictConversation"))
+      if (app.currentID === held) {
+        notify(t(target.reviewRestricted ? "menu.allowContinue" : "menu.restrictConversation"))
+      }
     } catch (failure) {
-      notifyFailure(t("menu.restrictConversation"), reasonOf(failure))
+      if (app.currentID === held) notifyFailure(t("menu.restrictConversation"), reasonOf(failure))
     }
   },
 }
