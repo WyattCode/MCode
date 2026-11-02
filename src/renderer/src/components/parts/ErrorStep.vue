@@ -16,7 +16,7 @@ const text = computed(() => (props.error.errorCode ? t(props.error.errorCode, pr
 </script>
 
 <template>
-  <div class="hstep hs-error" data-step-error>
+  <div class="hstep hs-error" role="alert" data-step-error>
     <span class="hs-error-mark" aria-hidden="true">!</span>
     <div class="hs-body">
       <div class="hs-error-text">{{ t("stepList.errorPrefix", { text }) }}</div>
