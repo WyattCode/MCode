@@ -325,6 +325,8 @@ watch(
       v-if="request"
       ref="box"
       class="ann-composer"
+      role="dialog"
+      :aria-label="t('annotations.convoPlaceholder')"
       data-annotation-composer
       :class="{ shown, focused, closing, above: request.above }"
       :style="{ top: `${position?.top ?? -9999}px`, left: `${position?.left ?? -9999}px`, width: `${WIDTH}px` }"
@@ -333,6 +335,7 @@ watch(
         ref="field"
         v-model="text"
         rows="1"
+        :aria-label="t('annotations.convoPlaceholder')"
         :placeholder="t('annotations.convoPlaceholder')"
         @focus="focused = true"
         @blur="focused = false"
@@ -439,6 +442,11 @@ watch(
   color: #fff;
   background: #3295fb;
   border: none;
+}
+.ann-send:focus-visible,
+.ann-stash:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: 2px;
 }
 
 .ann-stash {

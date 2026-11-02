@@ -95,6 +95,10 @@ function setLayout(next: DiffLayout) {
 .dt-seg-btn:hover {
   color: var(--text-body);
 }
+.dt-seg-btn:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: -2px;
+}
 
 .dt-seg-btn.on {
   color: var(--text-body);

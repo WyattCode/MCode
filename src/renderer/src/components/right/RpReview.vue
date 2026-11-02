@@ -176,6 +176,7 @@ const TONE: Record<string, string> = { M: "modified", A: "added", D: "deleted", 
           type="button"
           class="rv-row"
           :class="{ on: entry.path === selected }"
+          :aria-current="entry.path === selected ? 'true' : undefined"
           :data-review-file="entry.path"
           @click="selected = entry.path"
         >
@@ -271,6 +272,11 @@ const TONE: Record<string, string> = { M: "modified", A: "added", D: "deleted", 
 
 .rv-row:hover {
   background: var(--surface-hover);
+}
+.rv-row:focus-visible,
+.rv-refresh:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: -2px;
 }
 
 .rv-row.on {

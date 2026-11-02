@@ -146,6 +146,10 @@ watch(
 .mismatch-btn:hover {
   opacity: 0.85;
 }
+.mismatch-btn:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: 2px;
+}
 
 /* MiMo's primary pill: the txt ink filled, its label the page colour. */
 .mismatch-btn.primary {
