@@ -1,3 +1,15 @@
+<script lang="ts">
+/*
+ * The native page is one surface shared by every browser tab, so a claim that
+ * finishes late must not speak for a tab that is no longer on show. Kept outside
+ * setup: each activation bumps the epoch and takes over the reclaim callback;
+ * a stale claim asks the current owner to claim again rather than leaving the
+ * wrong page drawn.
+ */
+let surfaceEpoch = 0
+let surfaceReclaim: (() => void) | undefined
+</script>
+
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import type { LocalServer } from "@shared/protocol"
@@ -103,10 +115,17 @@ function remeasure() {
 /* Makes sure this tab has its page, and that it is the one the panel draws. */
 async function claim() {
   if (!props.active) return
+  const epoch = surfaceEpoch
+  const pageId = props.pageId
+  const url = props.url
   const box = stage.value?.getBoundingClientRect()
   const bounds = { x: box?.left ?? 0, y: box?.top ?? 0, width: 0, height: 0 }
-  if (props.pageId) {
-    const selected = await window.mcode.browserTab("select", props.pageId)
+  if (pageId) {
+    const selected = await window.mcode.browserTab("select", pageId)
+    if (epoch !== surfaceEpoch || !props.active || props.pageId !== pageId) {
+      surfaceReclaim?.()
+      return
+    }
     if (selected) {
       apply(selected)
       return
@@ -115,11 +134,27 @@ async function claim() {
   // No page yet, or its page is gone: a new one, which opens the panel's pages if there were none.
   const fresh = (await window.mcode.browserOpen(bounds)) as State | undefined
   if (!fresh?.active) return
+  if (epoch !== surfaceEpoch || !props.active) {
+    // Keep the page we opened bound to this tab so it is not leaked; browserOpen
+    // also selects it on the shared surface, so ask the shown tab to reclaim.
+    emit("page", fresh.active)
+    state.value = fresh
+    address.value = ""
+    surfaceReclaim?.()
+    return
+  }
   emit("page", fresh.active)
   state.value = fresh
   address.value = ""
   remeasure()
-  if (props.url && props.url !== "about:blank") apply(await window.mcode.browserNavigate(props.url))
+  if (url && url !== "about:blank") {
+    const navigated = await window.mcode.browserNavigate(url)
+    if (epoch !== surfaceEpoch || !props.active) {
+      surfaceReclaim?.()
+      return
+    }
+    apply(navigated)
+  }
 }
 
 let stopState: (() => void) | undefined
@@ -134,6 +169,12 @@ onMounted(() => {
   if (root.value) observer.observe(root.value)
   if (bar.value) observer.observe(bar.value)
   window.addEventListener("resize", remeasure)
+  if (props.active) {
+    const epoch = ++surfaceEpoch
+    surfaceReclaim = () => {
+      if (props.active && epoch === surfaceEpoch) void claim()
+    }
+  }
   void claim()
   void scan()
 })
@@ -146,7 +187,13 @@ onBeforeUnmount(() => {
 })
 
 watch(() => props.active, (active) => {
-  if (active) void claim()
+  if (active) {
+    const epoch = ++surfaceEpoch
+    surfaceReclaim = () => {
+      if (props.active && epoch === surfaceEpoch) void claim()
+    }
+    void claim()
+  }
 })
 watch([showingPage, () => state.value.error, annotating, menuOpen], () => remeasure())
 /* A page that goes blank takes annotating with it, as MiMo's does. */
