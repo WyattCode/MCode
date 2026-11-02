@@ -1199,7 +1199,10 @@ async function toggleGoalMode() {
   try {
     await app.setGoalMode(next, target)
   } catch (err) {
-    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    // Left mid-await → do not flash the failure on another conversation.
+    if (!target || sessionID.value === target) {
+      notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    }
     return
   }
   notify(t(next ? "toast.goalOn" : "toast.goalOff"))
