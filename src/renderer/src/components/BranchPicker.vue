@@ -259,6 +259,7 @@ onBeforeUnmount(() => {
         v-model="draft"
         class="new-branch"
         data-branch-create-input
+        :aria-label="t('home.branchCreatePlaceholder')"
         spellcheck="false"
         :placeholder="t('home.branchCreatePlaceholder')"
         :disabled="busy"
@@ -507,6 +508,11 @@ svg circle {
   border: 1px solid var(--border-weak);
   border-radius: 8px;
   outline: none;
+}
+
+.new-branch:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 .new-branch::placeholder {

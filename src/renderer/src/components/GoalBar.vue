@@ -183,6 +183,7 @@ async function leave() {
             ref="inputEl"
             v-model="draft"
             class="goal-edit"
+            :aria-label="t('composer.goalBar.edit')"
             type="text"
             :aria-label="t('composer.goalBar.edit')"
             spellcheck="false"
@@ -345,6 +346,11 @@ async function leave() {
 
 .goal-edit:focus {
   border-color: var(--interactive);
+}
+
+.goal-edit:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 .goal-act {

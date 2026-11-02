@@ -83,6 +83,7 @@ onMounted(() => {
         ref="field"
         :value="draft"
         class="field"
+        aria-labelledby="rename-title"
         spellcheck="false"
         :maxlength="maxLength"
         @input="onInput"
@@ -179,6 +180,11 @@ h2 {
   border-radius: 9px;
   outline: none;
   font-size: calc(14px * var(--ui-font-scale, 1));
+}
+
+.field:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 /* MiMo's np-card field on focus: the dim colour, #151c1366 light and #777 dark. */
