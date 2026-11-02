@@ -294,14 +294,18 @@ function syncGutter(event: Event) {
 
 async function save() {
   const rel = props.viewFile
-  if (!rel || !root.value || !app.client || saving.value) return
+  const directory = root.value
+  if (!rel || !directory || !app.client || saving.value) return
   saving.value = true
   try {
-    await app.client.request({ type: "file.write", root: root.value, rel, content: draft.value })
-    if (opened.value && props.viewFile === rel) opened.value = { ...opened.value, content: draft.value }
+    await app.client.request({ type: "file.write", root: directory, rel, content: draft.value })
+    // Hold the file that was saved across the write: a later selection owns the viewer now.
+    if (props.viewFile !== rel || root.value !== directory) return
+    if (opened.value) opened.value = { ...opened.value, content: draft.value }
     editing.value = false
     notify(t("rp.files.saved"))
   } catch (err) {
+    if (props.viewFile !== rel || root.value !== directory) return
     notifyFailure(t("rp.files.saveFailed", { reason: t(saveFailureKey(err instanceof Error ? err.message : String(err))) }))
   } finally {
     saving.value = false
