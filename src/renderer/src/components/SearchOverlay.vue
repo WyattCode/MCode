@@ -283,6 +283,9 @@ function search() {
     messageFailed.value = false
     return
   }
+  hits.value = []
+  artifacts.value = []
+  messageFailed.value = false
   runSearch(needle)
 }
 
