@@ -2513,7 +2513,7 @@ onBeforeUnmount(() => {
           <div class="ci-actions">
             <!-- MiMo's save turns into the primary button once there is something to save. -->
             <button class="ctl-btn ci-save" :class="{ 'update-install': dirty }" data-ci-save :disabled="!dirty" @click="saveInstructions">
-              {{ t("common.save") }}
+              {{ dirty ? t("common.save") : t("common.saved") }}
             </button>
           </div>
         </template>
@@ -2918,7 +2918,7 @@ onBeforeUnmount(() => {
             <div class="env-flabel">{{ t("set.envName") }}</div>
             <input v-model="envName" class="env-input" data-env-name :placeholder="t('set.envNamePlaceholder')" spellcheck="false" />
             <div class="env-save-row">
-              <button class="ctl-btn env-save" :class="{ dirty: envDirty }" data-env-save :disabled="!envDirty" @click="saveEnv">{{ t("set.envSave") }}</button>
+              <button class="ctl-btn env-save" :class="{ dirty: envDirty }" data-env-save :disabled="!envDirty" @click="saveEnv">{{ envDirty ? t("set.envSave") : t("set.envSaved") }}</button>
             </div>
           </div>
           <!-- MiMo's leave guard: not destructive, so the plain confirm button. -->
@@ -4781,7 +4781,8 @@ h3 {
  */
 .card.gallery {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(76px, 1fr));
+  justify-items: center;
   gap: 18px 12px;
   padding: 18px 16px;
 }
