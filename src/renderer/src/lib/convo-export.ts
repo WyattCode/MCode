@@ -57,3 +57,25 @@ export async function exportConversationById(sessionID: string): Promise<void> {
   }
   await exportConversationMarkdown(sessionTitle(session.title), messages)
 }
+
+/** The row menu's copy: the named conversation's Markdown on the clipboard, read without navigating when it is not the one on show. */
+export async function copyConversationMarkdownById(sessionID: string): Promise<void> {
+  const app = useApp()
+  const session = app.sessions.find((entry) => entry.id === sessionID)
+  if (!session) return
+  let messages: readonly Message[] | undefined = app.currentID === sessionID ? app.messages : undefined
+  if (!messages) {
+    try {
+      messages = (await app.client?.request({ type: "session.get", sessionID }))?.messages
+    } catch (failure) {
+      notifyFailure(reasonOf(failure) || t("toast.exportFailed"))
+      return
+    }
+  }
+  if (!messages) {
+    notifyFailure(t("toast.exportFailed"))
+    return
+  }
+  window.mcode.setClipboardText(transcriptOf(sessionTitle(session.title), messages))
+  notify(t("menu.copiedMarkdown"))
+}
