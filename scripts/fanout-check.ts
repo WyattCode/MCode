@@ -10,6 +10,8 @@
  *
  * Run: npm run fanoutcheck
  */
+import "./fenced-home"
+import "./safe-listen"
 import { execFileSync } from "node:child_process"
 import { createServer } from "node:http"
 import fs from "node:fs/promises"

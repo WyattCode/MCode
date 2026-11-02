@@ -48,7 +48,7 @@ export async function roundNineteenLaneAChecks(check: Check, section: (name: str
       "the confirmation is MiMo's: 删除自定义模型 over the model's name",
       /<ConfirmDialog\s+v-if="removingModel"\s+:title="t\('set\.models\.deleteModelTitle'\)"\s+:body="t\('set\.models\.deleteBody', \{ name: removingModel\.name\.trim\(\) \|\| removingModel\.id \}\)"/.test(form),
     )
-    check("on yes the saved provider loses the model before the card goes", /const removed = editing \? await app\.removeCustomModel\(editing\.id, row\.id\)/.test(form) && /type: "provider\.removeCustomModel", provider, model/.test(store))
+    check("on yes the saved provider loses the model before the card goes", /await app\.removeCustomModel\(editing\.id, row\.id\)/.test(form) && /type: "provider\.removeCustomModel", provider, model/.test(store))
     const handler = handlers.slice(handlers.indexOf('case "provider.removeCustomModel"'), handlers.indexOf('case "auth.begin"'))
     check("the backend drops it from the stored provider, keeping the last one", /models\.length > 1/.test(handler) && /models\.filter\(\(model\) => model\.id !== request\.model\)/.test(handler))
     check("the title is in all 18 tables", (i18n.match(/^ {2}"set\.models\.deleteModelTitle": /gm) ?? []).length === 18)
@@ -128,9 +128,9 @@ export async function roundNineteenLaneAChecks(check: Check, section: (name: str
       ["MCP server saved", success(settings, 'notify(t("set.mcpForm.saved", { name })')],
       ["MCP server authorized", success(settings, 'notify(t("set.mcp.authorized")')],
       ["MCP server removed", success(settings, 'notify(t("set.mcp.removed") + name')],
-      ["MCP import done", success(settings, 'notify(t("set.mcp.importDone", { n: String(result?.imported.length ?? 0) })')],
+      ["MCP import done", success(settings, 'notify(t("set.mcp.importDone", { n: String(result.imported.length) })')],
       ["one conversation restored", success(settings, 'notify(t("toast.convoRestored")')],
-      ["a batch restored", success(settings, 'if (ids.length) notify(t("toast.convosRestored", { n: ids.length })')],
+      ["a batch restored", success(settings, 'if (restored) notify(t("toast.convosRestored", { n: restored })')],
       ["models refreshed", success(models, 'notify(t("set.models.refreshed")') && success(models, 'notify(t("provider.refreshed", { n: found })')],
       ["provider saved", /if \(editing\) notice\.success\(t\("model\.changesSaved"\)\)/.test(form)],
       ["project added", success(store, 'else notify(t("side.projectAdded", { name })')],

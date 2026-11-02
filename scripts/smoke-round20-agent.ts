@@ -90,7 +90,8 @@ export async function roundTwentyAgentChecks(check: Check, section: (name: strin
       check("V4-8: the step and then the last one were asked for", e.bodies.length === 2, e.bodies.length)
       check("V4-8: the last request's history holds the tool call and its result", wireText(last).includes('"tool_calls"') && wireText(last).includes('"role":"tool"'), wireText(last).slice(0, 400))
       check("V4-8: so its tools are still defined", tools.length > 0, tools.length)
-      check("V4-8: with the tool choice none", last?.tool_choice === "none", last?.tool_choice)
+      // A local server's template drops the tools at `none` and starts its cache over, so it is told in words instead (turn-check).
+      check("V4-8: a local server is not told tool choice none", last?.tool_choice === "auto", last?.tool_choice)
       check("V4-8: and the instruction to answer in words", wireText(last).includes("MAXIMUM STEPS REACHED"))
       const earlier = e.bodies[0]
       check("V4-8: an ordinary step still leaves the choice to the model", earlier?.tool_choice === "auto", earlier?.tool_choice)

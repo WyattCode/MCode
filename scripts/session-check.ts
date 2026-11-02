@@ -746,7 +746,8 @@ async function main(): Promise<void> {
     check("it took the step, then one more", sent.length === 2, String(sent.length))
     // As MiMo's: its history holds the step's call, which a request defining no tools is refused for.
     check("the last request keeps the tools defined", (last?.tools?.length ?? 0) > 0, JSON.stringify(last?.tools?.length ?? 0))
-    check("but lets the model call none of them", last?.tool_choice === "none", JSON.stringify(last?.tool_choice))
+    // A local server's template drops the tools at `none` and starts its cache over, so it is told in words instead.
+    check("and leaves tool_choice alone on a local server", last?.tool_choice === "auto", JSON.stringify(last?.tool_choice))
     const closing = (last?.messages ?? []).at(-1)
     check(
       "and told the model to answer in words",

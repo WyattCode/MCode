@@ -60,8 +60,8 @@ function freePort(): Promise<number> {
 export async function roundThirtySixChecks(check: Check, section: (name: string) => void): Promise<void> {
   section("Round 36: the app tool - offered to the model, and how it reads a page")
   {
-    // P1's lsp may be appended after it; app still follows every earlier tool.
-    check("offered after every earlier tool, so no cached prefix moves", TOOLS.at(-2)?.name === "app" && TOOLS.at(-1)?.name === "lsp")
+    // P1's lsp, fanout and verify_page are appended after it; app still follows every earlier tool.
+    check("offered after every earlier tool, so no cached prefix moves", TOOLS.slice(-4).map((tool) => tool.name).join() === "app,lsp,fanout,verify_page")
     check("asked about like a command, and treated as able to change anything", AppTool.permission === "bash" && reachOf("app") === "opaque")
     const description = AppTool.description
     check("its description tells the model to batch its steps", /one do/.test(description) && /fast/.test(description))
@@ -81,7 +81,7 @@ export async function roundThirtySixChecks(check: Check, section: (name: string)
     const source = fs.readFileSync(path.join(root, "src", "server", "appdrive", "browser.ts"), "utf8")
     const list = source.slice(source.indexOf("function candidates"), source.indexOf("export function findBrowser"))
     check("Chrome is preferred to Edge, which signs a fresh profile in by itself", list.indexOf("chrome.exe") > 0 && list.indexOf("chrome.exe") < list.indexOf("msedge.exe"))
-    check("sync is off in every browser it starts, and Edge's page runs in a guest window", /"--disable-sync"/.test(source) && /edge \? \["--guest"\]/.test(source))
+    check("sync is off in every browser it starts, and Edge's page runs in a guest window", /"--disable-sync"/.test(source) && /edge && !options\.headless \? \["--guest"\]/.test(source))
     check("the browser's own pages - sign-in, sync, settings - are never taken for the app", /edge\|chrome\|chrome-extension/.test(fs.readFileSync(path.join(root, "src", "server", "appdrive", "driver.ts"), "utf8")))
     check("it opens in a throwaway profile, never the user's", /mkdtemp\(path\.join\(os\.tmpdir\(\), "mcode-app-browser-"\)\)/.test(source) && /--user-data-dir=\$\{profile\}/.test(source))
   }

@@ -11,7 +11,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import type { Check } from "./smoke-round5"
 
-const read = (relative: string) => fs.readFile(path.join(process.cwd(), relative), "utf8")
+const read = async (relative: string) => (await fs.readFile(path.join(process.cwd(), relative), "utf8")).replace(/\r\n/g, "\n")
 
 export async function roundTwentyDeChecks(check: Check, section: (name: string) => void): Promise<void> {
   section("Round 20: D-1 the goal bar is one per conversation")
@@ -68,7 +68,7 @@ export async function roundTwentyDeChecks(check: Check, section: (name: string) 
       submit,
     )
     check("D-6: a removed model, saved at once, leaves the saved form too", /saved\.models = saved\.models\.filter\(\(entry\) => entry\.key !== row\.key\)/.test(remove) && /pristine\.value = JSON\.stringify\(saved\)/.test(remove), remove)
-    check("D-6: only when the removal was saved", /if \(removed\) \{/.test(remove) && /\.then\(\(\) => true, \(\) => false\)/.test(remove), remove)
+    check("D-6: only when the removal was saved", /await app\.removeCustomModel[\s\S]*?catch[\s\S]*?return/.test(remove), remove)
   }
 
   section("Round 20: D-10 the connection light is not read out as a raw status")
