@@ -204,7 +204,11 @@ async function pickMenu(key: string) {
   if (!file) return
   if (key === "open") requestFile(file)
   else if (key === "reveal") {
+    // Hold the reveal failure toasts to the place the person started from;
+    // leaving mid-await must not flash the file-manager outcome onto another conversation.
+    const held = app.currentID
     const result = await window.mcode.revealPath(absolute(file)).catch((error: unknown) => ({ ok: false, error: String(error) }))
+    if (app.currentID !== held) return
     if (result.ok) return
     if (!result.error || /ENOENT|not exist|no such file|cannot find/i.test(result.error)) notifyFailure(t("harnessRow.pathNotExist"))
     else notifyFailure(t("harnessRow.revealFailed", { error: result.error }))
