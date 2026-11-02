@@ -1203,6 +1203,7 @@ async function addDroppedProjects(directories: string[]) {
 /* MiMo's add then browseProject: listed, the last one the latest pick, and home with it chosen. */
 async function addAndBrowse(directories: string[]) {
   const last = directories[directories.length - 1]!
+  const heldSession = app.currentID
   let failed = false
   let failure: unknown = null
   for (const directory of directories) {
@@ -1217,7 +1218,8 @@ async function addAndBrowse(directories: string[]) {
     notifyFailure(t("common.requestFailed"), failure instanceof Error ? failure.message : String(failure))
     return
   }
-  startIn(last)
+  // Left for a conversation while projects were added: do not yank home for the abandoned browse.
+  if (app.currentID === heldSession) startIn(last)
 }
 
 /*
@@ -1251,13 +1253,15 @@ function newTaskFromSide() {
 
 async function newSessionIn(directory: string) {
   if (alreadyNewTask(directory)) return
+  const heldSession = app.currentID
   try {
     await app.addProject(directory, { used: true, silent: true })
   } catch (err) {
     notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
     return
   }
-  startIn(directory)
+  // Left for a conversation while the project was added: do not yank home for the abandoned new task.
+  if (app.currentID === heldSession) startIn(directory)
 }
 
 /*
