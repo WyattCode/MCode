@@ -62,7 +62,12 @@ watch(
   },
   { immediate: true },
 )
-onBeforeUnmount(stopTicker)
+// Left mid-flight (session switch remounts this bar): do not flash failure on another conversation.
+let alive = true
+onBeforeUnmount(() => {
+  alive = false
+  stopTicker()
+})
 
 const elapsed = computed(() => {
   const start = goal.value?.startedAt
@@ -123,10 +128,13 @@ async function commitEdit() {
   editing.value = false
   const next = draft.value.trim()
   if (!next || next === goal.value?.condition) return
+  const held = props.sessionID
   try {
-    await app.setGoal(props.sessionID, next)
+    await app.setGoal(held, next)
   } catch (err) {
-    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    if (alive && props.sessionID === held) {
+      notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    }
   }
 }
 
@@ -137,11 +145,14 @@ async function rerun() {
   const condition = goal.value?.condition
   if (!condition || restricted.value || rerunning.value) return
   rerunning.value = true
+  const held = props.sessionID
   try {
-    await app.setGoal(props.sessionID, condition)
-    await app.send(condition, [], props.sessionID)
+    await app.setGoal(held, condition)
+    await app.send(condition, [], held)
   } catch (err) {
-    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    if (alive && props.sessionID === held) {
+      notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    }
   } finally {
     // Always cleared: a throw here would otherwise leave the button dead for
     // the rest of the conversation.
@@ -150,18 +161,24 @@ async function rerun() {
 }
 
 async function dismiss() {
+  const held = props.sessionID
   try {
-    await app.setGoal(props.sessionID, null)
+    await app.setGoal(held, null)
   } catch (err) {
-    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    if (alive && props.sessionID === held) {
+      notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    }
   }
 }
 
 async function leave() {
+  const held = props.sessionID
   try {
-    await app.leaveGoal(props.sessionID)
+    await app.leaveGoal(held)
   } catch (err) {
-    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    if (alive && props.sessionID === held) {
+      notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    }
   }
 }
 </script>
