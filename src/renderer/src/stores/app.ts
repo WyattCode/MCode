@@ -1817,7 +1817,10 @@ export const useApp = defineStore("app", () => {
         running.value = next
         turnStarted.delete(sessionID)
       }
-      notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+      // Left mid-await → do not flash the failure on another conversation.
+      if (currentID.value === sessionID || sideID.value === sessionID) {
+        notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+      }
     }
   }
 
@@ -1827,7 +1830,10 @@ export const useApp = defineStore("app", () => {
       await api().request({ type: "session.queue.remove", sessionID, id })
       return true
     } catch (err) {
-      notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+      // Left mid-await → do not flash the failure on another conversation.
+      if (currentID.value === sessionID || sideID.value === sessionID) {
+        notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+      }
       return false
     }
   }
