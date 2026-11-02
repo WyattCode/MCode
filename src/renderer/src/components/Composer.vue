@@ -36,7 +36,6 @@ import { HOME_SCOPE, SIDE_SCOPE, useAnnotations } from "../stores/annotations"
 import { annotationSend } from "../lib/annotate"
 import { openDocument } from "../lib/office-open"
 import AnnotationChips from "./AnnotationChips.vue"
-import { providerLabel } from "../lib/connect"
 import ModelMenuRow from "./ModelMenuRow.vue"
 import { besideRow } from "../lib/submenu"
 import { isRovingKey, rovingStep, type RovingKey } from "../lib/composer-menu"
@@ -220,22 +219,6 @@ const modelName = computed(() => {
   // "(latest)" is a tag in the reference, not part of the name: its model store
   // strips the word out once and hands the stripped name to everything.
   return found ? withoutLatest(found.name) : chosen.model
-})
-
-/**
- * Provider · Model on the closed pill when more than one configured provider
- * exists, or the chosen one is custom - so two DGX endpoints with the same
- * model name stay distinguishable (UI trust review P1).
- */
-const modelProviderLabel = computed(() => {
-  if (smartOn.value) return ""
-  const chosen = app.shownModel(session.value?.model) ?? app.config?.model
-  if (!chosen?.provider) return ""
-  const provider = app.providers.find((entry) => entry.id === chosen.provider)
-  if (!provider) return ""
-  const configured = app.providers.filter((entry) => entry.configured).length
-  if (!provider.custom && configured <= 1) return ""
-  return provider.name || provider.id
 })
 
 /*
@@ -2738,12 +2721,11 @@ async function chooseAccess(next: Access) {
 }
 
 async function confirmFull() {
+  confirmingFull.value = false
   const held = pendingFullFor.value
   pendingFullFor.value = undefined
-  confirmingFull.value = false
-  // Apply once for the session the dialog was opened on — a second call used
-  // to re-run against whatever session is current after the first await.
   await applyAccess("full", held)
+  if (await applyAccess("full")) confirmingFull.value = false
 }
 
 /*
@@ -2888,11 +2870,6 @@ const sub2Key = ref<string>()
 
 function modelKey(provider: string, model: string) {
   return `${provider}:${model}`
-}
-
-function providerTitle(providerID: string): string {
-  const provider = app.providers.find((entry) => entry.id === providerID)
-  return provider ? providerLabel(provider) : providerID
 }
 
 interface ModelRow {
@@ -3718,7 +3695,9 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             <button
               class="pill access"
               :class="{ open: menu === 'access', full: access === 'full' }"
-              v-tip="{ label: access === 'auto' ? t('composer.access.autoHint') : t('composer.accessTip'), disabled: menu === 'access' }"
+              :aria-expanded="menu === 'access'"
+              aria-haspopup="menu"
+              v-tip="{ label: t('composer.accessTip'), disabled: menu === 'access' }"
               @click="toggle('access')"
             >
               <svg
@@ -3747,6 +3726,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               v-if="menu === 'access'"
               ref="accessMenu"
               class="menu access-menu"
+              role="menu"
               :class="{ up: menuUp }"
               tabindex="-1"
               @keydown="onAccessKeys"
@@ -3758,6 +3738,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                 :key="entry"
                 v-tip="{ label: t(`composer.access.${entry}Hint`), placement: 'right', trigger: 'hover' }"
                 class="item access-item"
+                role="menuitemradio"
+                :aria-checked="entry === access"
                 :class="{ on: entry === access, hot: entry === accessHot }"
                 :data-access="entry"
                 @mouseenter="accessHot = entry"
@@ -3785,6 +3767,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             v-if="!side && agent === 'plan'"
             class="mode-chip"
             data-mode="plan"
+            aria-pressed="true"
             v-tip="{ label: t('composer.modeChipTip', { mode: t('composer.planMode') }) }"
             @click="chooseAgent('build')"
           >
@@ -3800,6 +3783,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             v-if="!side && goalMode"
             class="mode-chip"
             data-mode="goal"
+            aria-pressed="true"
             v-tip="{ label: t('composer.goalChipTip') }"
             @click="toggleGoalMode"
           >
@@ -3839,13 +3823,11 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             <button
               class="pill model-pill"
               :aria-expanded="menu === 'model'"
+              aria-haspopup="menu"
               v-tip="{ label: t('composer.modelTip'), disabled: menu === 'model' }"
               @click="toggle('model')"
             >
-              <span class="model-label-stack">
-                <span class="model-label">{{ modelName }}</span>
-                <span v-if="modelProviderLabel" class="model-provider" data-model-provider>{{ modelProviderLabel }}</span>
-              </span>
+              <span class="model-label">{{ modelName }}</span>
               <!-- MiMo's 「Claude Opus · 高」: on the home screen too, since the level is the next task's as well. -->
               <span v-if="!smartOn && !side && effortLabel" class="model-effort" data-model-effort>{{ effortLabel }}</span>
               <svg class="caret" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -3863,6 +3845,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               v-if="menu === 'model'"
               ref="modelMenu"
               class="menu model-menu"
+              role="menu"
               :class="{ up: menuUp }"
               tabindex="-1"
               @keydown="onModelKeys"
@@ -3900,7 +3883,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                 v-for="row in primaryRows"
                 :key="row.key"
                 :model="row.model"
-                :subtitle="providerTitle(row.provider)"
                 :row-key="row.key"
                 :on="currentKey === row.key"
                 :hot="activeKey === row.key"
@@ -3943,7 +3925,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                       v-for="row in moreRows"
                       :key="row.key"
                       :model="row.model"
-                      :subtitle="providerTitle(row.provider)"
                       :row-key="row.key"
                       :on="currentKey === row.key"
                       :hot="subKey === row.key"
@@ -3970,7 +3951,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                     :key="row.key"
                     data-custom-model
                     :model="row.model"
-                    :subtitle="group.name"
                     :row-key="row.key"
                     :on="currentKey === row.key"
                     :hot="activeKey === row.key"
@@ -4789,6 +4769,11 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   background: var(--surface-hover);
 }
 
+.ctx:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
 /* MiMo's voice capsule: the round button widens into a pill in the send colour while it is in use. */
 .mic {
   overflow: hidden;
@@ -5103,6 +5088,11 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   background: var(--surface-hover);
 }
 
+.pill:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
 .caret {
   color: var(--text-weaker);
 }
@@ -5389,6 +5379,11 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   background: var(--surface-selected);
 }
 
+.mode-chip:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
 .mode-chip svg {
   flex: none;
   width: 13px;
@@ -5555,23 +5550,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 }
 
 /* MiMo's level on the chip, 「· 高」: the level at 0.62, the dot at 0.7 of that and 5 before the level. */
-.model-label-stack {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: flex-start;
-  min-width: 0;
-  line-height: 1.15;
-}
-
-.model-provider {
-  max-width: 160px;
-  overflow: hidden;
-  color: var(--text-muted);
-  font-size: calc(11px * var(--ui-font-scale, 1));
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .model-effort {
   flex: none;
   white-space: nowrap;

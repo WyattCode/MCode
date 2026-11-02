@@ -1422,6 +1422,8 @@ onBeforeUnmount(() => {
             </span>
             <button
               class="project-toggle"
+              :aria-expanded="isExpanded(project.directory)"
+              :aria-label="project.directory"
               v-tip="{ label: project.directory, disabled: pickingProjects || menuDirectory === project.directory }"
               @click="pressProject(project.directory)"
             >
