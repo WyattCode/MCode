@@ -695,6 +695,9 @@ async function archiveSessions(ids: string[]) {
     notify(t("toast.noConvosToArchive"))
     return
   }
+  // Hold the toast to the place the person started from: leaving mid-await must not
+  // flash the archive outcome onto another chat.
+  const held = app.currentID
   const archived: string[] = []
   let failed = false
   let err: unknown
@@ -707,10 +710,10 @@ async function archiveSessions(ids: string[]) {
       err = e
     }
   }
-  if (failed) {
+  if (failed && app.currentID === held) {
     notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
   }
-  if (!archived.length) return
+  if (!archived.length || app.currentID !== held) return
   notify(archived.length === 1 ? t("toast.convoArchived") : t("toast.archivedNConvos", { count: archived.length }), {
     level: "success",
     links: [
