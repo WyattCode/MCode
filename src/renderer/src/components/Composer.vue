@@ -2202,20 +2202,26 @@ async function runSlash(at: number) {
    * `/name ` with the caret after it, because what comes next is its arguments -
    * and the rest of the draft stays.
    */
+  const originKey = draftKey.value
   const skill = serverCommand(command.trigger)?.source === "skill"
   if (command.run || skill) {
     // Only the `/query` goes. MiMo leaves whatever followed it exactly as it was, space included.
     rewrite(before + after)
-    await nextTick(resize)
+    // Sync side-effects must land on the draft/session that owned the pick, before any switch.
     if (skill) addSkill(command.trigger)
     else command.run?.()
+    await nextTick()
+    if (!composerMounted || draftKey.value !== originKey) return
+    resize()
     input.value?.setSelectionRange(before.length, before.length)
     caret.value = before.length
     return
   }
   const named = `/${command.trigger} `
   rewrite(before + named + after)
-  await nextTick(resize)
+  await nextTick()
+  if (!composerMounted || draftKey.value !== originKey) return
+  resize()
   // After the tick, because the text watcher clears this on every change.
   dismissed.value = true
   const end = before.length + named.length
