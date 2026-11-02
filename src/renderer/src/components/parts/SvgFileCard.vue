@@ -5,6 +5,7 @@ import type { MenuItem } from "../../lib/menu"
 import { t } from "../../lib/i18n"
 import { savePng, saveText } from "../../lib/native-pick"
 import { notifyFailure } from "../../lib/toast"
+import { useApp } from "../../stores/app"
 import { openImagePreview } from "../../lib/image-preview"
 import { copyImageFile, openNative } from "../../lib/path-open"
 import { blobToBase64, exportableSvg, isDarkTheme, rasterise, sanitizeSvgFence, themeBackground } from "../../lib/diagram"
@@ -136,10 +137,14 @@ async function pick(key: string) {
     return
   }
   if (key === "downloadImage") {
+    // Hold the toast to the place the person started from; leaving mid-await
+    // must not flash the download outcome onto another conversation.
+    const held = useApp().currentID
     try {
       const png = await picture()
       await savePng(`${props.name.replace(/\.svg$/i, "")}.png`, await blobToBase64(png))
     } catch {
+      if (useApp().currentID !== held) return
       notifyFailure(t("mermaid.copyImageFailed"))
     }
   }
