@@ -246,6 +246,7 @@ onBeforeUnmount(() => {
             :class="[task.status, { settled: task.status === 'done' }]"
             :style="task.depth ? { paddingInlineStart: `${task.depth * 16}px` } : undefined"
             :title="t(`info.status.${task.status}`)"
+            :aria-label="`${t(`info.status.${task.status}`)}: ${task.summary}`"
             :data-info-task="task.status"
           >
             <svg v-if="task.status === 'in_progress'" class="mark spin" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -329,6 +330,7 @@ onBeforeUnmount(() => {
               class="path"
               :class="{ clickable: canOpenReference(file) }"
               :title="file"
+              :aria-label="file"
               data-info-reference="upload"
               @click="openReference(file)"
             >
@@ -352,6 +354,7 @@ onBeforeUnmount(() => {
               class="path"
               :class="{ clickable: canOpenReference(file) }"
               :title="file"
+              :aria-label="file"
               data-info-reference="project"
               @click="openReference(file)"
             >
@@ -495,6 +498,11 @@ onBeforeUnmount(() => {
 
 .path.clickable:hover {
   background: var(--surface-hover);
+}
+
+.path.clickable:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 1px;
 }
 
 .path-name,

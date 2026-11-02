@@ -92,10 +92,21 @@ onBeforeUnmount(() => document.removeEventListener("pointerdown", outside, true)
       v-if="position"
       ref="box"
       class="cell-affordance"
+      role="group"
+      :aria-label="t('annotations.cellPlaceholder')"
       data-cell-affordance
       :style="{ left: `${position.left}px`, top: `${position.top}px` }"
     >
-      <textarea ref="field" v-model="text" rows="1" :placeholder="t('annotations.cellPlaceholder')" @keydown="onKey" @focus="emit('focus', true)" @blur="emit('focus', false)" />
+      <textarea
+        ref="field"
+        v-model="text"
+        rows="1"
+        :aria-label="t('annotations.cellPlaceholder')"
+        :placeholder="t('annotations.cellPlaceholder')"
+        @keydown="onKey"
+        @focus="emit('focus', true)"
+        @blur="emit('focus', false)"
+      />
       <button
         v-if="text.trim()"
         type="button"
@@ -183,5 +194,10 @@ onBeforeUnmount(() => document.removeEventListener("pointerdown", outside, true)
   border: 1px solid var(--border-weak);
 }
 
-
+.ca-send:focus-visible,
+.ca-stash:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 1px;
+  border-radius: 8px;
+}
 </style>

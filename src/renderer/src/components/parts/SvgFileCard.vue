@@ -23,6 +23,9 @@ import { writeText } from "./../../lib/clipboard"
 const props = defineProps<{ text: string; url: string; file: string; name: string }>()
 const emit = defineEmits<{ loaded: []; missing: [] }>()
 
+/** Ties this card's tabs to its panels; two cards in one reply must not share ids. */
+const uid = Math.random().toString(36).slice(2, 9)
+
 const tab = ref<"diagram" | "code">("diagram")
 const image = ref<"loading" | "ok" | "error">("loading")
 const copiedImage = ref(false)
@@ -145,10 +148,28 @@ const lineEnd = (index: number) => (index < lines.value.length - 1 ? "\n" : "")
       <span class="md-diagram-file" :title="name" data-svg-name>{{ name }}</span>
       <div class="md-diagram-tools">
         <div class="md-diagram-tabs" role="tablist">
-          <button type="button" role="tab" data-diagram-tab="diagram" :aria-selected="tab === 'diagram'" :class="{ on: tab === 'diagram' }" @click="tab = 'diagram'">
+          <button
+            type="button"
+            role="tab"
+            :id="`svg-tab-diagram-${uid}`"
+            :aria-controls="`svg-panel-diagram-${uid}`"
+            data-diagram-tab="diagram"
+            :aria-selected="tab === 'diagram'"
+            :class="{ on: tab === 'diagram' }"
+            @click="tab = 'diagram'"
+          >
             {{ t("mermaid.diagram") }}
           </button>
-          <button type="button" role="tab" data-diagram-tab="code" :aria-selected="tab === 'code'" :class="{ on: tab === 'code' }" @click="tab = 'code'">
+          <button
+            type="button"
+            role="tab"
+            :id="`svg-tab-code-${uid}`"
+            :aria-controls="`svg-panel-code-${uid}`"
+            data-diagram-tab="code"
+            :aria-selected="tab === 'code'"
+            :class="{ on: tab === 'code' }"
+            @click="tab = 'code'"
+          >
             {{ t("mermaid.code") }}
           </button>
         </div>
@@ -180,9 +201,24 @@ const lineEnd = (index: number) => (index < lines.value.length - 1 ? "\n" : "")
       </div>
     </div>
 
-    <div v-if="tab === 'diagram'" class="md-svg-body" data-svg-body>
+    <div
+      v-if="tab === 'diagram'"
+      class="md-svg-body"
+      role="tabpanel"
+      :id="`svg-panel-diagram-${uid}`"
+      :aria-labelledby="`svg-tab-diagram-${uid}`"
+      data-svg-body
+    >
       <div v-if="image === 'loading'" class="md-svg-wait" data-svg-wait>{{ t("markdown.imageLoading") }}</div>
-      <button v-if="image === 'error'" type="button" class="md-svg-failed" :title="t('markdown.openWithDefaultTip')" data-svg-failed @click="openWithDefault">
+      <button
+        v-if="image === 'error'"
+        type="button"
+        class="md-svg-failed"
+        :title="t('markdown.openWithDefaultTip')"
+        :aria-label="t('markdown.openWithDefaultTip')"
+        data-svg-failed
+        @click="openWithDefault"
+      >
         {{ t("markdown.imageLoadFailed") }}
       </button>
       <img
@@ -204,7 +240,14 @@ const lineEnd = (index: number) => (index < lines.value.length - 1 ? "\n" : "")
         @keydown.space.prevent="preview"
       />
     </div>
-    <pre v-else class="md-code md-lined md-diagram-source" data-svg-source><code><template v-for="(line, index) in lines" :key="index"><span class="line">{{ line }}</span>{{ lineEnd(index) }}</template></code></pre>
+    <pre
+      v-else
+      class="md-code md-lined md-diagram-source"
+      role="tabpanel"
+      :id="`svg-panel-code-${uid}`"
+      :aria-labelledby="`svg-tab-code-${uid}`"
+      data-svg-source
+    ><code><template v-for="(line, index) in lines" :key="index"><span class="line">{{ line }}</span>{{ lineEnd(index) }}</template></code></pre>
 
     <Teleport to="body">
       <ContextMenu v-if="menu" :x="menu.x" :y="menu.y" :items="menuItems" :min-width="160" end @pick="pick" @close="menu = undefined" />
@@ -266,6 +309,14 @@ const lineEnd = (index: number) => (index < lines.value.length - 1 ? "\n" : "")
 
 .text .md-svg-failed:hover {
   color: var(--text-body);
+}
+
+/* The keyboard ring the rest of the app draws, on the tabs, the copy buttons and the retry button. */
+.text .md-svg-card .md-diagram-tabs button:focus-visible,
+.text .md-svg-card .md-code-copy:focus-visible,
+.text .md-svg-failed:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 1px;
 }
 
 :root[data-theme="dark"] .text .md-svg-body {
