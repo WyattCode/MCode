@@ -102,10 +102,10 @@ async function save() {
 
 <template>
   <div class="scrim" @mousedown.self="emit('close')">
-    <div v-modal class="dialog">
+    <div v-modal class="dialog" role="dialog" aria-labelledby="proj-edit-title">
       <header>
-        <h2>{{ t("proj.editTitle") }}</h2>
-        <button class="x" v-tip="t('common.close')" @click="emit('close')">
+        <h2 id="proj-edit-title">{{ t("proj.editTitle") }}</h2>
+        <button class="x" type="button" :aria-label="t('common.close')" v-tip="t('common.close')" @click="emit('close')">
           <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
             <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
           </svg>
@@ -126,6 +126,8 @@ async function save() {
       <div class="icon-row">
         <button
           class="preview"
+          type="button"
+          :aria-label="t('proj.iconPick')"
           :class="{ dragging }"
           :style="{ '--h': color }"
           @click="file?.click()"
@@ -144,12 +146,16 @@ async function save() {
         <input ref="file" class="hidden" type="file" accept="image/*" @change="onPick" />
       </div>
 
-      <label class="label">{{ t("proj.color") }}</label>
-      <div class="swatches">
+      <label id="proj-color-label" class="label">{{ t("proj.color") }}</label>
+      <div class="swatches" role="radiogroup" aria-labelledby="proj-color-label">
         <button
           v-for="entry in COLORS"
           :key="entry"
           class="swatch"
+          type="button"
+          role="radio"
+          :aria-checked="entry===color"
+          :aria-label="t('proj.color') + ' ' + entry"
           :class="{ on: entry === color }"
           :style="{ '--h': entry }"
           @click="color = entry"
@@ -158,7 +164,7 @@ async function save() {
         </button>
       </div>
 
-      <div v-if="error" class="error">{{ error }}</div>
+      <div v-if="error" class="error" role="alert">{{ error }}</div>
 
       <footer>
         <button class="ghost" @click="emit('close')">{{ t("common.cancel") }}</button>

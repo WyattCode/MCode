@@ -184,6 +184,7 @@ async function leave() {
             v-model="draft"
             class="goal-edit"
             type="text"
+            :aria-label="t('composer.goalBar.edit')"
             spellcheck="false"
             data-goal-edit-box
             @blur="commitEdit"
@@ -198,28 +199,29 @@ async function leave() {
         </span>
 
         <template v-if="!live">
-          <button class="goal-act" type="button" data-goal-edit v-tip="{ label: t('composer.goalBar.edit'), placement: 'top' }" @click="startEdit">
+          <button class="goal-act" type="button" data-goal-edit :aria-label="t('composer.goalBar.edit')" v-tip="{ label: t('composer.goalBar.edit'), placement: 'top' }" @click="startEdit">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>
           </button>
           <button
             class="goal-act"
             type="button"
             data-goal-rerun
+            :aria-label="restricted ? t('composer.reviewRestricted') : t('composer.goalBar.resend')"
             :disabled="restricted || rerunning"
             v-tip="{ label: restricted ? t('composer.reviewRestricted') : t('composer.goalBar.resend'), placement: 'top' }"
             @click="rerun"
           >
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 1 2.3 5.6M4 12V7M4 12h5" /></svg>
           </button>
-          <button class="goal-act" type="button" data-goal-dismiss v-tip="{ label: t('composer.goalBar.dismiss'), placement: 'top' }" @click="dismiss">
+          <button class="goal-act" type="button" data-goal-dismiss :aria-label="t('composer.goalBar.dismiss')" v-tip="{ label: t('composer.goalBar.dismiss'), placement: 'top' }" @click="dismiss">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
           </button>
         </template>
         <template v-else>
-          <button class="goal-act" type="button" data-goal-remove v-tip="{ label: t('composer.goalBar.remove'), placement: 'top' }" @click="leave">
+          <button class="goal-act" type="button" data-goal-remove :aria-label="t('composer.goalBar.remove')" v-tip="{ label: t('composer.goalBar.remove'), placement: 'top' }" @click="leave">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.2h16M9 3h6M6.5 6.2 7 18.9a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l.5-12.7" /></svg>
           </button>
-          <button v-if="running" class="goal-act" type="button" data-goal-stop v-tip="{ label: t('composer.goalBar.stop'), placement: 'top' }" @click="app.abort(props.sessionID)">
+          <button v-if="running" class="goal-act" type="button" data-goal-stop :aria-label="t('composer.goalBar.stop')" v-tip="{ label: t('composer.goalBar.stop'), placement: 'top' }" @click="app.abort(props.sessionID)">
             <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6.5" y="6.5" width="11" height="11" rx="2" /></svg>
           </button>
         </template>
@@ -229,6 +231,7 @@ async function leave() {
           class="goal-act"
           type="button"
           :data-goal-toggle="expanded ? 'expanded' : 'collapsed'"
+          :aria-label="t(expanded ? 'composer.goalBar.collapse' : 'composer.goalBar.expand')"
           v-tip="{ label: t(expanded ? 'composer.goalBar.collapse' : 'composer.goalBar.expand'), placement: 'top' }"
           @click="expanded = !expanded"
         >
