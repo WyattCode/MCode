@@ -79,8 +79,8 @@ watch(
 
 <template>
   <!-- Annotations made in here go to this tab's box, not the main one. -->
-  <div class="rp-chat" data-rp-chat :data-annotate-scope="convoId ?? SIDE_SCOPE">
-    <div v-if="!messages.length" class="rp-chat-empty" :data-side-load="loadState">{{ emptyLine }}</div>
+  <div class="rp-chat" data-rp-chat :data-annotate-scope="convoId ?? SIDE_SCOPE" role="region" :aria-label="t('side.chat')">
+    <div v-if="!messages.length" class="rp-chat-empty" :data-side-load="loadState" role="status" aria-live="polite">{{ emptyLine }}</div>
     <MessageStream v-else class="rp-chat-stream" side :sideId="convoId" />
     <div class="rp-chat-dock">
       <Composer

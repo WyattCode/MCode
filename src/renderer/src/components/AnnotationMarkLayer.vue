@@ -39,7 +39,7 @@ function badgeAt(rect: { left: number; top: number }) {
 </script>
 
 <template>
-  <div ref="layer" class="mark-layer">
+  <div ref="layer" class="mark-layer" aria-hidden="true">
     <template v-for="item in items" :key="item.id">
       <div
         v-for="(rect, at) in item.rects"

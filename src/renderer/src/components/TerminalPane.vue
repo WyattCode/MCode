@@ -481,10 +481,18 @@ watch(
     class="term"
     :class="{ scrolling }"
     data-terminal-pane
+    :aria-label="t('term.inputLabel')"
     @scroll.capture="onScroll"
     @contextmenu.prevent.stop="openMenu"
   />
-  <div v-if="active && failure" class="term-host" :class="{ error: failure.error }" data-terminal-failure>{{ failure.text }}</div>
+  <div
+    v-if="active && failure"
+    class="term-host"
+    :class="{ error: failure.error }"
+    data-terminal-failure
+    :role="failure.error ? 'alert' : 'status'"
+    :aria-live="failure.error ? 'assertive' : 'polite'"
+  >{{ failure.text }}</div>
 
   <ContextMenu
     v-if="menu"
