@@ -2102,11 +2102,15 @@ export const useApp = defineStore("app", () => {
    * it" is true here. `silent` says nothing at all.
    */
   async function addProject(directory: string, options: { used?: boolean; switched?: boolean; silent?: boolean } = {}) {
+    // Hold the toast to the place the person started from; leaving mid-await
+    // must not flash the add outcome onto another chat.
+    const held = currentID.value
     const result = await api().request({ type: "project.add", directory, ...(options.used ? { used: true } : {}) })
     config.value = result.config
     if (options.silent || (result.existed && !options.switched)) return
     const name = projectName(directory, result.config.projectNames)
     // MiMo: added is a success; already there goes through its danger notice.
+    if (currentID.value !== held) return
     if (result.existed) notifyFailure(t("side.projectExists", { name }))
     else notify(t("side.projectAdded", { name }), { level: "success" })
   }
