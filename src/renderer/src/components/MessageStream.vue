@@ -447,10 +447,15 @@ function completedAt(turn: Turn): string | undefined {
  * "copy failed" notice.
  */
 async function copyToClipboard(text: string) {
+  // Hold the toast to the place the person started from; leaving mid-await
+  // must not flash the copy outcome onto another conversation.
+  const held = app.currentID
   try {
     await writeText(text)
+    if (app.currentID !== held) return
     notify(t("stream.replyCopied"))
   } catch {
+    if (app.currentID !== held) return
     notifyFailure(t("code.copyFailed"))
   }
 }
