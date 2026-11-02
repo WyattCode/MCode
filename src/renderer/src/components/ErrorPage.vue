@@ -165,12 +165,18 @@ onMounted(() => {
 
 <template>
   <div class="page">
-    <div class="panel">
+    <div
+      class="panel"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="error-page-title"
+      aria-describedby="error-page-desc"
+    >
       <div class="wordmark" aria-hidden="true" />
 
       <header>
-        <h1>{{ t("error.page.title") }}</h1>
-        <p>{{ t("error.page.description") }}</p>
+        <h1 id="error-page-title">{{ t("error.page.title") }}</h1>
+        <p id="error-page-desc">{{ t("error.page.description") }}</p>
       </header>
 
       <div class="details">
@@ -191,7 +197,7 @@ onMounted(() => {
           :aria-label="t('error.page.details.label')"
           :value="details"
         />
-        <button class="copy" :aria-label="t('edit.copy')" @click="copy">
+        <button type="button" class="copy" :aria-label="copied ? t('error.page.copied') : t('edit.copy')" @click="copy">
           <svg v-if="copied" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M3.53613 8.17857L6.39328 11.75L12.4647 4.25" stroke="currentColor" stroke-width="1" />
           </svg>
@@ -206,13 +212,13 @@ onMounted(() => {
       </div>
 
       <div class="actions">
-        <button class="action" @click="restart">{{ t("error.page.action.restart") }}</button>
-        <button v-if="canExport" class="action ghost" @click="exportLogs">
+        <button type="button" class="action" @click="restart">{{ t("error.page.action.restart") }}</button>
+        <button v-if="canExport" type="button" class="action ghost" @click="exportLogs">
           {{ t("error.page.action.exportLogs") }}
         </button>
       </div>
 
-      <p v-if="note" class="note" :class="{ failed: note.failed }">{{ note.text }}</p>
+      <p v-if="note" class="note" :class="{ failed: note.failed }" role="status" aria-live="polite">{{ note.text }}</p>
 
       <footer v-if="version">
         <p>{{ t("error.page.version", { version }) }}</p>
@@ -338,6 +344,12 @@ header p {
 .copy:hover {
   color: var(--text-strong);
   background: var(--surface-hover);
+}
+
+.copy:focus-visible,
+.action:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 /*

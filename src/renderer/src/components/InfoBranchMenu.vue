@@ -49,10 +49,15 @@ function rows(): HTMLElement[] {
   return [...(menu.value?.querySelectorAll<HTMLElement>("button.item:not(:disabled)") ?? [])]
 }
 
+function closeMenu() {
+  props.anchor?.focus({ preventScroll: true })
+  emit("close")
+}
+
 function onPointerDown(event: MouseEvent) {
   const target = event.target as Node | null
   if (!target || menu.value?.contains(target) || props.anchor?.contains(target)) return
-  emit("close")
+  closeMenu()
 }
 
 /* On the capture pass, so the card underneath never also reads this Escape as its own. */
@@ -60,10 +65,10 @@ function onKeydown(event: KeyboardEvent) {
   if (event.key !== "Escape" || event.isComposing) return
   event.preventDefault()
   event.stopPropagation()
-  emit("close")
+  closeMenu()
 }
 
-const onResize = () => emit("close")
+const onResize = () => closeMenu()
 
 onMounted(() => {
   position()
@@ -82,16 +87,22 @@ onBeforeUnmount(() => {
 <template>
   <Teleport to="body">
     <div
+      id="info-branch-menu"
       ref="menu"
       class="menu"
       role="menu"
       data-info-popover
       data-info-branch-menu
+      :aria-label="loading ? t('info.loadingBranches') : t('info.branchMenu')"
+      :aria-busy="loading || undefined"
       :style="{ top: `${place.top}px`, left: `${place.left}px`, minWidth: `${place.minWidth}px` }"
       @keydown="onMenuRowKey($event, rows())"
     >
       <div v-if="loading" class="item muted" role="menuitem" aria-disabled="true" data-info-branch-loading>
         {{ t("info.loadingBranches") }}
+      </div>
+      <div v-else-if="!branches.length" class="item muted" role="menuitem" aria-disabled="true" data-info-branch-empty>
+        {{ t("info.branchListUnavailable") }}
       </div>
       <template v-else>
         <button
@@ -149,10 +160,14 @@ onBeforeUnmount(() => {
   text-align: start;
 }
 
-.item:hover:not(.muted),
+.item:hover:not(.muted) {
+  background: var(--surface-hover);
+}
+
 .item:focus-visible {
   background: var(--surface-hover);
-  outline: none;
+  outline: 2px solid var(--interactive);
+  outline-offset: -2px;
 }
 
 .muted {

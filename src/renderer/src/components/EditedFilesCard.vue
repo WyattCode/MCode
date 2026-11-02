@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue"
+import { computed, ref, useId, watch } from "vue"
 import type { AssistantPart } from "@shared/protocol"
 import { parseUnifiedDiff } from "@shared/unified-diff"
 import { useApp } from "../stores/app"
@@ -36,6 +36,8 @@ const single = computed(() => (files.value.length === 1 ? files.value[0] : undef
 
 const expanded = ref(false)
 const confirming = ref(false)
+const filesListId = useId()
+const confirmTitleId = useId()
 const reverting = ref(false)
 
 /*
@@ -246,7 +248,7 @@ async function pickMenu(key: string) {
           </button>
         </span>
       </div>
-      <div v-if="files.length > 1" class="fc-files" data-fc-files>
+      <div v-if="files.length > 1" :id="filesListId" class="fc-files" data-fc-files>
         <button
           v-for="(file, index) in shownRows"
           :key="file.path"
@@ -270,6 +272,7 @@ async function pickMenu(key: string) {
           class="fc-more"
           data-fc-files-toggle
           :aria-expanded="expanded"
+          :aria-controls="filesListId"
           @click="expanded = !expanded"
         >
           {{ expanded ? t("stream.collapseFiles") : t("stream.showMoreFiles", { n: hiddenCount }) }}
@@ -279,8 +282,15 @@ async function pickMenu(key: string) {
         </button>
       </div>
     </div>
-    <div v-if="actions && confirming" class="fc-confirm" data-fc-confirm>
-      <div class="fc-question">
+    <div
+      v-if="actions && confirming"
+      class="fc-confirm"
+      data-fc-confirm
+      role="alertdialog"
+      aria-modal="false"
+      :aria-labelledby="confirmTitleId"
+    >
+      <div :id="confirmTitleId" class="fc-question">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <path d="M12 2 3 7v6c0 5 3.8 8.5 9 9 5.2-.5 9-4 9-9V7z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
           <path d="M12 8v4M12 16h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
@@ -550,6 +560,11 @@ async function pickMenu(key: string) {
   display: flex;
   gap: 10px;
   margin-top: 12px;
+}
+
+.fc-confirm-btn:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 1px;
 }
 
 .fc-confirm-btn {
