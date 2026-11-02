@@ -47,6 +47,11 @@ async function edit(item: QueuedPrompt) {
   if (!alive || props.sessionID !== held) return
   emit("edit", item, held)
 }
+
+/** Clear every waiting message at once, when more than one is queued and nothing runs. */
+async function clearAll() {
+  for (const item of [...queued.value]) await app.removeQueued(props.sessionID, item.id)
+}
 </script>
 
 <template>
@@ -55,23 +60,25 @@ async function edit(item: QueuedPrompt) {
       <svg class="queue-mark" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
       <span class="queue-title" data-queue-count>{{ t("composer.queue.title", { count: queued.length }) }}</span>
       <span class="queue-note">{{ running ? t("composer.queue.afterTurn") : t("composer.queue.parked") }}</span>
+      <button v-if="!running && queued.length > 1" class="queue-clear" type="button" data-queue-clear @click="clearAll">{{ t("composer.queue.clearAll") }}</button>
     </div>
     <div class="queue-scroll">
       <div v-for="item in queued" :key="item.id" class="queue-item" data-queue-item>
         <span class="queue-text" :title="item.text">{{ line(item) }}</span>
-        <button class="queue-act" type="button" data-queue-edit v-tip="{ label: t('composer.queue.edit'), placement: 'top' }" @click="edit(item)">
+        <button class="queue-act" type="button" data-queue-edit :aria-label="t('composer.queue.edit')" v-tip="{ label: t('composer.queue.edit'), placement: 'top' }" @click="edit(item)">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>
         </button>
         <button
           class="queue-act"
           type="button"
           data-queue-send
+          :aria-label="running ? t('composer.queue.steer') : t('composer.queue.sendNow')"
           v-tip="{ label: running ? t('composer.queue.steer') : t('composer.queue.sendNow'), placement: 'top' }"
           @click="app.sendQueued(props.sessionID, item.id)"
         >
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-7 7 7-7 7 7" /></svg>
         </button>
-        <button class="queue-act" type="button" data-queue-remove v-tip="{ label: t('composer.queue.remove'), placement: 'top' }" @click="app.removeQueued(props.sessionID, item.id)">
+        <button class="queue-act" type="button" data-queue-remove :aria-label="t('composer.queue.remove')" v-tip="{ label: t('composer.queue.remove'), placement: 'top' }" @click="app.removeQueued(props.sessionID, item.id)">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
         </button>
       </div>
@@ -179,4 +186,29 @@ async function edit(item: QueuedPrompt) {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+
+.queue-clear {
+  flex: none;
+  margin-inline-start: auto;
+  padding: 0 6px;
+  height: 20px;
+  color: var(--text-weak);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+
+.queue-clear:hover {
+  color: var(--text-strong);
+  background: var(--surface-selected);
+}
+
+.queue-clear:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 1px;
+}
+
 </style>

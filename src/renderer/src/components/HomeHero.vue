@@ -5,6 +5,7 @@ import { t } from "../lib/i18n"
 import { pickProjectFolder } from "../lib/native-pick"
 import { notify, notifyFailure } from "../lib/toast"
 import { reducedMotion } from "../lib/modal"
+import { shownChord } from "../lib/keys"
 import ProjectPicker from "./ProjectPicker.vue"
 import type { PickerProject } from "./ProjectPicker.vue"
 import NewProjectDialog from "./NewProjectDialog.vue"
@@ -40,6 +41,7 @@ const emit = defineEmits<{
   shell: [command: string]
   /** The project folder picked here, or nothing for a task without one. */
   directory: [directory?: string]
+  search: []
 }>()
 
 const app = useApp()
@@ -325,6 +327,7 @@ defineExpose({ focus: () => box.value?.focus() })
           />
         </div>
         <p class="slogan">{{ t("home.slogan") }}</p>
+        <button type="button" class="shortcut-hint" data-home-search @click="emit('search')">{{ t("home.shortcutHint", { chord: shownChord("Ctrl+K") }) }}</button>
       </div>
 
       <!-- MiMo's tray: the box, and fastened under it a 40px strip holding the project chip. -->
@@ -434,6 +437,24 @@ defineExpose({ focus: () => box.value?.focus() })
   cursor: pointer;
   transform-origin: 50% 100%;
   -webkit-app-region: no-drag;
+}
+
+/* A quiet hint under the greeting: the chord that opens search from here. */
+.shortcut-hint {
+  position: absolute;
+  top: 78%;
+  left: 50%;
+  padding: 2px 6px;
+  color: var(--text-weak);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  transform: translateX(-50%);
+}
+
+.shortcut-hint:hover {
+  color: var(--text-strong);
 }
 
 /* 18/600 at 0.4px on MiMo's greeting, absolutely placed at 65.5% - 195.8px down the block. */

@@ -1267,13 +1267,23 @@ const saved = ref<string>()
  */
 /* MiMo's ranges for the two size rows: UI 10-24, code 9-24. */
 const SIZE_RANGE = { uiFontSize: [10, 24], codeFontSize: [9, 24] } as const
+const sizeHint = ref<{ uiFontSize?: string; codeFontSize?: string }>({})
 
 /* As MiMo does, every keystroke that makes a whole in-range number resizes the interface live. */
 function typeSize(field: "uiFontSize" | "codeFontSize", event: Event) {
   const text = (event.target as HTMLInputElement).value.trim()
-  const value = Number(text)
   const [min, max] = SIZE_RANGE[field]
-  if (!/^\d+$/.test(text) || value < min || value > max) return
+  if (!text) return
+  const value = Number(text)
+  if (!/^\d+$/.test(text)) {
+    sizeHint.value = { ...sizeHint.value, [field]: t("set.fontSize.invalid") }
+    return
+  }
+  if (value < min || value > max) {
+    sizeHint.value = { ...sizeHint.value, [field]: t("set.fontSize.range", { min, max }) }
+    return
+  }
+  sizeHint.value = { ...sizeHint.value, [field]: undefined }
   if (value !== app.config?.[field]) void app.patchConfig({ [field]: value })
 }
 
@@ -1287,6 +1297,7 @@ function setSize(field: "uiFontSize" | "codeFontSize", event: Event, base: numbe
   const [min, max] = SIZE_RANGE[field]
   const value = !input.value.trim() || !Number.isFinite(typed) || typed <= 0 ? base : Math.round(Math.min(max, Math.max(min, typed)))
   input.value = String(value)
+  sizeHint.value = { ...sizeHint.value, [field]: undefined }
   if (value !== app.config?.[field]) void app.patchConfig({ [field]: value })
 }
 
@@ -2388,6 +2399,7 @@ onBeforeUnmount(() => {
                 <span class="unit">px</span>
               </span>
             </div>
+            <span v-if="sizeHint.uiFontSize" class="size-hint" role="status">{{ sizeHint.uiFontSize }}</span>
 
             <div class="line">
               <div class="line-text">
@@ -2409,6 +2421,7 @@ onBeforeUnmount(() => {
                 <span class="unit">px</span>
               </span>
             </div>
+            <span v-if="sizeHint.codeFontSize" class="size-hint" role="status">{{ sizeHint.codeFontSize }}</span>
 
             <div class="line">
               <div class="line-text">
@@ -6133,5 +6146,14 @@ h3 {
   :root:not([data-theme="light"]):root[data-motion="on"] .sr-hit {
     background: #ffffff1a;
   }
+}
+
+.size-hint {
+  display: block;
+  margin: -6px 0 10px;
+  padding-inline-start: 2px;
+  color: var(--state-fg-warning, var(--text-weak));
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  line-height: 1.3;
 }
 </style>
