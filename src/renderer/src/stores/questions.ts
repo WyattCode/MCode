@@ -213,7 +213,10 @@ export const useQuestions = defineStore("questions", () => {
       if (target) await app.setAccess(target, "auto")
       else await app.patchConfig({ accessLevel: "auto" }, { quiet: true })
     } catch (failure) {
-      notifyFailure(t("composer.access.failed"), failure instanceof Error ? failure.message : String(failure))
+      // Left mid-await → do not flash the failure on another conversation.
+      if (!target || app.currentID === target) {
+        notifyFailure(t("composer.access.failed"), failure instanceof Error ? failure.message : String(failure))
+      }
     }
   }
 
