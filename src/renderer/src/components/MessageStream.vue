@@ -1694,6 +1694,7 @@ defineExpose({ stepMessage, scroller })
             <textarea
               v-model="editDraft"
               rows="1"
+              :aria-label="t('stream.editPlaceholder')"
               :placeholder="t('stream.editPlaceholder')"
               :aria-label="t('stream.editPlaceholder')"
               spellcheck="false"
@@ -2437,6 +2438,11 @@ defineExpose({ stepMessage, scroller })
   font-family: inherit;
   font-size: calc(14px * var(--ui-font-scale, 1));
   line-height: calc(20px * var(--ui-font-scale, 1));
+}
+
+.asked-edit textarea:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 .asked-edit-actions {

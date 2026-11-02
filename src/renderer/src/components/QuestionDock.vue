@@ -107,18 +107,8 @@ function onDockKey(event: KeyboardEvent) {
  * What the dock is called and what it describes, by the ids its cards give
  * their drawn title and subject. Only one card is drawn at a time.
  */
-/*
- * Only ids that the drawn card actually mounts. A static list used to name
- * asker/chip even when those nodes were absent, which left the alertdialog
- * labelled by missing targets on Linux assistive tech.
- */
-const labelledBy = computed(() => {
-  const ids: string[] = []
-  if (asker.value && !questions.guide) ids.push("confirm-dock-asker")
-  ids.push("confirm-dock-title")
-  return ids.join(" ")
-})
-const describedBy = computed(() => "confirm-dock-desc")
+const LABELLED_BY = ["confirm-dock-asker", "confirm-dock-title", "confirm-dock-chip"]
+const DESCRIBED_BY = ["confirm-dock-desc"]
 
 // A new request, or the guide giving way to its card, is taken up the same way.
 watch(
@@ -131,7 +121,7 @@ watch(
        * Beyond MiMo, whose dock is silent: the turn has stopped to wait, and
        * focus alone is not enough - it stays in a composer that holds a draft.
        */
-      announce(textOf([...labelledBy.value.split(" ").filter(Boolean), describedBy.value]), "assertive")
+      announce(textOf([...LABELLED_BY, ...DESCRIBED_BY]), "assertive")
     })
   },
   { immediate: true },
@@ -151,8 +141,9 @@ watch(
       data-confirm-dock
       tabindex="-1"
       role="alertdialog"
-      :aria-labelledby="labelledBy"
-      :aria-describedby="describedBy"
+      aria-modal="true"
+      :aria-labelledby="LABELLED_BY.join(' ')"
+      :aria-describedby="DESCRIBED_BY.join(' ')"
       @keydown="onDockKey"
       @pointerdown="engage"
     >
@@ -238,6 +229,11 @@ watch(
   border-radius: 20px;
   box-shadow: 0 2px 10px #0000000a;
   outline: none;
+}
+
+.confirm-dock:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 .perm-guide {

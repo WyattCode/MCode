@@ -226,6 +226,7 @@ function onEditKey(event: KeyboardEvent) {
               class="ann-edit-input"
               :data-ann-edit-input="entry.index"
               rows="1"
+              :aria-label="t('annotations.editPlaceholder')"
               :placeholder="t('annotations.editPlaceholder')"
               @input="grow($event.target as HTMLTextAreaElement)"
               @blur="saveEdit"
@@ -455,6 +456,11 @@ function onEditKey(event: KeyboardEvent) {
   resize: none;
   font: inherit;
   font-size: calc(12px * var(--ui-font-scale, 1));
+}
+
+.ann-edit-input:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 /* Dark: MiMo's chip fill and ink, and its --color-bg popup. */

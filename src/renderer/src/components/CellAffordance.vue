@@ -171,6 +171,11 @@ onBeforeUnmount(() => document.removeEventListener("pointerdown", outside, true)
   line-height: 18px;
 }
 
+.cell-affordance textarea:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
 .ca-send,
 .ca-stash {
   display: grid;
