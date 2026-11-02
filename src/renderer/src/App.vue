@@ -2439,7 +2439,8 @@ async function stepRecent(by: 1 | -1) {
   walk.at = (walk.at + by + walk.order.length) % walk.order.length
   const target = walk.order[walk.at]
   if (target !== app.currentID) await app.open(target)
-  view.value = "session"
+  // Left for another conversation while open was in flight: do not force the session view for the abandoned walk target.
+  if (app.currentID === target) view.value = "session"
 }
 
 function endRecentWalk(event?: KeyboardEvent) {
