@@ -2305,6 +2305,8 @@ async function openFromSide(sessionID: string) {
 /* subagents: MiMo 26.920's chip on a side column row - the conversation, then its 子智能体 tab. */
 async function openSubagentsFromSide(sessionID: string) {
   await openFromSide(sessionID)
+  // Left for another conversation while open was in flight: do not open subagents against the new one.
+  if (app.currentID !== sessionID) return
   rp.openSubagents()
 }
 
@@ -2317,6 +2319,8 @@ async function openFromArtifacts(sessionID: string) {
 /* A8: a conversation found by what was said in it opens at that message, as MiMo's requestReveal does. */
 async function openFromSearch(sessionID: string, messageID?: string) {
   await openFromArtifacts(sessionID)
+  // Left for another conversation while open was in flight: do not reveal against the new one.
+  if (app.currentID !== sessionID) return
   if (messageID) app.revealMessage(messageID)
 }
 
