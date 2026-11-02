@@ -1946,6 +1946,8 @@ async function runSessionMenu(key: string) {
     view.value = "session"
     await app.open(target)
   }
+  // Left for another conversation while open was in flight: do not run the row command against the screen now.
+  if (app.currentID !== target) return
   await commands.value.find((entry) => entry.id === key)?.run()
 }
 
