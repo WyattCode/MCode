@@ -33,6 +33,8 @@ const phase = ref<"gen" | "commit" | "push" | null>(null)
 const error = ref("")
 const done = ref("")
 const pickerOpen = ref(false)
+// Closed / remounted mid-flight: in-flight commit/push must not paint this instance.
+let alive = true
 
 const busy = computed(() => action.value !== null)
 
@@ -136,12 +138,13 @@ function pushError(result: PushResult): string {
 }
 
 async function runPush(which: Action): Promise<void> {
-  const directory = props.directory
   action.value = which
   phase.value = "push"
+  const directory = props.directory
   try {
     const result = await app.client?.request({ type: "git.push", directory })
-    if (props.directory !== directory) return
+    // Mid-flight project switch must not push/paint another repo.
+    if (!alive || props.directory !== directory) return
     if (!result) {
       error.value = t("info.pushError.generic")
       return
@@ -149,7 +152,7 @@ async function runPush(which: Action): Promise<void> {
     if (result.ok) done.value = t("info.pushDone")
     else error.value = pushError(result)
   } catch (err) {
-    if (props.directory !== directory) return
+    if (!alive || props.directory !== directory) return
     error.value = `${t("info.pushError.generic")}: ${err instanceof Error ? err.message : String(err)}`
   }
 }
@@ -157,10 +160,13 @@ async function runPush(which: Action): Promise<void> {
 async function commit(andPush: boolean) {
   if (!canCommit.value || !state.value) return
   const which: Action = andPush ? "commitPush" : "commit"
-  const directory = props.directory
   error.value = ""
   done.value = ""
   action.value = which
+  const directory = props.directory
+  const sessionID = props.sessionId
+  const paths = state.value.changedPaths
+  const unstaged = includeUnstaged.value
   try {
     let text = message.value.trim()
     if (!text) {
@@ -169,17 +175,16 @@ async function commit(andPush: boolean) {
         const generated = await app.client?.request({
           type: "git.commitMessage",
           directory,
-          ...(props.sessionId ? { sessionID: props.sessionId } : {}),
-          paths: state.value.changedPaths,
+          ...(sessionID ? { sessionID } : {}),
+          paths,
         })
         text = generated?.message ?? ""
       } catch {
         text = ""
       }
-      if (props.directory !== directory) return
       // Gen failed or never arrived: refuse a silent "update" commit; surface the miss.
       if (!text) {
-        error.value = t("common.requestFailed")
+        if (alive && props.directory === directory) error.value = t("common.requestFailed")
         return
       }
     }
@@ -190,12 +195,13 @@ async function commit(andPush: boolean) {
         type: "git.commit",
         directory,
         message: text,
-        includeUnstaged: includeUnstaged.value,
+        includeUnstaged: unstaged,
       })
     } catch (err) {
       result = { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
-    if (props.directory !== directory) return
+    // Mid-flight project switch must not commit/paint another repo.
+    if (!alive || props.directory !== directory) return
     if (!result) {
       error.value = t("info.commitError.generic")
       return
@@ -220,11 +226,12 @@ async function commit(andPush: boolean) {
 
 async function push() {
   if (!canPush.value) return
+  const directory = props.directory
   error.value = ""
   done.value = ""
   try {
     await runPush("push")
-    emit("mutated")
+    if (alive && props.directory === directory) emit("mutated")
   } finally {
     action.value = null
     phase.value = null
@@ -300,6 +307,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  alive = false
   observer?.disconnect()
   window.removeEventListener("mousedown", onPointerDown, true)
   window.removeEventListener("keydown", onKeydown, true)
@@ -318,7 +326,6 @@ watch(
       ref="card"
       class="card"
       role="dialog"
-      aria-modal="true"
       :aria-label="t('info.commitOrPush')"
       data-info-popover
       data-info-commit-card
@@ -331,7 +338,6 @@ watch(
         :disabled="!state?.branch || switching || busy"
         aria-haspopup="menu"
         :aria-expanded="pickerOpen"
-        :aria-controls="pickerOpen ? 'info-branch-menu' : undefined"
         data-info-commit-branch
         @click="togglePicker"
       >
@@ -576,15 +582,6 @@ watch(
   background: var(--surface-hover);
 }
 
-.picker:focus-visible,
-.retry:focus-visible,
-.dirty-go:focus-visible,
-.dirty-cancel:focus-visible,
-.row.actionable:focus-visible {
-  outline: 2px solid var(--interactive);
-  outline-offset: 2px;
-}
-
 .message {
   width: 100%;
   padding: 4px;
@@ -599,11 +596,6 @@ watch(
 
 .message::placeholder {
   color: var(--text-weak);
-}
-
-.message:focus-visible {
-  outline: 2px solid var(--interactive);
-  outline-offset: 2px;
 }
 
 .row {
