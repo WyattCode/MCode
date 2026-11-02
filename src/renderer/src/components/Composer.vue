@@ -590,6 +590,9 @@ async function onPaste(event: ClipboardEvent) {
     const next = insertFence(text.value, box.selectionStart, box.selectionEnd, language, pasted)
     text.value = next.text
     await nextTick()
+    // The draft may have left while the fence was being written; its watcher
+    // already saved it, so only the caret work belongs to the draft on screen.
+    if (!composerMounted || draftKey.value !== originKey) return
     resize()
     box.focus({ preventScroll: true })
     box.setSelectionRange(next.caret, next.caret)
@@ -622,6 +625,9 @@ async function onPaste(event: ClipboardEvent) {
   const at = start + pasted.length
   caret.value = at
   await nextTick()
+  // Same held-draft guard: the text is saved for the origin draft, so skip
+  // focus and selection against whichever draft is now on screen.
+  if (!composerMounted || draftKey.value !== originKey) return
   resize()
   box?.focus({ preventScroll: true })
   box?.setSelectionRange(at, at)
