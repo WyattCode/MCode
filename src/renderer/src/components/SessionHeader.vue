@@ -55,6 +55,13 @@ function showTitle() {
 
 onMounted(showTitle)
 watch(title, () => void nextTick(showTitle))
+/* Switching conversations while the title is being edited must not carry the draft over: cancel so the field snaps back to the new session's name. */
+watch(
+  () => app.currentID,
+  () => {
+    if (editing.value) cancelEdit()
+  },
+)
 
 function beginEdit() {
   const el = titleEl.value
