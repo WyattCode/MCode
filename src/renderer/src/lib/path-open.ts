@@ -5,6 +5,7 @@ import type { MenuItem } from "./menu"
 import { mediaOf, type PathKind } from "./markdown"
 import { base64ToBlob, toPng, writeClipboardPng } from "./diagram"
 import { writeText } from "./clipboard"
+import { useApp } from "../stores/app"
 
 /**
  * What a path in a reply does, as MiMo has it: a file goes to its default
@@ -145,10 +146,14 @@ export async function runPathMenu(key: string, target: PathTarget, platform: str
     return
   }
   if (key === "copyImage") {
+    // Hold the toast to the conversation the copy started in; leaving mid-await must not flash it elsewhere.
+    const held = useApp().currentID
     try {
       await copyImageFile(target.path)
+      if (useApp().currentID !== held) return
       notify(t("officeCard.copiedImage"))
     } catch {
+      if (useApp().currentID !== held) return
       notifyFailure(t("officeCard.copyImageFailed"))
     }
     return
