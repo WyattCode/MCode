@@ -96,6 +96,7 @@ async function checkout(branch: string, force = false) {
   const directory = props.directory
   if (!directory) return
   const outcome = await switchBranch(directory, branch, state.value?.branch, force)
+  if (props.directory !== directory) return
   if (outcome.kind === "unchanged") return
   if (outcome.kind === "switched") {
     if (outcome.conflicts) notifyFailure(t("home.branchSwitchedConflicts", { branch: outcome.branch }))
@@ -123,6 +124,7 @@ async function create() {
   busy.value = true
   try {
     const result = await app.client?.request({ type: "git.checkout", directory, branch, create: true })
+    if (props.directory !== directory) return
     if (!result) {
       notifyFailure(t("home.branchCreateFailed", { error: t("common.requestFailed") }))
       return
