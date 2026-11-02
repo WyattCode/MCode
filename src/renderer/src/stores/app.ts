@@ -191,6 +191,8 @@ export const useApp = defineStore("app", () => {
   const error = ref<string>()
   /** Why the open conversation's last turn ended in an error, for the banner under its transcript. */
   const turnError = ref<string>()
+  /** L12-3: keys saved unencrypted because the system has no secure storage. */
+  const credentialsPlaintext = ref(false)
 
   /*
    * Side chats: conversations started beside the open one, in the side column.
@@ -1053,7 +1055,44 @@ export const useApp = defineStore("app", () => {
     // L12-2: the keys and sign-ins are a file of their own, and their loss is said on its own.
     if (settings.credentialsUnreadable) notice.warning(t("error.credentialsInvalid"), { duration: 0 })
     // L12-3: MiMo refuses to save without secure storage; this keeps them in plain text and says so.
-    else if (settings.credentialsPlaintext) notice.warning(t("error.credentialsPlaintext"), { duration: 0 })
+    // Linux without a keyring is a common long-lived state: dismissible + Fix / Don't show again,
+    // rather than a permanent pink bar with no next step (UI trust review P0).
+    credentialsPlaintext.value = Boolean(settings.credentialsPlaintext)
+    if (!settings.credentialsUnreadable && settings.credentialsPlaintext) {
+      const DISMISS_KEY = "mcode.secure-storage-dismissed-v1"
+      let dismissed = false
+      try {
+        dismissed = globalThis.localStorage?.getItem(DISMISS_KEY) === "1"
+      } catch {
+        dismissed = false
+      }
+      if (!dismissed) {
+        notice.warning(t("error.credentialsPlaintext"), {
+          duration: 0,
+          id: "credentials-plaintext",
+          links: [
+            {
+              label: t("error.credentialsPlaintextFix"),
+              run: () => {
+                window.dispatchEvent(new CustomEvent("mcode:open-settings", { detail: "general" }))
+              },
+            },
+            {
+              label: t("error.credentialsPlaintextHide"),
+              run: () => {
+                try {
+                  globalThis.localStorage?.setItem(DISMISS_KEY, "1")
+                } catch {
+                  // Storage may be unavailable in locked-down profiles.
+                }
+              },
+            },
+          ],
+        })
+      }
+    } else if (!settings.credentialsUnreadable) {
+      credentialsPlaintext.value = false
+    }
     providers.value = (await instance.request({ type: "provider.list" })).providers
     const listed = await instance.request({ type: "session.list" })
     // subagents: listed apart from both, as their own conversations are.
@@ -2036,6 +2075,23 @@ export const useApp = defineStore("app", () => {
    * that was not saved falls back to the value that was. `quiet` is for callers
    * that say their own failure.
    */
+
+  /** Re-read whether secure storage is available (Settings · General). */
+  async function recheckSecureStorage(): Promise<boolean> {
+    const settings = await api().request({ type: "config.get" })
+    credentialsPlaintext.value = Boolean(settings.credentialsPlaintext)
+    if (!credentialsPlaintext.value) {
+      notice.dismiss("credentials-plaintext")
+      // Once the keyring works, forget a prior "don't show again" so a later regression warns again.
+      try {
+        globalThis.localStorage?.removeItem("mcode.secure-storage-dismissed-v1")
+      } catch {
+        // ignore
+      }
+    }
+    return !credentialsPlaintext.value
+  }
+
   async function patchConfig(patch: Partial<AppConfig>, options: { quiet?: boolean } = {}) {
     let failure: unknown
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -2447,6 +2503,8 @@ export const useApp = defineStore("app", () => {
     compacting,
     error,
     turnError,
+    credentialsPlaintext,
+    recheckSecureStorage,
     config,
     providers,
     commands,

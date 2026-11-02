@@ -48,7 +48,7 @@ export interface LaunchedBrowser {
  * took into DevToolsActivePort in the profile folder; that is read rather than
  * a port picked here, which could be taken by the time the browser binds it.
  */
-export async function launchBrowser(executable: string, timeoutMs = 15_000): Promise<LaunchedBrowser> {
+export async function launchBrowser(executable: string, timeoutMs = 15_000, options: { headless?: boolean } = {}): Promise<LaunchedBrowser> {
   const profile = await fsp.mkdtemp(path.join(os.tmpdir(), "mcode-app-browser-"))
   /*
    * Edge signs even a brand-new profile into the Windows account by itself and
@@ -61,8 +61,11 @@ export async function launchBrowser(executable: string, timeoutMs = 15_000): Pro
     executable,
     [
       "--remote-debugging-port=0",
+      // The page checker has no one to show a window to: it loads a page, looks, and closes.
+      ...(options.headless ? ["--headless=new", "--disable-gpu"] : []),
       "--disable-sync",
-      ...(edge ? ["--guest"] : []),
+      // Not when headless: a headless guest Edge refuses to open a tab (measured), and with no window and a throwaway profile there is nothing to keep an account out of.
+      ...(edge && !options.headless ? ["--guest"] : []),
       `--user-data-dir=${profile}`,
       "--no-first-run",
       "--no-default-browser-check",

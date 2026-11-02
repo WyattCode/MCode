@@ -35,7 +35,7 @@ import { findTool, forModel, hasOwnToolsOnly, reachOf, repairableNames, toolsFor
 import { normalizeToolInput, resolveToolName } from "../tool/repair"
 import { inputForTool } from "../provider/tool-schema"
 import { Questions } from "../tool/question"
-import type { PlanControl, SubagentControl, SubagentSpec, ToolContext, ToolDefinition, ToolResult } from "../tool/types"
+import type { FanoutControl, FanoutOutcome, PlanControl, SubagentControl, SubagentSpec, ToolContext, ToolDefinition, ToolResult } from "../tool/types"
 import { instructionsIn } from "../tool/read"
 import { keepReadCopy } from "../tool/read-media"
 import { ToolError } from "../tool/types"
@@ -253,6 +253,18 @@ const REVIEW_SYSTEM = [
 /** MiMo's judge answers in one small tool call. */
 const REVIEW_OUTPUT_TOKENS = 64
 
+/**
+ * fanout: how many single-shot requests run at once unless the call says. Four,
+ * not the most a provider takes: a local server with five lanes keeps one free
+ * for the conversation's own next request, and measured on one such server the
+ * total speed stops growing past four or five streams anyway.
+ */
+const FANOUT_CONCURRENCY = 4
+/** fanout: the most a call may ask to run at once. */
+const FANOUT_MAX_CONCURRENCY = 8
+/** fanout: the system text of a call that gave none; some providers refuse an empty one. */
+const FANOUT_SYSTEM = "Answer the request with exactly what it asks for, and nothing else."
+
 /** The review sees the user's last three requests, each cut at 400 characters. */
 const REVIEW_REQUESTS = 3
 const REVIEW_REQUEST_CHARS = 400
@@ -301,10 +313,10 @@ const TITLE_SOURCE_CHARS = 4000
  * subagent has no plan to put to anyone - MiMo denies it to every agent but
  * its two primary ones for the same reason.
  */
-const SUBAGENT_WITHHELD = new Set(["actor", "contacts", "talk_to_session", "create_session", "update_session", "automation_update", "plan_exit", "question"])
+const SUBAGENT_WITHHELD = new Set(["actor", "fanout", "contacts", "talk_to_session", "create_session", "update_session", "automation_update", "plan_exit", "question"])
 
 /** plan: the tools whose behaviour depends on whether the conversation is planning. */
-const PLAN_AWARE = new Set(["write", "edit", "notebook_edit", "patch", "plan_exit"])
+const PLAN_AWARE = new Set(["write", "edit", "notebook_edit", "patch", "plan_exit", "fanout"])
 
 export class SessionRunner {
   private readonly running = new Map<string, AbortController>()
@@ -3209,8 +3221,13 @@ export class SessionRunner {
         systemTail,
         history: sentHistory,
         tools: sentTools,
-        // MiMo's last step: the tools stay defined, since the history carries calls to them, but none may be called.
-        ...(lastStep ? { toolChoice: "none" as const } : {}),
+        /*
+         * MiMo's last step: the tools stay defined, since the history carries calls to them, but none may be called.
+         * Not asked of a local server: its chat template leaves the tools out of the prompt at `none`, which starts its
+         * cache over (measured on the user's Qwen: 48 s against 0.5 s at 105k tokens). The instruction says it, and a
+         * call made anyway is dropped below.
+         */
+        ...(lastStep && !this.isLocal(session) ? { toolChoice: "none" as const } : {}),
         effort: effort ?? "",
 
         signal: controller.signal,
@@ -3371,10 +3388,8 @@ export class SessionRunner {
       const replied = textOf(assistant).slice(said.length)
       /* The stream was cut mid-reply for repeating itself, as MiMo cuts its own. */
       const looped = outcome.finishReason === LOOP_FINISH
-      if (looped) {
-        // A call announced while the stream was cut never ran and has no settled arguments to run with.
-        assistant.parts = assistant.parts.filter((part) => part.type !== "tool")
-      }
+      // A call announced while the stream was cut never ran and has no settled arguments to run with; one made on the last step may not run at all.
+      if (looped || lastStep) assistant.parts = assistant.parts.filter((part) => part.type !== "tool")
       const repeatNote = repeatNoteFor(replied, repeated)
       if (repeatNote) {
         repeated += 1
@@ -3414,7 +3429,7 @@ export class SessionRunner {
 
       let pending = assistant.parts.filter((part): part is ToolPart => part.type === "tool")
       if (outcome.stop !== "tool_use" || pending.length === 0) {
-        const next = continuationFor(assistant, outcome.stop, outcome.finishReason, session.model.model, continued, said)
+        const next = continuationFor(assistant, outcome.stop, outcome.finishReason, session.model.model, continued, said, step === 0 && this.isLocal(session))
         /*
          * One copy of each note per message. A reply cut twice hangs both of
          * its notes off the same message now that a continuation stays in it,
@@ -4166,6 +4181,8 @@ export class SessionRunner {
         subagents: this.workers.has(input.session.id)
           ? undefined
           : this.subagentControl({ parentID: input.session.id, messageID: assistant.id, callID: part.callID, signal: input.signal }),
+        // fanout: offered to a conversation's own calls only, as the subagents are.
+        fanout: this.workers.has(input.session.id) || tool.name !== "fanout" ? undefined : this.fanoutControl({ sessionID: input.session.id, signal: input.signal }),
         progress: (text) => {
           // As MiMo's metadata updates: only while the call runs, so a late write never replaces a finished result.
           if (part.status !== "running") return
@@ -4394,6 +4411,122 @@ export class SessionRunner {
     if (!owner || !child.parentID) return []
     const tasks = (await this.store.get(child.parentID))?.tasks ?? []
     return listedTasks(tasks, {}, Date.now()).filter((task) => task.owner === owner)
+  }
+
+  /**
+   * fanout: single-shot generations on the conversation's own model, run side
+   * by side. Not subagents: there is no conversation, no tools and no agent
+   * loop behind a request, only one prompt in and one text out, so each costs
+   * what it writes and nothing else, and thinking can be switched off for the
+   * ones whose job is to write what was already planned.
+   */
+  private fanoutControl(call: { sessionID: string; signal: AbortSignal }): FanoutControl {
+    return {
+      generate: async (items, options, hooks) => {
+        const session = await this.store.require(call.sessionID)
+        const definition = this.config.definition(session.model.provider)
+        if (!definition || !this.config.usable(session.model.provider)) throw new ToolError("This conversation's model is not available for fanout.")
+        const adapter: ProviderAdapter = adapterFor(definition.kind)
+        const apiKey = this.config.apiKey(definition.id) ?? ""
+        const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
+        const off = options.effort === "off"
+        const variants = this.config.variants(session.model)
+        const entry = this.config.modelEntry(session.model)
+        const system = options.system ?? FANOUT_SYSTEM
+        /*
+         * Thinking is switched off by whatever this provider understands: Anthropic's
+         * own flag, a local server's chat template, or the level `none`. Where none of
+         * those exists the model thinks at its default, and the result says so.
+         */
+        const offExtra = off ? thinkingOffExtra(session.model.provider, definition.kind, definition.handEntered === true, definition.baseURL) : undefined
+        const offByLevel = off && !offExtra && definition.kind !== "anthropic" && variants?.includes("none") === true
+        const offUnavailable = off && !offExtra && definition.kind !== "anthropic" && !offByLevel
+        // The level a turn of this conversation would send, by the same rule; one this model does not offer is clamped as a turn's is, and the result says so.
+        const menu = this.config.menu(session.model)
+        const asked = options.effort === "off" ? undefined : options.effort
+        const effort = off ? (offByLevel ? "none" : "") : effortToSend(menu.levels, asked ?? session.effort ?? this.config.get().effort, menu.preferred) ?? ""
+        const clamped = asked && asked !== effort ? `${session.model.model} has no "${asked}" thinking level, so these answers were written at ${effort ? `"${effort}"` : "its default level"}.` : undefined
+        const note = offUnavailable ? `Thinking could not be switched off on ${session.model.provider}, so these answers were written at its default thinking level.` : clamped
+        const ceiling = maxOutputTokens(session.model, entry)
+        const results: FanoutOutcome[] = new Array(items.length)
+        const limit = Math.max(1, Math.min(options.concurrency ?? FANOUT_CONCURRENCY, FANOUT_MAX_CONCURRENCY, items.length))
+        let next = 0
+        let finished = 0
+        const work = async () => {
+          for (;;) {
+            const at = next++
+            if (at >= items.length) return
+            const item = items[at]!
+            let started = Date.now()
+            let text = ""
+            try {
+              // Another request on this provider was told to wait: as a turn does, this one waits too rather than earning another 429.
+              for (let held = cooldownLeft(session.model.provider); held >= 1000; held = cooldownLeft(session.model.provider)) {
+                if (!(await waitFor(held, call.signal))) throw new DOMException("Aborted", "AbortError")
+                started = Date.now()
+              }
+              const outcome = await adapter.stream(
+                {
+                  apiKey: tokens?.access ?? apiKey,
+                  model: session.model,
+                  system,
+                  history: [
+                    {
+                      id: `${session.id}:fanout:${item.name}`,
+                      sessionID: session.id,
+                      role: "user",
+                      text: item.prompt,
+                      attachments: [],
+                      time: { created: Date.now() },
+                    },
+                  ],
+                  tools: [],
+                  effort,
+                  // An empty list withholds the level; thinking is switched off through the body fields instead.
+                  variants: effort ? variants : [],
+                  // A provider's switches as a turn sends them (xAI's store:false, OpenRouter's usage), then the one that turns thinking off.
+                  extra: { ...providerExtras(session.model.provider, entry?.reasoning === true, session.id), ...offExtra },
+                  sampling: samplingFor(session.model.model, entry?.temperature === true),
+                  inputs: modelInputs(entry),
+                  interleaved: interleavedField(definition.kind, session.model, entry),
+                  sessionID: session.id,
+                  cacheTTL: entry?.cacheTTL,
+                  ...(off ? { thinkingOff: true } : {}),
+                  signal: call.signal,
+                  baseURL: definition.baseURL,
+                  headers: definition.headers,
+                  accountId: tokens?.accountId,
+                  // The model's own ceiling and context window, as an ordinary turn is held to them; a call may only ask for less.
+                  maxOutput: fitOutput(Math.min(options.maxTokens ?? ceiling, ceiling), entry, { measured: 0, estimated: Math.ceil((system.length + item.prompt.length) / 3) }),
+                  outputLimit: entry?.maxOutput,
+                },
+                (event) => {
+                  if (event.type === "text.delta") text += event.text
+                },
+              )
+              this.noteBackground(session.id, session.model, outcome.usage, "fanout")
+              results[at] = {
+                name: item.name,
+                ok: true,
+                text,
+                seconds: (Date.now() - started) / 1000,
+                stop: outcome.stop,
+                ...(outcome.usage ? { usage: { input: outcome.usage.input, output: outcome.usage.output, reasoning: outcome.usage.reasoning } } : {}),
+                ...(note ? { note } : {}),
+              }
+            } catch (failure) {
+              const decision = call.signal.aborted ? undefined : retryDecision(failure, 1, 0, Math.random(), "request")
+              if (decision?.kind === "rate_limit") noteRateLimit(session.model.provider, Date.now() + decision.wait)
+              results[at] = { name: item.name, ok: false, text: "", seconds: (Date.now() - started) / 1000, error: call.signal.aborted ? "cancelled" : describe(failure) }
+            }
+            finished++
+            hooks?.done?.(results[at]!, finished, items.length)
+          }
+        }
+        await Promise.all(Array.from({ length: limit }, work))
+        return results
+      },
+    }
   }
 
   /** subagents: the actor tool's actions, bound to the conversation and call they were asked from. */

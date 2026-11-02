@@ -60,7 +60,7 @@ export async function roundFiftyThreeChecks(check: Check, section: (name: string
   check("a side chat's level never becomes the app's", /if \(!target \|\| !isSide\(target\)\) await patchConfig\(\{ effort \}\)/.test(store))
   const composer = source("src/renderer/src/components/Composer.vue")
   check("the chip names the conversation's level first", /clampEffort\(variants\.value, session\.value\?\.effort \?\? app\.config\?\.effort/.test(composer))
-  check("choosing a model moves that conversation's level, not everyone's", /app\.setEffort\(effort, sessionID\.value\)/.test(composer) && /app\.setEffort\(level, sessionID\.value\)/.test(composer))
+  check("choosing a model moves that conversation's level, not everyone's", /app\.setEffort\(effort, target\)/.test(composer) && /app\.setEffort\(level, target\)/.test(composer))
   check("with thinking off the pill names only the model", /level && level !== "none" \? t\(effortLabelKey/.test(composer))
   const app = source("src/renderer/src/App.vue")
   check("the keyboard steps the open conversation's level", (app.match(/app\.current\?\.effort \?\? app\.config\?\.effort/g) ?? []).length === 2)

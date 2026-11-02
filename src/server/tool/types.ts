@@ -56,6 +56,11 @@ export interface ToolContext {
    * Absent inside a subagent, which cannot start or manage subagents of its own.
    */
   subagents?: SubagentControl
+  /**
+   * fanout: single-shot generations on the conversation's own model, run side
+   * by side. Absent inside a subagent, like `subagents`.
+   */
+  fanout?: FanoutControl
   /** subagents: set when the call comes from a subagent's conversation. */
   subagent?: boolean
   /** session chat: messaging the other conversations. Absent inside a subagent. */
@@ -136,6 +141,44 @@ export interface SubagentControl {
   cancel(subagentID: string): Promise<ToolResult>
   send(subagentID: string, message: string): Promise<ToolResult>
   models(options: { vision: boolean; limit?: number }): Promise<ToolResult>
+}
+
+/** fanout: one request to run, named so its answer can be told apart from the others. */
+export interface FanoutItem {
+  name: string
+  prompt: string
+}
+
+/** fanout: how a batch of requests runs. */
+export interface FanoutOptions {
+  /** One system text shared by every request; the part that is the same for all of them. */
+  system?: string
+  /** `off` switches thinking off for these requests; a level asks for that effort; absent follows the conversation. */
+  effort?: "off" | "low" | "medium" | "high" | "xhigh"
+  /** Output limit for each request, in tokens. */
+  maxTokens?: number
+  /** How many run at once; the runner clamps it to what is sensible. */
+  concurrency?: number
+}
+
+/** fanout: how one request ended. A failure is a result, not a throw, so the others still come back. */
+export interface FanoutOutcome {
+  name: string
+  ok: boolean
+  /** What the model wrote; empty when it failed. */
+  text: string
+  seconds: number
+  /** Why it stopped: end_turn, max_tokens, or refusal. */
+  stop?: string
+  usage?: { input: number; output: number; reasoning: number }
+  error?: string
+  /** Something about how the request ran that the model should be told, such as thinking that could not be switched off. */
+  note?: string
+}
+
+/** fanout: what the fanout tool asks of the runner. */
+export interface FanoutControl {
+  generate(items: FanoutItem[], options: FanoutOptions, hooks?: { done?: (outcome: FanoutOutcome, finished: number, total: number) => void }): Promise<FanoutOutcome[]>
 }
 
 export interface ToolResult {
