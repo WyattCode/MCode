@@ -1958,7 +1958,16 @@ watch(
   draftKey,
   (next, previous) => {
     historyIndex.value = null
-    if (previous) saveDraft(previous)
+    if (previous) {
+      // Shell mode and open menus belong to the conversation being left, not the
+      // one being restored. Gated on `previous` so the immediate first run never
+      // touches `menu`, which is declared later in this file.
+      mode.value = "normal"
+      menu.value = undefined
+      skillSubOpen.value = false
+      skillQuery.value = ""
+      saveDraft(previous)
+    }
     const kept = drafts.get(next)
     text.value = kept?.text ?? ""
     attachments.value = kept?.attachments ?? []
