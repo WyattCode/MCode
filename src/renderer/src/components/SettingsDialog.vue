@@ -2208,7 +2208,7 @@ onBeforeUnmount(() => {
           -->
           <Teleport to="body">
             <div v-if="confirmingVoiceSend" class="vs-scrim" @mousedown.self="confirmingVoiceSend = false">
-              <div v-modal class="vs-dialog" data-voice-send-confirm data-modal-keep-focus role="alertdialog" aria-labelledby="vs-title">
+              <div v-modal class="vs-dialog" data-voice-send-confirm data-modal-keep-focus role="alertdialog" aria-modal="true" aria-labelledby="vs-title">
                 <div class="vs-head">
                   <svg class="vs-warn" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#d93025" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
@@ -6044,6 +6044,12 @@ h3 {
 .vs-ok:hover {
   background: #f9ccc7;
   border-color: #f9ccc7;
+}
+
+.vs-cancel:focus-visible,
+.vs-ok:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 :root[data-theme="dark"] .vs-ok {
