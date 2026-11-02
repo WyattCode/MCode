@@ -2298,8 +2298,9 @@ function goPlugins() {
 
 /* A conversation picked in the side column always shows it, even the current one sitting behind the artifacts page. */
 async function openFromSide(sessionID: string) {
-  view.value = "session"
   if (app.currentID !== sessionID) await app.open(sessionID)
+  // Left for another conversation while open was in flight: do not force the session view for the abandoned pick.
+  if (app.currentID === sessionID) view.value = "session"
 }
 
 /* subagents: MiMo 26.920's chip on a side column row - the conversation, then its 子智能体 tab. */
@@ -2310,8 +2311,9 @@ async function openSubagentsFromSide(sessionID: string) {
 
 /** A file's session, opened from the artifacts page. */
 async function openFromArtifacts(sessionID: string) {
-  view.value = "session"
   await app.open(sessionID)
+  // Left for another conversation while open was in flight: do not force the session view for the abandoned pick.
+  if (app.currentID === sessionID) view.value = "session"
 }
 
 /* A8: a conversation found by what was said in it opens at that message, as MiMo's requestReveal does. */
