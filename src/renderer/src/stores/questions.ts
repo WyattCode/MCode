@@ -73,17 +73,24 @@ export const useQuestions = defineStore("questions", () => {
   async function reply(requestID: string, answers: QuestionAnswer[]): Promise<void> {
     if (sending.value.has(requestID)) return
     sending.value = new Set(sending.value).add(requestID)
+    const request = pending.value.get(requestID)
+    const owner = request ? app.rootOf(request.sessionID) : app.currentID
     try {
       const client = app.client
       if (!client) {
-        notifyFailure(t("error.questionReplyFailed"), t("common.requestFailed"))
+        if (!owner || app.currentID === owner) {
+          notifyFailure(t("error.questionReplyFailed"), t("common.requestFailed"))
+        }
         return
       }
       await client.request({ type: "question.reply", requestID, answers })
     } catch (failure) {
       // The question stays up - the turn is still parked on it - and the reader
-      // is told to try again, as MiMo's QUESTION_REPLY_FAILED does.
-      notifyFailure(t("error.questionReplyFailed"), failure instanceof Error ? failure.message : String(failure))
+      // is told to try again, as MiMo's QUESTION_REPLY_FAILED does. Leaving
+      // mid-await must not flash the failure on another conversation.
+      if (!owner || app.currentID === owner) {
+        notifyFailure(t("error.questionReplyFailed"), failure instanceof Error ? failure.message : String(failure))
+      }
     } finally {
       const next = new Set(sending.value)
       next.delete(requestID)
