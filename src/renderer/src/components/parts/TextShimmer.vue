@@ -31,6 +31,7 @@ const props = withDefaults(
     :data-active="String(props.active)"
     :style="{ '--text-shimmer-index': String(props.index) }"
     :aria-label="props.text"
+    :aria-busy="props.active ? 'true' : undefined"
   >
     <span class="char">
       <span class="base" aria-hidden="true">{{ props.text }}</span>

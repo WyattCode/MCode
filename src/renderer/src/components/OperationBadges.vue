@@ -14,10 +14,11 @@ const kinds = computed(() => {
   }
   return [...kinds].sort()
 })
+const label = computed(() => kinds.value.map((kind) => t(`side.operation.${kind}`)).join(" · "))
 </script>
 <template>
-  <span v-if="kinds.length" class="operation-badges" :data-operation-badges="sessionId">
-    <span v-for="kind in kinds" :key="kind" role="img" :aria-label="t(`side.operation.${kind}`)" :data-operation-kind="kind" v-tip="{ label: t(`side.operation.${kind}`), placement: 'top' }">
+  <span v-if="kinds.length" class="operation-badges" role="group" :aria-label="label" :data-operation-badges="sessionId">
+    <span v-for="kind in kinds" :key="kind" aria-hidden="true" :data-operation-kind="kind" v-tip="{ label: t(`side.operation.${kind}`), placement: 'top' }">
       <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">
         <template v-if="kind === 'computer'"><rect x="1.5" y="2" width="13" height="9" rx="1.5" /><path d="M8 11v3M4.5 14h7" /></template>
         <template v-else><circle cx="8" cy="8" r="6" /><ellipse cx="8" cy="8" rx="2.5" ry="6" /><path d="M2 8h12" /></template>

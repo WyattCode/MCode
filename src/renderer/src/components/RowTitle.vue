@@ -96,7 +96,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <span ref="viewport" class="title-viewport" :data-title-overflow="distance > 0 ? 'true' : 'false'">
+  <span ref="viewport" class="title-viewport" :data-title-overflow="distance > 0 ? 'true' : 'false'" :title="distance > 0 ? text : undefined">
     <span ref="inner" class="title-txt" :data-marquee="distance > 0 ? 'true' : 'false'" @dblclick.stop="emit('rename')">{{ text }}</span>
   </span>
 </template>
