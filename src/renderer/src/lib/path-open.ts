@@ -152,10 +152,14 @@ export async function runPathMenu(key: string, target: PathTarget, platform: str
     return
   }
   if (key === "copyImage") {
+    // Hold the toast to the conversation the copy started in; leaving mid-await must not flash it elsewhere.
+    const held = useApp().currentID
     try {
       await copyImageFile(target.path)
+      if (useApp().currentID !== held) return
       notify(t("officeCard.copiedImage"))
     } catch {
+      if (useApp().currentID !== held) return
       notifyFailure(t("officeCard.copyImageFailed"))
     }
     return
