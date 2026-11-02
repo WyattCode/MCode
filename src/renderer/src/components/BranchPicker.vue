@@ -194,7 +194,15 @@ onBeforeUnmount(() => {
 
 <template>
   <div v-if="visible" ref="root" class="branch-picker" data-branch-picker @focusout="onFocusOut">
-    <button class="chip" data-branch-chip aria-haspopup="menu" :aria-expanded="open" @click="open = !open">
+    <button
+      type="button"
+      class="chip"
+      data-branch-chip
+      aria-haspopup="menu"
+      :aria-expanded="open"
+      :aria-controls="open ? 'branch-picker-menu' : undefined"
+      @click="open = !open"
+    >
       <svg class="i" viewBox="0 0 16 16" fill="none" aria-hidden="true">
         <circle cx="4.5" cy="3.5" r="1.6" />
         <circle cx="4.5" cy="12.5" r="1.6" />
@@ -207,13 +215,20 @@ onBeforeUnmount(() => {
       </svg>
     </button>
 
-    <div v-if="open" class="menu" role="menu" data-branch-menu @keydown="onMenuKey">
+    <div v-if="open" id="branch-picker-menu" class="menu" role="menu" data-branch-menu @keydown="onMenuKey">
       <div class="search">
         <svg class="i" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path d="M7.2 2.8a4.4 4.4 0 1 0 0 8.8 4.4 4.4 0 0 0 0-8.8z" />
           <path d="M13.2 13.2l-2.8-2.8" />
         </svg>
-        <input ref="search" v-model="query" spellcheck="false" :placeholder="t('home.branchSearch')" @keydown.stop />
+        <input
+          ref="search"
+          v-model="query"
+          spellcheck="false"
+          :placeholder="t('home.branchSearch')"
+          :aria-label="t('home.branchSearch')"
+          @keydown.stop
+        />
       </div>
 
       <div class="list" data-branch-list>
@@ -226,6 +241,7 @@ onBeforeUnmount(() => {
         <button
           v-for="branch in matches"
           :key="branch"
+          type="button"
           class="row"
           role="menuitemradio"
           :aria-checked="branch === state?.branch"
@@ -247,7 +263,7 @@ onBeforeUnmount(() => {
 
       <div class="rule" role="separator" />
 
-      <button v-if="!creating" class="row" data-branch-create @click="creating = true">
+      <button v-if="!creating" type="button" class="row" role="menuitem" data-branch-create @click="creating = true">
         <svg class="i" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path d="M8 3v10M3 8h10" />
         </svg>
@@ -269,7 +285,16 @@ onBeforeUnmount(() => {
     <Teleport to="body">
       <div v-if="pending" class="scrim" @mousedown.self="pending = undefined">
         <!-- MiMo focuses nothing when this opens, so Enter cannot switch over uncommitted work by accident. -->
-        <div v-modal class="dialog" data-branch-switch-dialog data-modal-keep-focus role="dialog" aria-modal="true" aria-labelledby="branch-switch-title" aria-describedby="branch-switch-desc">
+        <div
+          v-modal
+          class="dialog"
+          data-branch-switch-dialog
+          data-modal-keep-focus
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="branch-switch-title"
+          aria-describedby="branch-switch-desc"
+        >
           <div class="dialog-head">
             <h2 id="branch-switch-title" class="dialog-title">{{ t("home.branchSwitchTitle", { branch: pending }) }}</h2>
             <button
@@ -334,11 +359,6 @@ svg circle {
 .chip:hover {
   color: var(--text-body);
   background: var(--surface-hover);
-}
-
-.chip:focus-visible {
-  outline: 2px solid var(--interactive);
-  outline-offset: 2px;
 }
 
 .chip .i {
@@ -451,14 +471,10 @@ svg circle {
   cursor: default;
 }
 
-.row:hover {
-  background: var(--surface-hover);
-}
-
+.row:hover,
 .row:focus-visible {
   background: var(--surface-hover);
-  outline: 2px solid var(--interactive);
-  outline-offset: -2px;
+  outline: none;
 }
 
 /* MiMo's --color-icon: #5c5c57 on light, #d0d0d0 on dark (below). */
@@ -571,12 +587,6 @@ svg circle {
 .dialog-close:hover {
   color: var(--text-strong);
   background: var(--surface-hover);
-}
-
-.dialog-close:focus-visible,
-.dialog-btn:focus-visible {
-  outline: 2px solid var(--text-strong);
-  outline-offset: 2px;
 }
 
 /* MiMo's permc-desc: 14px in --color-txt. */
