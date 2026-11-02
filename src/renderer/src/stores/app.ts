@@ -1528,7 +1528,8 @@ export const useApp = defineStore("app", () => {
    */
   async function undo(sessionID: string) {
     const result = await api().request({ type: "session.undo", sessionID })
-    history.value = result.history
+    // Left for another conversation while undo was in flight: do not paint its depth on this screen.
+    if (currentID.value === sessionID) history.value = result.history
     return result.files
   }
 
@@ -1631,7 +1632,8 @@ export const useApp = defineStore("app", () => {
 
   async function redo(sessionID: string) {
     const result = await api().request({ type: "session.redo", sessionID })
-    history.value = result.history
+    // Left for another conversation while redo was in flight: do not paint its depth on this screen.
+    if (currentID.value === sessionID) history.value = result.history
     return result.files
   }
 
