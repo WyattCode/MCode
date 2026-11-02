@@ -1369,11 +1369,15 @@ async function sendEdit(turn: Turn) {
     await app.truncate(sessionID, turn.id)
     editingAsked.value = undefined
     // As MiMo: the messages are already gone, so a send that is refused keeps the words as a draft.
+    // Left for another conversation while truncate/send was in flight: do not paste into this draft.
     if (!(await app.send(text, message.attachments ?? [], sessionID, message.annotations ?? []))) {
-      restoreDraft({ ...message, text })
+      if (shownID.value === sessionID) restoreDraft({ ...message, text })
     }
   } catch (failure) {
-    notifyFailure(t("common.requestFailed"), failure instanceof Error ? failure.message : String(failure))
+    // Same: a failure for the conversation we left should not toast here.
+    if (shownID.value === sessionID) {
+      notifyFailure(t("common.requestFailed"), failure instanceof Error ? failure.message : String(failure))
+    }
   } finally {
     resending.value = false
     app.markReplacing(sessionID, false)
@@ -1496,9 +1500,13 @@ async function retry(turn: Turn) {
   try {
     await app.truncate(sessionID, turn.id)
     const sent = await app.send(message.text ?? "", message.attachments ?? [], sessionID, message.annotations ?? [])
-    if (!sent && !props.side) restoreDraft(message)
+    // Left for another conversation while truncate/send was in flight: do not paste into this draft.
+    if (!sent && !props.side && shownID.value === sessionID) restoreDraft(message)
   } catch (failure) {
-    notifyFailure(t("common.requestFailed"), failure instanceof Error ? failure.message : String(failure))
+    // Same: a failure for the conversation we left should not toast here.
+    if (shownID.value === sessionID) {
+      notifyFailure(t("common.requestFailed"), failure instanceof Error ? failure.message : String(failure))
+    }
   } finally {
     resending.value = false
     app.markReplacing(sessionID, false)
