@@ -194,8 +194,17 @@ function deviceToolbar() {
 }
 
 async function go() {
+  const pageId = props.pageId
+  const heldAddress = address.value
   editing.value = false
-  apply(await window.mcode.browserNavigate(address.value))
+  /* Held page: select this tab's page before navigating so a tab switch mid-await cannot drive another page. */
+  if (pageId) {
+    const selected = await window.mcode.browserTab("select", pageId).catch(() => false)
+    if (!selected || !props.active || props.pageId !== pageId) return
+  }
+  const next = await window.mcode.browserNavigate(heldAddress)
+  /* Left for another browser tab while the action was in flight: do not drive or toast for this chrome. */
+  if (props.active && (!pageId || props.pageId === pageId)) apply(next)
 }
 
 /* Enter while an input method is still composing picks the word; it must not also navigate. */
@@ -206,7 +215,10 @@ function onAddressKey(event: KeyboardEvent) {
 }
 
 async function act(what: "back" | "forward" | "reload" | "forceReload" | "zoomIn" | "zoomOut" | "zoomReset") {
-  apply(await window.mcode.browserAct(what))
+  const pageId = props.pageId
+  const next = await window.mcode.browserAct(what, pageId)
+  /* Left for another browser tab while the action was in flight: do not drive or toast for this chrome. */
+  if (props.active && (!pageId || props.pageId === pageId)) apply(next)
 }
 
 function forceReload() {
@@ -219,14 +231,29 @@ function openExternal() {
 }
 
 async function screenshot() {
+  const pageId = props.pageId
+  /* Held page: select this tab's page before capturing so a tab switch mid-await cannot capture another page. */
+  if (pageId) {
+    const selected = await window.mcode.browserTab("select", pageId).catch(() => false)
+    if (!selected) {
+      if (props.active && props.pageId === pageId) notifyFailure(t("rp.browser.toast.screenshotFail"))
+      return
+    }
+    if (!props.active || props.pageId !== pageId) return
+  }
   const ok = await window.mcode.browserScreenshot().catch(() => false)
+  /* Left for another browser tab while the action was in flight: do not drive or toast for this chrome. */
+  if (!props.active || (pageId && props.pageId !== pageId)) return
   if (ok) notify(t("rp.browser.toast.screenshotOk"))
   else notifyFailure(t("rp.browser.toast.screenshotFail"))
 }
 
 async function clearSite(what: "cookies" | "cache") {
   closeMenu()
+  const pageId = props.pageId
   const failure = await window.mcode.browserClearSite(what)
+  /* Left for another browser tab while the action was in flight: do not drive or toast for this chrome. */
+  if (!props.active || (pageId && props.pageId !== pageId)) return
   if (what === "cookies") failure ? notifyFailure(t("rp.browser.toast.clearCookiesError")) : notify(t("rp.browser.toast.clearCookies"))
   else failure ? notifyFailure(t("rp.browser.toast.clearCacheError")) : notify(t("rp.browser.toast.clearCache"))
 }
