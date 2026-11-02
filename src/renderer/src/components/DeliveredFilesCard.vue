@@ -167,7 +167,10 @@ async function pick(key: string) {
       notifyFailure(t("officeCard.openFailed", { error: t("harnessRow.pathNotExist") }))
       return
     }
+    // Hold the open-with toasts to the conversation the open started in; leaving mid-await must not flash the open outcome onto another conversation.
+    const held = app.currentID
     const reason = await window.mcode.openFile(folder, relative, entry.openWith).catch((error: unknown) => String(error))
+    if (app.currentID !== held) return
     if (reason) notifyFailure(t("officeCard.openFailed", { error: reason }))
     else notify(t("officeCard.openedWith", { name: entry.name }))
   }
