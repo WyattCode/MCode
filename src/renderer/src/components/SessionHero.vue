@@ -3,7 +3,6 @@ import { computed, ref, watch } from "vue"
 import { useApp } from "../stores/app"
 import { ago, t } from "../lib/i18n"
 import { projectHue, projectName } from "../lib/project"
-import { revealPath } from "../lib/path-open"
 
 /**
  * A session with nothing in it yet.
@@ -17,10 +16,6 @@ import { revealPath } from "../lib/path-open"
  * every state a session can be in - so an empty session and a conversation
  * offer the same box in the same place rather than two boxes that happen to
  * look alike.
- *
- * Linux polish: the project chip used to look pressable but did nothing; it now
- * reveals the folder. Starter prompts and a Ctrl+K tip give the empty session a
- * next step without waiting on the side column.
  */
 const app = useApp()
 
@@ -43,24 +38,6 @@ const name = computed(() => projectName(directory.value, app.config?.projectName
 const icon = computed(() => app.config?.projectIcons?.[directory.value])
 const hue = computed(() => app.config?.projectColors?.[directory.value] ?? String(projectHue(directory.value)))
 const initial = computed(() => (name.value.match(/[a-z0-9]/i)?.[0] ?? name.value[0] ?? "?").toUpperCase())
-
-const starters = computed(() => [
-  { id: "review", label: t("hero.starter.review"), prompt: t("hero.starter.reviewPrompt") },
-  { id: "explain", label: t("hero.starter.explain"), prompt: t("hero.starter.explainPrompt") },
-  { id: "tests", label: t("hero.starter.tests"), prompt: t("hero.starter.testsPrompt") },
-])
-
-const searchChord = computed(() => (app.platform === "darwin" ? "⌘K" : "Ctrl+K"))
-
-function revealProject() {
-  const dir = directory.value
-  if (!dir) return
-  void revealPath(dir, app.platform)
-}
-
-function fillPrompt(prompt: string) {
-  window.dispatchEvent(new CustomEvent("mcode:fill-prompt", { detail: prompt }))
-}
 </script>
 
 <template>
@@ -91,13 +68,7 @@ function fillPrompt(prompt: string) {
         <div id="hero-dock" class="dock-slot" />
 
         <div class="foot">
-          <button
-            type="button"
-            class="chip"
-            v-tip="{ label: t('hero.revealTip'), placement: 'top' }"
-            :aria-label="t('hero.revealTip')"
-            @click="revealProject"
-          >
+          <button class="chip" type="button" :aria-label="name" v-tip="{ label: directory, placement: 'top' }">
             <span class="avatar" :style="{ '--h': hue }">
               <img v-if="icon" :src="icon" alt="" />
               <template v-else>{{ initial }}</template>
@@ -122,19 +93,6 @@ function fillPrompt(prompt: string) {
         </div>
 
         <div v-if="info && !info.exists" class="missing">{{ t("hero.missing") }}</div>
-
-        <div class="starters" data-hero-starters>
-          <button
-            v-for="entry in starters"
-            :key="entry.id"
-            type="button"
-            class="starter"
-            @click="fillPrompt(entry.prompt)"
-          >
-            {{ entry.label }}
-          </button>
-        </div>
-        <p class="hint">{{ t("hero.shortcutTip", { chord: searchChord }) }}</p>
       </div>
     </div>
   </div>
@@ -259,6 +217,11 @@ function fillPrompt(prompt: string) {
   background: var(--surface-hover);
 }
 
+.chip:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
 /* The branch is a statement, not a control, so it takes no hover. */
 .chip.flat {
   padding: 0 8px;
@@ -311,39 +274,6 @@ function fillPrompt(prompt: string) {
   margin-top: 6px;
   color: var(--error);
   font-size: calc(12.5px * var(--ui-font-scale, 1));
-  text-align: center;
-}
-
-.starters {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 8px;
-  margin-top: 18px;
-  max-width: 520px;
-}
-
-.starter {
-  padding: 6px 12px;
-  color: var(--text-base);
-  font-size: calc(12px * var(--ui-font-scale, 1));
-  line-height: 1.3;
-  background: transparent;
-  border: 1px solid var(--border-weak);
-  border-radius: 999px;
-  cursor: pointer;
-}
-
-.starter:hover {
-  color: var(--text-strong);
-  background: var(--surface-hover);
-}
-
-.hint {
-  margin: 12px 0 0;
-  color: var(--text-weak);
-  font-size: calc(12px * var(--ui-font-scale, 1));
-  line-height: 1.4;
   text-align: center;
 }
 </style>

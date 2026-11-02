@@ -488,6 +488,11 @@ onBeforeUnmount(() => {
   opacity: 0.9;
 }
 
+.update-bubble .ub-btn:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
 .update-bubble .ub-btn:disabled {
   opacity: 0.6;
   cursor: default;

@@ -3537,6 +3537,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           <button
             v-for="(command, at) in slashMatches"
             :key="command.id"
+            type="button"
             class="slash-row command"
             :class="{ on: at === slashIndex }"
             @mouseenter="slashIndex = at"
@@ -3605,7 +3606,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               </svg>
             </button>
             <div v-if="menu === 'plus'" ref="plusMenu" class="menu plus-menu" :class="{ up: menuUp }" role="menu" data-plus-menu @keydown="onPlusKeys" @focusout="onMenuFocusOut">
-              <button class="item" role="menuitem" tabindex="-1" data-plus-files @click="attachFromMenu">
+              <button class="item" type="button" role="menuitem" tabindex="-1" data-plus-files @click="attachFromMenu">
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                   <path d="M10.6 5.2 6 9.8a1.4 1.4 0 0 0 2 2l5-5a2.8 2.8 0 0 0-4-4l-5.2 5.2a4.2 4.2 0 0 0 6 6l4.2-4.2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
                 </svg>
@@ -3613,7 +3614,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               </button>
               <template v-if="!side">
                 <div class="rule" />
-                <button class="item" role="menuitem" tabindex="-1" data-plus-terminal @click="terminalFromMenu">
+                <button class="item" type="button" role="menuitem" tabindex="-1" data-plus-terminal @click="terminalFromMenu">
                   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                     <rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.6" stroke="currentColor" stroke-width="1.2" />
                     <path d="M4.6 6.4 6.8 8.4 4.6 10.4M8.6 10.6h3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
@@ -3622,7 +3623,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                 </button>
                 <div class="rule" />
                 <!-- 追求目标: a switch, not a command - what is typed next becomes the goal and the turn is judged against it. -->
-                <button class="item goal-row" role="switch" tabindex="-1" data-mode="goal" :aria-checked="goalMode" @click="toggleGoalMode">
+                <button class="item goal-row" type="button" role="switch" tabindex="-1" data-mode="goal" :aria-checked="goalMode" @click="toggleGoalMode">
                   <span class="goal-text">
                     <span class="item-name">{{ t("composer.goal") }}</span>
                     <span class="goal-sub">{{ t("composer.goalSub") }}</span>
@@ -3633,6 +3634,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               <div class="rule" />
               <!-- MiMo's 技能 ›: a submenu with a search box, beside the row. -->
               <button
+                type="button"
                 class="item skill-row"
                 :class="{ hot: skillSubOpen }"
                 role="menuitem"
@@ -3671,6 +3673,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                   <button
                     v-for="skill in skillRows"
                     :key="skill.name"
+                    type="button"
                     class="item skill-item"
                     role="menuitem"
                     tabindex="-1"
@@ -3693,6 +3696,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           <!-- A side chat asks nothing about access, agents or effort: it is the model and the words. -->
           <div v-if="!side" class="pill-wrap">
             <button
+              type="button"
               class="pill access"
               :class="{ open: menu === 'access', full: access === 'full' }"
               :aria-expanded="menu === 'access'"
@@ -3733,6 +3737,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               @focusout="onMenuFocusOut"
             >
               <button
+                type="button"
                 tabindex="-1"
                 v-for="entry in accessChoices"
                 :key="entry"
@@ -3765,6 +3770,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           <!-- MiMo's one mode chip: shown while plan mode is on; pressing it goes back to build. -->
           <button
             v-if="!side && agent === 'plan'"
+            type="button"
             class="mode-chip"
             data-mode="plan"
             aria-pressed="true"
@@ -3781,6 +3787,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           <!-- 追求目标: its own chip beside the mode's, since the two are not alternatives; pressing it turns the switch off. -->
           <button
             v-if="!side && goalMode"
+            type="button"
             class="mode-chip"
             data-mode="goal"
             aria-pressed="true"
@@ -3808,6 +3815,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           <span class="ctx-slot">
             <button
               v-if="contextUsage"
+              type="button"
               class="ctx"
               :class="{ open: menu === 'context' }"
               :aria-label="t('context.usage.view')"
@@ -3821,6 +3829,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 
           <div class="pill-wrap">
             <button
+              type="button"
               class="pill model-pill"
               :aria-expanded="menu === 'model'"
               aria-haspopup="menu"
@@ -3852,6 +3861,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               @focusout="onMenuFocusOut"
             >
               <button
+                type="button"
                 tabindex="-1"
                 class="item model-item smart"
                 :class="{ hot: activeKey === SMART_KEY, on: smartOn }"
@@ -3898,6 +3908,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 
               <div v-if="moreRows.length" class="more-slot" @mouseenter="hoverRow(MORE_KEY)">
                 <button
+                  type="button"
                   tabindex="-1"
                   class="item model-item"
                   :class="{ hot: activeKey === MORE_KEY }"
@@ -3968,6 +3979,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 
               <div class="rule" />
               <button
+                type="button"
                 tabindex="-1"
                 class="item model-item"
                 :class="{ hot: activeKey === CONFIG_KEY }"
