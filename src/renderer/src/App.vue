@@ -2412,7 +2412,8 @@ function receiveLink(link: SessionLinkTarget) {
 async function openLink(link: SessionLinkTarget) {
   try {
     if (link.sessionID !== app.currentID) await app.open(link.sessionID)
-    view.value = "session"
+    // Left for another conversation while open was in flight: do not force the session view for the abandoned link.
+    if (app.currentID === link.sessionID) view.value = "session"
   } catch {
     notifyFailure(t("menu.linkMissing"))
   }
