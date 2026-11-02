@@ -1026,6 +1026,8 @@ async function hearSegment(recording: Recording, run: number) {
     if (quickMode && isClearCommand(result.text)) {
       rewrite("")
       await nextTick(resize)
+      // Left while applying: do not focus/send/cue for this utterance.
+      if (run !== voiceRun.value) return
       // The user pressed a button to start this, so the keyboard is on the button: the box is given it back.
       input.value?.focus({ preventScroll: true })
       input.value?.setSelectionRange(0, 0)
@@ -1037,15 +1039,22 @@ async function hearSegment(recording: Recording, run: number) {
     if (next.text !== text.value) {
       rewrite(next.text)
       await nextTick(resize)
+      // Left while applying: do not focus/send/cue for this utterance.
+      if (run !== voiceRun.value) return
     }
     input.value?.focus({ preventScroll: true })
     input.value?.setSelectionRange(next.selectionStart, next.selectionEnd)
     /* As in MiMo, the spoken "send" belongs to the considered mode only; quick input just types. */
     const sendsByVoice = (app.config?.voiceSend ?? false) && !quickMode
     if (next.send && sendsByVoice && text.value.trim()) {
+      // Superseded before sending: do not send this utterance's draft.
+      if (run !== voiceRun.value) return
+      const originKey = draftKey.value
       dropVoice()
       // MiMo sends at once and then says so; a send is named over a rewrite heard in the same breath.
       await submit()
+      // Left while sending: do not cue for this utterance (dropVoice already bumped voiceRun).
+      if (draftKey.value !== originKey) return
       showCue("sent")
       return
     }
