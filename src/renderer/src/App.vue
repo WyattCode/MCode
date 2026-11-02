@@ -662,6 +662,9 @@ async function runBatch(action: "archive" | "delete" | "cancel" | "all" | "none"
 async function confirmDeleteMany() {
   const targets = deletingMany.value ?? []
   deletingMany.value = undefined
+  // Hold the toast to the place the person started from: leaving mid-await must not
+  // flash the delete outcome onto another chat.
+  const held = app.currentID
   let removed = 0
   let failed = false
   let err: unknown
@@ -676,10 +679,10 @@ async function confirmDeleteMany() {
   }
   selecting.value = undefined
   // MiMo's removeMany: one notice for the batch.
-  if (failed) {
+  if (failed && app.currentID === held) {
     notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
   }
-  if (removed) notify(t("toast.convosDeleted", { n: removed }), { level: "success" })
+  if (removed && app.currentID === held) notify(t("toast.convosDeleted", { n: removed }), { level: "success" })
 }
 
 /*
