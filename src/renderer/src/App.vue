@@ -1165,19 +1165,26 @@ watch(reviewRequest, () => {
  */
 watch(fileRequest, async (asked) => {
   if (!asked) return
-  const root = app.current?.directory?.replace(/[\\/]+$/, "")
-  const candidates = [asked.path, ...(root ? [`${root}/${asked.path}`] : [])]
+  // Hold the ask and the conversation it was made in: a switch while the
+  // resolve/reveal is in flight must not open the file into the new panel.
+  const heldAt = asked.at
+  const heldSession = app.currentID
+  const heldRoot = app.current?.directory?.replace(/[\\/]+$/, "")
+  const stillCurrent = () => fileRequest.value?.at === heldAt && app.currentID === heldSession
+  const candidates = [asked.path, ...(heldRoot ? [`${heldRoot}/${asked.path}`] : [])]
   const found = await window.mcode.resolveExistingPath(candidates).catch(() => null)
+  if (!stillCurrent()) return
   if (!found) {
     notifyFailure(t("harnessRow.pathNotExist"))
     return
   }
   if (found.directory) {
     const shown = await window.mcode.revealPath(found.path).catch(() => ({ ok: false, error: "" }))
+    if (!stillCurrent()) return
     if (!shown.ok) notifyFailure(t("harnessRow.revealFailed", { error: shown.error ?? "" }))
     return
   }
-  await openDocument({ path: found.path }, root)
+  await openDocument({ path: found.path }, heldRoot)
 })
 
 function copyWorkingDirectory() {
