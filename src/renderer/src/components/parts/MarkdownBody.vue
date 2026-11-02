@@ -1233,11 +1233,16 @@ function onError(event: Event) {
   pointer-events: auto;
 }
 
-.md-table-icon-button:hover,
+.md-table-icon-button:hover {
+  color: var(--text-strong);
+  background: var(--surface-hover);
+}
+
 .md-table-icon-button:focus-visible {
   color: var(--text-strong);
   background: var(--surface-hover);
-  outline: none;
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 .md-table-icon-button .md-table-copy-check,
