@@ -1905,6 +1905,7 @@ export const useApp = defineStore("app", () => {
     const request = permissionTarget(requestID, flat, permission.value)
     if (!request || responding.value === request.id) return
     responding.value = request.id
+    const owner = rootOf(request.sessionID)
     try {
       const said = response === "reject" ? reason?.trim() : undefined
       await api().request({
@@ -1917,7 +1918,10 @@ export const useApp = defineStore("app", () => {
     } catch (err) {
       // The request stays up: the tool is still waiting on an answer, and
       // clearing it here would strand the turn with nothing on screen.
-      notifyFailure(t("perm.failed"), err instanceof Error ? err.message : String(err))
+      // Leaving mid-await must not flash the failure on another conversation.
+      if (currentID.value === owner) {
+        notifyFailure(t("perm.failed"), err instanceof Error ? err.message : String(err))
+      }
     } finally {
       if (responding.value === request.id) responding.value = undefined
     }
