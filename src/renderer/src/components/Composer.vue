@@ -36,6 +36,7 @@ import { HOME_SCOPE, SIDE_SCOPE, useAnnotations } from "../stores/annotations"
 import { annotationSend } from "../lib/annotate"
 import { openDocument } from "../lib/office-open"
 import AnnotationChips from "./AnnotationChips.vue"
+import { providerLabel } from "../lib/connect"
 import ModelMenuRow from "./ModelMenuRow.vue"
 import { besideRow } from "../lib/submenu"
 import { isRovingKey, rovingStep, type RovingKey } from "../lib/composer-menu"
@@ -2888,6 +2889,11 @@ function modelKey(provider: string, model: string) {
   return `${provider}:${model}`
 }
 
+function providerTitle(providerID: string): string {
+  const provider = app.providers.find((entry) => entry.id === providerID)
+  return provider ? providerLabel(provider) : providerID
+}
+
 interface ModelRow {
   key: string
   provider: string
@@ -3893,6 +3899,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                 v-for="row in primaryRows"
                 :key="row.key"
                 :model="row.model"
+                :subtitle="providerTitle(row.provider)"
                 :row-key="row.key"
                 :on="currentKey === row.key"
                 :hot="activeKey === row.key"
@@ -3935,6 +3942,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                       v-for="row in moreRows"
                       :key="row.key"
                       :model="row.model"
+                      :subtitle="providerTitle(row.provider)"
                       :row-key="row.key"
                       :on="currentKey === row.key"
                       :hot="subKey === row.key"
@@ -3961,6 +3969,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                     :key="row.key"
                     data-custom-model
                     :model="row.model"
+                    :subtitle="group.name"
                     :row-key="row.key"
                     :on="currentKey === row.key"
                     :hot="activeKey === row.key"

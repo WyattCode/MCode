@@ -16,10 +16,10 @@ import { badgeOf } from "../lib/artifact-kind"
  * what was said in them (read by the server, which holds every transcript),
  * project names and paths, and the files conversations wrote; each kind gets a
  * heading, the kind with the best match first, and the words are marked where
- * they were found. Rows can be chosen with the pointer or with arrow keys and Enter;
- * Escape still closes the overlay.
+ * they were found. Arrow keys move a highlight through the rows; Enter opens
+ * it. Escape still closes.
  */
-const emit = defineEmits<{ close: []; open: [sessionID: string, messageID?: string]; project: [directory: string]; settings: [section?: string]; theme: []; newTask: []; artifacts: [] }>()
+const emit = defineEmits<{ close: []; open: [sessionID: string, messageID?: string]; project: [directory: string] }>()
 
 const app = useApp()
 const query = ref("")
@@ -52,8 +52,7 @@ interface Span {
   ranges: { start: number; end: number }[]
 }
 
-type Kind = "convo" | "project" | "artifact" | "command"
-type CommandAction = "settings" | "models" | "theme" | "newTask" | "artifacts"
+type Kind = "convo" | "project" | "artifact"
 
 interface Item {
   kind: Kind
@@ -61,8 +60,6 @@ interface Item {
   target: string
   /** For a conversation found by what was said in it: the message to open at. */
   messageID?: string
-  /** Command action when kind is command. */
-  command?: CommandAction
   title: Span
   meta: string
   snippet?: Span
@@ -76,136 +73,6 @@ const plain = (text: string): Span => ({ text, ranges: [] })
 
 /* MiMo's scoring, shared with the backend's message search so both land on one scale. */
 const match = scoreMatch
-
-const COMMANDS: { id: string; command: CommandAction; titleKey: string; section?: string; needles: string[] }[] = [
-  {
-    id: "cmd.newTask",
-    command: "newTask",
-    titleKey: "side.newTask",
-    needles: ["new task", "new", "task", "create", "新建任务", "新建任務", "新建", "新任务", "新任務", "任务", "任務", "新对话", "新對話"],
-  },
-  {
-    id: "cmd.artifacts",
-    command: "artifacts",
-    titleKey: "side.artifacts",
-    needles: ["artifacts", "artifact", "outputs", "output", "files", "产物", "產物", "输出", "輸出", "文件", "成果"],
-  },
-  {
-    id: "cmd.settings",
-    command: "settings",
-    titleKey: "searchOverlay.cmd.settings",
-    section: "general",
-    needles: ["settings", "preferences", "preference", "general", "设置", "設定", "偏好", "通用"],
-  },
-  {
-    id: "cmd.appearance",
-    command: "settings",
-    titleKey: "set.appearance",
-    section: "appearance",
-    needles: ["appearance", "theme", "dark", "light", "外观", "外觀", "主题", "主題", "深色", "浅色", "淺色"],
-  },
-  {
-    id: "cmd.models",
-    command: "models",
-    titleKey: "searchOverlay.cmd.models",
-    section: "models",
-    needles: ["models", "model", "provider", "providers", "模型", "供應商", "供应商"],
-  },
-  {
-    id: "cmd.mcp",
-    command: "settings",
-    titleKey: "set.nav.mcp",
-    section: "mcp",
-    needles: ["mcp", "servers", "server", "mcp servers", "服务器", "伺服器", "服务", "服務"],
-  },
-  {
-    id: "cmd.keys",
-    command: "settings",
-    titleKey: "set.shortcuts",
-    section: "keys",
-    needles: ["keyboard", "shortcuts", "shortcut", "keys", "key", "快捷键", "快捷鍵", "键盘", "鍵盤"],
-  },
-  {
-    id: "cmd.environment",
-    command: "settings",
-    titleKey: "set.environment",
-    section: "environment",
-    needles: ["environment", "env", "environment variables", "环境", "環境", "变量", "變數"],
-  },
-  {
-    id: "cmd.personal",
-    command: "settings",
-    titleKey: "set.personal",
-    section: "personal",
-    needles: ["personal", "personalization", "custom", "个性化", "個人化", "个人化", "自定义", "自訂"],
-  },
-  {
-    id: "cmd.usage",
-    command: "settings",
-    titleKey: "set.nav.usage",
-    section: "usage",
-    needles: ["usage", "billing", "tokens", "用量", "使用量", "计费", "計費"],
-  },
-  {
-    id: "cmd.lab",
-    command: "settings",
-    titleKey: "set.nav.lab",
-    section: "lab",
-    needles: ["lab", "labs", "experimental", "实验室", "實驗室", "实验", "實驗"],
-  },
-  {
-    id: "cmd.archive",
-    command: "settings",
-    titleKey: "set.nav.archive",
-    section: "archive",
-    needles: ["archive", "archived", "archived conversations", "归档", "歸檔", "存档", "存檔"],
-  },
-  {
-    id: "cmd.updates",
-    command: "settings",
-    titleKey: "set.nav.updates",
-    section: "updates",
-    needles: ["updates", "update", "app updates", "version", "更新", "版本", "升级", "升級"],
-  },
-  {
-    id: "cmd.files",
-    command: "settings",
-    titleKey: "set.nav.files",
-    section: "files",
-    needles: ["files", "configuration", "config", "configuration files", "文件", "配置", "設定檔", "设置文件"],
-  },
-  {
-    id: "cmd.theme",
-    command: "theme",
-    titleKey: "searchOverlay.cmd.theme",
-    needles: ["theme", "dark", "light", "toggle theme", "主题", "主題", "外观", "外觀", "深色", "浅色", "淺色"],
-  },
-]
-
-function commandItems(needle: string): Item[] {
-  const q = needle.trim().toLowerCase()
-  const out: Item[] = []
-  const ignored = new Set(["open", "go", "show", "打开", "開啟"])
-  const tokens = q.split(/\s+/).filter((token) => token && !ignored.has(token))
-  for (const cmd of COMMANDS) {
-    const title = t(cmd.titleKey)
-    const hay = [title, ...cmd.needles].join(" ").toLowerCase()
-    if (tokens.length && !tokens.every((token) => hay.includes(token) || match(title, token))) continue
-    const titled = q ? match(title, q) : undefined
-    out.push({
-      kind: "command",
-      id: cmd.id,
-      target: cmd.section ?? cmd.command,
-      command: cmd.command,
-      title: titled ? { text: title, ranges: titled.ranges } : plain(title),
-      meta: t("searchOverlay.commands"),
-      score: (titled?.score ?? 0) + 400,
-      time: 0,
-    })
-  }
-  return out
-}
-
 
 const visible = computed(() => {
   const closed = new Set(app.config?.closedProjects ?? [])
@@ -222,7 +89,7 @@ const items = computed<Item[]>(() => {
   const needle = query.value.trim().toLowerCase()
   const pinned = new Set(app.config?.pinnedTabs ?? [])
   if (!needle) {
-    const recent = [...visible.value]
+    return [...visible.value]
       .sort((a, b) => Number(pinned.has(b.id)) - Number(pinned.has(a.id)) || b.updated - a.updated)
       .slice(0, RECENT)
       .map((session) => ({
@@ -234,10 +101,9 @@ const items = computed<Item[]>(() => {
         score: 0,
         time: session.updated,
       }))
-    return [...commandItems(""), ...recent]
   }
 
-  const found: Item[] = [...commandItems(needle)]
+  const found: Item[] = []
   const said = new Map(hits.value.map((hit) => [hit.sessionID, hit]))
   for (const session of visible.value) {
     const title = sessionTitle(session.title)
@@ -302,24 +168,16 @@ const items = computed<Item[]>(() => {
   return found.sort((a, b) => b.score - a.score || b.time - a.time).slice(0, RECENT * artifactPages.value)
 })
 
-const ORDER: Kind[] = ["command", "convo", "project", "artifact"]
+const ORDER: Kind[] = ["convo", "project", "artifact"]
 const HEAD: Record<Kind | "recent", string> = {
   recent: "searchOverlay.recent",
-  command: "searchOverlay.commands",
   convo: "searchOverlay.convos",
   project: "searchOverlay.projects",
   artifact: "searchOverlay.artifacts",
 }
 
 const groups = computed(() => {
-  if (!query.value.trim()) {
-    const commands = items.value.filter((item) => item.kind === "command")
-    const recent = items.value.filter((item) => item.kind !== "command")
-    const out: { kind: Kind | "recent"; items: Item[] }[] = []
-    if (commands.length) out.push({ kind: "command", items: commands })
-    if (recent.length) out.push({ kind: "recent", items: recent })
-    return out
-  }
+  if (!query.value.trim()) return items.value.length ? [{ kind: "recent" as const, items: items.value }] : []
   return ORDER.map((kind) => ({ kind, items: items.value.filter((item) => item.kind === kind) }))
     .filter((group) => group.items.length > 0)
     .sort((a, b) => b.items[0].score - a.items[0].score)
@@ -327,27 +185,51 @@ const groups = computed(() => {
 
 const flat = computed(() => groups.value.flatMap((group) => group.items))
 
-const selectedIndex = ref(0)
-const results = ref<HTMLElement>()
+/** Keyboard highlight into `flat`; -1 means none. */
+const active = ref(-1)
 
-function move(delta: number) {
-  const list = flat.value
-  if (!list.length) return
-  selectedIndex.value = (selectedIndex.value + delta + list.length) % list.length
+watch(flat, (rows) => {
+  active.value = rows.length ? Math.min(Math.max(active.value, 0), rows.length - 1) : -1
+})
+
+watch(query, () => {
+  active.value = flat.value.length ? 0 : -1
+})
+
+function moveActive(delta: number) {
+  const rows = flat.value
+  if (!rows.length) {
+    active.value = -1
+    return
+  }
+  const start = active.value < 0 ? (delta > 0 ? -1 : 0) : active.value
+  active.value = (start + delta + rows.length) % rows.length
   void nextTick(() => {
-    const rows = results.value?.querySelectorAll<HTMLElement>(".sr-item")
-    rows?.[selectedIndex.value]?.scrollIntoView({ block: "nearest" })
+    document
+      .querySelector<HTMLElement>(`.search-results .sr-item[data-active="1"]`)
+      ?.scrollIntoView({ block: "nearest" })
   })
 }
 
-function chooseSelected() {
-  choose(flat.value[selectedIndex.value])
+function onSearchKeys(event: KeyboardEvent) {
+  if (event.key === "ArrowDown") {
+    event.preventDefault()
+    moveActive(1)
+    return
+  }
+  if (event.key === "ArrowUp") {
+    event.preventDefault()
+    moveActive(-1)
+    return
+  }
+  if (event.key === "Enter") {
+    const item = flat.value[active.value]
+    if (!item) return
+    event.preventDefault()
+    choose(item)
+  }
 }
 
-watch(flat, (list) => {
-  if (!list.length) selectedIndex.value = 0
-  else if (selectedIndex.value >= list.length) selectedIndex.value = list.length - 1
-})
 
 /** A span cut into plain runs and marked ones. */
 function pieces(span: Span) {
@@ -450,10 +332,7 @@ function search() {
   runSearch(needle)
 }
 
-watch(query, () => {
-  selectedIndex.value = 0
-  search()
-})
+watch(query, search)
 
 /** Plays MiMo's exit, then tells the owner to unmount. */
 function close() {
@@ -464,15 +343,6 @@ function close() {
 
 function choose(item?: Item) {
   if (!item) return
-  if (item.kind === "command") {
-    if (item.command === "theme") emit("theme")
-    else if (item.command === "models") emit("settings", "models")
-    else if (item.command === "newTask") emit("newTask")
-    else if (item.command === "artifacts") emit("artifacts")
-    else emit("settings", item.target || "general")
-    close()
-    return
-  }
   if (item.kind === "project") emit("project", item.target)
   else emit("open", item.target, item.messageID)
   close()
@@ -495,7 +365,7 @@ defineExpose({ close })
 <template>
   <!-- MiMo closes on the click, not on the press: a drag out of the card never closes it. -->
   <div class="search-overlay" :class="{ closing }" @click.self="close">
-    <div v-modal class="search-card" role="dialog" data-new-task-clears :aria-label="t('searchOverlay.placeholderWithCommands')">
+    <div v-modal class="search-card" role="dialog" data-new-task-clears :aria-label="t('searchOverlay.placeholder')">
       <div class="search-bar">
         <svg class="i" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <circle cx="11" cy="11" r="7" />
@@ -504,15 +374,13 @@ defineExpose({ close })
         <input
           ref="field"
           v-model="query"
-          :placeholder="t('searchOverlay.placeholderWithCommands')"
+          :placeholder="t('searchOverlay.placeholder')"
           spellcheck="false"
           autocomplete="off"
-          @keydown.down.prevent="move(1)"
-          @keydown.up.prevent="move(-1)"
-          @keydown.enter.prevent="chooseSelected"
+          @keydown="onSearchKeys"
         />
       </div>
-      <div ref="results" class="search-results" @scroll.passive="onResultsScroll">
+      <div class="search-results" @scroll.passive="onResultsScroll">
         <div v-if="messageFailed" class="sr-artifact-error" data-search-error="messages">
           <span>{{ t("searchOverlay.messageError") }}</span>
           <button type="button" @click="search">{{ t("searchOverlay.retry") }}</button>
@@ -529,10 +397,11 @@ defineExpose({ close })
             v-for="item in group.items"
             :key="item.kind + item.id"
             class="sr-item"
-            :class="{ selected: selectedIndex === flat.indexOf(item) }"
+            :class="{ hot: flat[active]?.id === item.id && flat[active]?.kind === item.kind }"
             :data-kind="item.kind"
+            :data-active="flat[active]?.id === item.id && flat[active]?.kind === item.kind ? '1' : undefined"
+            @mouseenter="active = flat.findIndex((row) => row.id === item.id && row.kind === item.kind)"
             @click="choose(item)"
-            @mouseenter="selectedIndex = flat.indexOf(item)"
           >
             <span class="sr-line">
               <span class="sr-title">
@@ -661,8 +530,11 @@ defineExpose({ close })
   cursor: default;
 }
 
-.sr-item:hover,
-.sr-item.selected {
+.sr-item:hover {
+  background: var(--surface-hover);
+}
+
+.sr-item.hot {
   background: var(--surface-hover);
 }
 

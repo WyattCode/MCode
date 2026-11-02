@@ -475,6 +475,7 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
           <path class="illo-spark" d="M132 20v14M125 27h14M36 84v8M32 88h8" />
         </svg>
         <span>{{ t("art.empty") }}</span>
+        <span class="empty-tip">{{ t("art.emptyTip") }}</span>
       </div>
 
       <!-- MiMo shows 加载更多 only when there is something above it. -->
@@ -944,5 +945,13 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
 
 .page-btn:disabled {
   opacity: 0.5;
+}
+
+.empty-tip {
+  margin-top: 0;
+  color: var(--text-weak);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  line-height: 1.4;
+  text-align: center;
 }
 </style>

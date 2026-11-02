@@ -380,20 +380,7 @@ function toggleSearch() {
 }
 const settingsOpen = ref(false)
 /** Non-default landing page for the settings dialog, when opened from a shortcut. */
-const settingsSection = ref<
-  | "general"
-  | "appearance"
-  | "personal"
-  | "keys"
-  | "archive"
-  | "files"
-  | "environment"
-  | "usage"
-  | "updates"
-  | "models"
-  | "mcp"
-  | "lab"
->()
+const settingsSection = ref<"general" | "keys" | "models" | "mcp" | "archive">()
 /*
  * The header, so the rename command, its chord and the header menu's 重命名 can
  * start the title's own in-place editor, as MiMo's requestRename does.
@@ -408,35 +395,9 @@ function renameInHeader() {
  * does; the MCP command and Ctrl+; land on the MCP page, MiMo's only MCP screen.
  */
 function openSettings(section?: unknown) {
-  const known =
-    section === "general" ||
-    section === "appearance" ||
-    section === "personal" ||
-    section === "keys" ||
-    section === "archive" ||
-    section === "files" ||
-    section === "environment" ||
-    section === "usage" ||
-    section === "updates" ||
-    section === "models" ||
-    section === "mcp" ||
-    section === "lab"
-  settingsSection.value = known ? (section as typeof settingsSection.value) : undefined
+  settingsSection.value = section === "models" || section === "mcp" || section === "archive" ? section : undefined
   settingsOpen.value = true
 }
-
-function onOpenSettingsEvent(event: Event) {
-  const detail = (event as CustomEvent<string>).detail
-  openSettings(detail)
-}
-
-function toggleThemeFromSearch() {
-  const order = ["system", "light", "dark"] as const
-  const current = app.config?.theme ?? "system"
-  const next = order[(order.indexOf(current as (typeof order)[number]) + 1) % order.length] ?? "system"
-  void app.patchConfig({ theme: next })
-}
-
 
 /** Directory whose presentation is being edited, if any. */
 const editingProject = ref<string>()
@@ -1074,14 +1035,20 @@ function resizeSide(width: number, done: boolean) {
 
 /* P6-3: a project picked, brought in or made on the home screen opens the side column, as MiMo's does. */
 const revealSide = () => setSide(true)
-onMounted(() => window.addEventListener("mcode:reveal-side", revealSide))
+function fillPrompt(event: Event) {
+  const prompt = (event as CustomEvent<string>).detail
+  if (typeof prompt !== "string" || !prompt.trim()) return
+  composer.value?.set({ text: prompt, attachments: [], mentioned: new Set() })
+  composer.value?.focus()
+}
 onMounted(() => {
-  window.addEventListener("mcode:open-settings", onOpenSettingsEvent)
+  window.addEventListener("mcode:reveal-side", revealSide)
+  window.addEventListener("mcode:fill-prompt", fillPrompt)
 })
 onBeforeUnmount(() => {
-  window.removeEventListener("mcode:open-settings", onOpenSettingsEvent)
+  window.removeEventListener("mcode:reveal-side", revealSide)
+  window.removeEventListener("mcode:fill-prompt", fillPrompt)
 })
-onBeforeUnmount(() => window.removeEventListener("mcode:reveal-side", revealSide))
 let sideAutoFolded = false
 watch(
   [windowWidth, leftPanel, () => rp.open, () => rp.width, () => rp.fullscreen],
@@ -4301,10 +4268,6 @@ onBeforeUnmount(() => {
       @close="searchOpen = false"
       @open="openFromSearch"
       @project="startIn"
-      @settings="openSettings"
-      @theme="toggleThemeFromSearch"
-      @newTask="newTaskFromSide"
-      @artifacts="goArtifacts"
     />
 
     <!-- MiMo's settings boundary: a page that fails to draw shows its strip, not the fatal page. -->
