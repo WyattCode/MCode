@@ -88,8 +88,10 @@ async function ensureVersions() {
 async function prepare() {
   url.value = ""
   failed.value = ""
-  if (!path.value) return
-  const served = await window.mcode.officeServe(path.value)
+  const file = path.value
+  if (!file) return
+  const served = await window.mcode.officeServe(file)
+  if (path.value !== file) return
   if (!served.ok) {
     failed.value = served.error === "serverFailed" ? "server" : "missing"
     return
@@ -222,7 +224,8 @@ function onMessage(event: MessageEvent) {
 /* One batch can hold the page and files beside it: reload once, and keep a version when the page itself is among them. */
 watch(aiWrite, async (write) => {
   if (!write || !path.value) return
-  const page = normalPath(path.value)
+  const held = path.value
+  const page = normalPath(held)
   const folder = page.slice(0, page.lastIndexOf("/") + 1)
   const files = write.files.map(normalPath)
   const beside = files.some((file) => file !== page && file.startsWith(folder))
@@ -230,22 +233,25 @@ watch(aiWrite, async (write) => {
     if (beside) reloads.value += 1
     return
   }
-  const [dir, base] = splitPath()
+  const [dir, base] = splitPath(held)
   try {
     const read = await window.mcode.readFileBytes(dir, base, lastStat)
+    if (path.value !== held) return
     if (read.ok && read.unchanged) {
       if (beside) reloads.value += 1
       return
     }
     dropBox()
     if (read.ok) {
+      const { prompt } = aiTouch(held)
+      await versions.record(held, read.base64, "ai_local", prompt.trim() || lastComment)
+      if (path.value !== held) return
       lastStat = { size: read.size, mtimeMs: read.mtimeMs }
-      const { prompt } = aiTouch(path.value)
-      await versions.record(path.value, read.base64, "ai_local", prompt.trim() || lastComment)
     }
   } catch (err) {
     console.error("[HtmlTab] record AI version error:", err)
   }
+  if (path.value !== held) return
   reloads.value += 1
 })
 
