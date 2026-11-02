@@ -65,8 +65,11 @@ export function fileManagerName(platform: string): string {
 }
 
 export async function openNative(file: string): Promise<boolean> {
+  // Hold the failure toast to the conversation the open started in; leaving mid-await must not flash it elsewhere.
+  const held = useApp().currentID
   const result = await window.mcode.openNativePath(file).catch((error: unknown) => ({ ok: false as const, code: "failed", error: String(error) }))
   if (result.ok) return true
+  if (useApp().currentID !== held) return false
   notifyFailure(result.code === "missing" ? t("harnessRow.pathNotExist") : result.code === "invalid" ? t("markdown.openFailed") : result.error || t("markdown.openFailed"))
   return false
 }
