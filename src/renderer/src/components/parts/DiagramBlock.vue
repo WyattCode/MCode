@@ -194,7 +194,13 @@ async function pick(key: string) {
     return
   }
   if (key === "copyCode") {
-    await writeText(source.value).catch(() => notifyFailure(t("code.copyFailed")))
+    // Hold the toast to the place the person started from; leaving mid-await
+    // must not flash the copy outcome onto another conversation.
+    const held = useApp().currentID
+    await writeText(source.value).catch(() => {
+      if (useApp().currentID !== held) return
+      notifyFailure(t("code.copyFailed"))
+    })
     return
   }
   if (key === "downloadSvg") {
