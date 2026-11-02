@@ -2226,7 +2226,8 @@ async function undoTurn() {
     const files = await app.undo(id)
     notify(t("toast.undone", { n: files }))
   } catch (failure) {
-    notifyFailure(t("toast.undoFailed"), reasonOf(failure))
+    // Only surface the failure while still on the session that owns it.
+    if (app.currentID === id) notifyFailure(t("toast.undoFailed"), reasonOf(failure))
   }
 }
 
@@ -2237,7 +2238,8 @@ async function redoTurn() {
     const files = await app.redo(id)
     notify(t("toast.redone", { n: files }))
   } catch (failure) {
-    notifyFailure(t("toast.redoFailed"), reasonOf(failure))
+    // Only surface the failure while still on the session that owns it.
+    if (app.currentID === id) notifyFailure(t("toast.redoFailed"), reasonOf(failure))
   }
 }
 
@@ -2248,7 +2250,8 @@ async function compactSession() {
     await app.compact(id)
     notify(t("toast.compacted"))
   } catch (failure) {
-    notifyFailure(t("toast.compactFailed"), reasonOf(failure))
+    // Only surface the failure while still on the session that owns it.
+    if (app.currentID === id) notifyFailure(t("toast.compactFailed"), reasonOf(failure))
   }
 }
 

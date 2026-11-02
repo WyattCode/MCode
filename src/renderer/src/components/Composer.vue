@@ -1523,7 +1523,9 @@ async function compactFromBox(line: string, rebuild = false) {
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err)
     const timedOut = /timed? ?out|ETIMEDOUT/i.test(reason)
-    notifyFailure(timedOut ? t("composer.compact.timeout") : t("composer.compact.failed"), reason)
+    // Only surface the failure while still on the session that owns it.
+    if (sessionID.value === id)
+      notifyFailure(timedOut ? t("composer.compact.timeout") : t("composer.compact.failed"), reason)
   }
 }
 
