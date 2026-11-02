@@ -2335,6 +2335,8 @@ async function trySkill(name: string, title: string) {
   if (current && !current.archived && !current.parentID && !current.sideOf) {
     addDraftSkill(`main:${current.id}`, name)
     await openFromSide(current.id)
+    // held: user may have switched mid-flight; only follow up on the same conversation
+    if (app.currentID !== current.id) return
     push({ view: "session", sessionID: current.id })
   } else {
     addDraftSkill("home", name)
