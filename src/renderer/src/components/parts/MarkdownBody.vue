@@ -225,6 +225,8 @@ async function copyTable(button: HTMLElement) {
   const table = container?.querySelector("table")
   if (!container || !table) return
   const text = container.dataset.mdSource?.trim() || pipeTable(table)
+  // Hold the toast to the place the person started from; leaving mid-await must not flash the copy outcome onto another conversation.
+  const held = app.currentID
   try {
     const Item = (globalThis as { ClipboardItem?: typeof ClipboardItem }).ClipboardItem
     let written = false
@@ -239,9 +241,11 @@ async function copyTable(button: HTMLElement) {
       }
     }
     if (!written) await writeText(text)
+    if (app.currentID !== held) return
     button.classList.add("copied")
     window.setTimeout(() => button.classList.remove("copied"), 2000)
   } catch {
+    if (app.currentID !== held) return
     notifyFailure(t("table.copyFailed"))
   }
 }
