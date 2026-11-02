@@ -2485,11 +2485,17 @@ function onKeydown(event: KeyboardEvent) {
 
 /* Writes a history entry, or the set-aside draft for null, with the caret at its end. */
 function showHistory(at: number | null) {
+  const originKey = draftKey.value
   walkingHistory = true
   historyIndex.value = at
   const value = at === null ? historyStash.value : (history.value[at] ?? "")
   rewrite(value)
   void nextTick(() => {
+    // A session switch mid-tick means this caret belongs to a draft no longer on screen.
+    if (!composerMounted || draftKey.value !== originKey) {
+      walkingHistory = false
+      return
+    }
     walkingHistory = false
     resize()
     input.value?.setSelectionRange(value.length, value.length)
