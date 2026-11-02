@@ -67,7 +67,7 @@ onMounted(() => {
 
 <template>
   <div class="scrim" @mousedown.self="emit('close')">
-    <div v-modal class="card" data-new-project-dialog role="dialog" aria-labelledby="np-title" aria-describedby="np-desc">
+    <div v-modal class="card" data-new-project-dialog role="dialog" aria-modal="true" aria-labelledby="np-title">
       <div class="head">
         <div>
           <div class="icon" data-np-icon aria-hidden="true">
@@ -77,9 +77,9 @@ onMounted(() => {
             </svg>
           </div>
           <h2 id="np-title" class="title">{{ t("home.blankTitle") }}</h2>
-          <p id="np-desc" class="sr-only">{{ t("home.blankSubtitle") }}</p>
+          <p class="sr-only">{{ t("home.blankSubtitle") }}</p>
         </div>
-        <button type="button" class="close" data-np-close :aria-label="t('common.close')" @click="emit('close')">
+        <button type="button" class="close" data-np-close :aria-label="t('common.cancel')" @click="emit('close')">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path d="M18 6 6 18M6 6l12 12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
           </svg>
@@ -94,15 +94,12 @@ onMounted(() => {
         :value="draft"
         spellcheck="false"
         :maxlength="MAX_NAME"
-        aria-describedby="np-count"
         @input="typed"
         @keydown.enter="onEnter"
       />
 
-      <div id="np-count" class="count" aria-live="polite">{{ Array.from(draft).length }}/{{ MAX_NAME }}</div>
-
-      <div class="label" id="np-source-label">{{ t("home.blankSource") }}</div>
-      <button type="button" class="source" data-np-source aria-labelledby="np-source-label" @click="pickSource">
+      <div class="label">{{ t("home.blankSource") }}</div>
+      <button type="button" class="source" data-np-source @click="pickSource">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
           <path d="M12 10.5v5M9.5 13h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
@@ -192,13 +189,6 @@ onMounted(() => {
   background: var(--surface-hover);
 }
 
-.count {
-  margin-top: 6px;
-  color: var(--text-weak);
-  font-size: calc(12px * var(--ui-font-scale, 1));
-  text-align: end;
-}
-
 .label {
   display: block;
   margin-bottom: 6px;
@@ -226,11 +216,6 @@ onMounted(() => {
   border-color: #151c1366;
 }
 
-.field:focus-visible {
-  outline: 2px solid var(--interactive);
-  outline-offset: 2px;
-}
-
 .source {
   display: flex;
   flex-direction: column;
@@ -253,13 +238,6 @@ onMounted(() => {
 .source:hover {
   color: var(--text-body);
   background: var(--surface-selected);
-}
-
-.close:focus-visible,
-.source:focus-visible,
-.btn:focus-visible {
-  outline: 2px solid var(--interactive);
-  outline-offset: 2px;
 }
 
 .source svg {

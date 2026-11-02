@@ -312,6 +312,7 @@ watch(
       ref="card"
       class="card"
       role="dialog"
+      aria-modal="true"
       :aria-label="t('info.commitOrPush')"
       data-info-popover
       data-info-commit-card
