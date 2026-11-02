@@ -269,15 +269,19 @@ function preview(row: Row) {
 
 /** MiMo's download hands the file over where it lies: its folder opens with it selected. */
 async function download(row: Row) {
+  // Hold the reveal failure toasts to the place the person started from;
+  // leaving mid-await must not flash the file-manager outcome onto another conversation.
+  const held = app.currentID
   const absolute = /^([A-Za-z]:)?[\\/]/.test(row.path)
   if (absolute) {
     const result = await window.mcode.revealPath(artifactAbsolute(row.session.directory, row.path)).catch(() => ({ ok: false }))
-    if (!result.ok) notifyFailure(t("art.revealMissing"))
+    if (!result.ok && app.currentID === held) notifyFailure(t("art.revealMissing"))
     return
   }
   const result = await window.mcode
     .revealFile(row.session.directory, row.path)
     .catch((failure: unknown) => ({ ok: false, missing: false, error: String(failure) }))
+  if (app.currentID !== held) return
   if (result.ok) return
   if (result.missing) notifyFailure(t("art.revealMissing"))
   else notifyFailure(t("art.revealFailed", { error: result.error ?? "" }))
