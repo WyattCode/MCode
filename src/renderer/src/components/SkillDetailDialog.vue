@@ -29,9 +29,6 @@ const title = computed(() => skillTitle(props.skill, language.value))
 const brief = computed(() => skillBrief(props.skill, language.value))
 const description = computed(() => skillDescription(props.skill, language.value))
 const hue = computed(() => skillHue(props.skill.name))
-const describedBy = computed(() =>
-  [brief.value ? "skill-card-brief" : "", description.value ? "skill-card-desc" : ""].filter(Boolean).join(" ") || undefined,
-)
 
 function toggleContent() {
   open.value = !open.value
@@ -43,7 +40,7 @@ useEscapeLayer(() => emit("close"))
 
 <template>
   <div class="scrim" data-skill-overlay @mousedown.self="emit('close')">
-    <div v-modal class="card" role="dialog" aria-modal="true" aria-labelledby="skill-card-title" :aria-describedby="describedBy" :data-skill-card="skill.name">
+    <div v-modal class="card" role="dialog" aria-labelledby="skill-card-title" :data-skill-card="skill.name">
       <button type="button" class="close" data-skill-close :aria-label="t('skillDetail.close')" @click="emit('close')">✕</button>
       <div class="head">
         <span class="mark" aria-hidden="true">
@@ -62,6 +59,7 @@ useEscapeLayer(() => emit("close"))
           <span class="kind">{{ t("skillDetail.kind") }}</span>
         </div>
         <button
+          type="button"
           class="switch"
           :class="{ on: skill.enabled }"
           role="switch"
@@ -73,9 +71,9 @@ useEscapeLayer(() => emit("close"))
           <span class="knob" />
         </button>
       </div>
-      <div v-if="brief" id="skill-card-brief" class="brief" dir="auto">{{ brief }}</div>
+      <div v-if="brief" class="brief" dir="auto">{{ brief }}</div>
       <div class="body">
-        <div v-if="description" id="skill-card-desc" class="desc" dir="auto">{{ description }}</div>
+        <div v-if="description" class="desc" dir="auto">{{ description }}</div>
         <button type="button" class="content-toggle" data-skill-content-toggle :aria-expanded="open" @click="toggleContent">
           {{ open ? "▾" : "▸" }} {{ t("skillDetail.viewContent") }}
         </button>
@@ -145,16 +143,6 @@ useEscapeLayer(() => emit("close"))
 
 .close:hover {
   color: var(--text-strong);
-}
-
-.close:focus-visible,
-.content-toggle:focus-visible,
-.uninstall:focus-visible,
-.configure:focus-visible,
-.try:focus-visible,
-.switch:focus-visible {
-  outline: 2px solid var(--text-strong);
-  outline-offset: 2px;
 }
 
 .head {
