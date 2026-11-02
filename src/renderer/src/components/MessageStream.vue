@@ -807,6 +807,8 @@ watch(
     // A parked question's floor is this conversation's alone.
     clearFloor()
     parkedIn = undefined
+    // In-place edit belongs to the conversation it was started in.
+    cancelEdit()
     await nextTick()
     toBottom()
     measureJump()
@@ -1004,6 +1006,9 @@ async function backToSource(sourceID: string) {
 
 /** True while an edit or retry is deleting and resending, so a second press cannot race the first. */
 const resending = ref(false)
+/* Which conversation owns that in-flight resend, so another one is not shown as busy. */
+const resendingID = ref<string>()
+const resendingHere = computed(() => resending.value && resendingID.value === shownID.value)
 
 /* Where a resend that was not accepted leaves its words: back in the composer. */
 const restoreDraft = useRestoreDraft()
@@ -1352,6 +1357,7 @@ async function startEdit(turn: Turn, selectAll: boolean) {
 
 function cancelEdit() {
   editingAsked.value = undefined
+  editDraft.value = ""
 }
 
 async function sendEdit(turn: Turn) {
@@ -1359,11 +1365,12 @@ async function sendEdit(turn: Turn) {
   if (!text) return
   const sessionID = app.currentID
   const message = shownMessages.value.find((entry) => entry.id === turn.id)
-  if (!sessionID || shownBusy.value || resending.value || message?.role !== "user") {
+  if (!sessionID || shownBusy.value || resendingHere.value || message?.role !== "user") {
     notifyFailure(t("stream.editBusy"))
     return
   }
   resending.value = true
+  resendingID.value = sessionID
   app.markReplacing(sessionID, true)
   try {
     await app.truncate(sessionID, turn.id)
@@ -1375,7 +1382,10 @@ async function sendEdit(turn: Turn) {
   } catch (failure) {
     notifyFailure(t("common.requestFailed"), failure instanceof Error ? failure.message : String(failure))
   } finally {
-    resending.value = false
+    if (resendingID.value === sessionID) {
+      resending.value = false
+      resendingID.value = undefined
+    }
     app.markReplacing(sessionID, false)
   }
 }
@@ -1487,11 +1497,12 @@ function failureText(turn: Turn): { text: string; clamped: boolean } {
 async function retry(turn: Turn) {
   const sessionID = props.side ? sideKey.value : app.currentID
   const message = shownMessages.value.find((entry) => entry.id === turn.id)
-  if (!sessionID || shownBusy.value || resending.value || message?.role !== "user") {
+  if (!sessionID || shownBusy.value || resendingHere.value || message?.role !== "user") {
     notifyFailure(t("stream.retryUnavailable"))
     return
   }
   resending.value = true
+  resendingID.value = sessionID
   app.markReplacing(sessionID, true)
   try {
     await app.truncate(sessionID, turn.id)
@@ -1500,7 +1511,10 @@ async function retry(turn: Turn) {
   } catch (failure) {
     notifyFailure(t("common.requestFailed"), failure instanceof Error ? failure.message : String(failure))
   } finally {
-    resending.value = false
+    if (resendingID.value === sessionID) {
+      resending.value = false
+      resendingID.value = undefined
+    }
     app.markReplacing(sessionID, false)
   }
 }
@@ -1708,7 +1722,7 @@ defineExpose({ stepMessage, scroller })
                 type="button"
                 class="asked-edit-send"
                 data-edit-send
-                :disabled="shownBusy || resending || !editDraft.trim()"
+                :disabled="shownBusy || resendingHere || !editDraft.trim()"
                 @click="sendEdit(turn)"
               >
                 {{ t("stream.editSend") }}
@@ -1809,7 +1823,7 @@ defineExpose({ stepMessage, scroller })
                 type="button"
                 class="msg-act"
                 data-msg-act="edit"
-                :disabled="resending"
+                :disabled="resendingHere"
                 :aria-label="t('stream.edit')"
                 v-tip="{ label: t('stream.edit'), placement: 'top' }"
                 @click="startEdit(turn, false)"
