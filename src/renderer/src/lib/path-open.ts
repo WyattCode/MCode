@@ -5,6 +5,7 @@ import type { MenuItem } from "./menu"
 import { mediaOf, type PathKind } from "./markdown"
 import { base64ToBlob, toPng, writeClipboardPng } from "./diagram"
 import { writeText } from "./clipboard"
+import { useApp } from "../stores/app"
 
 /**
  * What a path in a reply does, as MiMo has it: a file goes to its default
@@ -83,7 +84,10 @@ export async function openPathLink(file: string, kind: string, directory: string
     await openNative(file)
     return
   }
+  // Hold the conversation that owned the click so a late resolve cannot open into another one.
+  const heldID = useApp().currentID
   const found = await window.mcode.resolveExistingPath(pathCandidates(file, directory)).catch(() => null)
+  if (useApp().currentID !== heldID) return
   if (!found) {
     notifyFailure(t("harnessRow.revealFailed", { error: t("harnessRow.pathNotExist") }))
     return
