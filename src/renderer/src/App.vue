@@ -1844,10 +1844,15 @@ const PROJECT_ACTIONS: Record<string, (directory: string) => void | Promise<void
 
 /* Takes projects off the project list; adding the folder again brings each back. */
 async function closeProjects(directories: string[]) {
+  // Hold the remove-projects failure toast to the place the person started from;
+  // leaving mid-await must not flash it onto another chat.
+  const held = app.currentID
   try {
     await app.removeProjects(directories)
   } catch (err) {
-    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    if (app.currentID === held) {
+      notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    }
   }
 }
 
