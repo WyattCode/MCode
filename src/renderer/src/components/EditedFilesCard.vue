@@ -385,10 +385,14 @@ async function pickMenu(key: string) {
   cursor: pointer;
 }
 
-.fc-file:hover,
+.fc-file:hover {
+  color: var(--text-interactive);
+}
+
 .fc-file:focus-visible {
   color: var(--text-interactive);
-  outline: none;
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 .fc-truncate {
@@ -463,6 +467,12 @@ async function pickMenu(key: string) {
   background: var(--surface-hover);
 }
 
+.fc-revert:focus-visible,
+.fc-review:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
 .fc-revert:disabled {
   cursor: default;
   opacity: 0.55;
@@ -489,10 +499,14 @@ async function pickMenu(key: string) {
   cursor: pointer;
 }
 
-.fc-row:hover,
+.fc-row:hover {
+  background: #f0f0f2;
+}
+
 .fc-row:focus-visible {
   background: #f0f0f2;
-  outline: none;
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 .fc-name {
@@ -522,10 +536,14 @@ async function pickMenu(key: string) {
   cursor: pointer;
 }
 
-.fc-more:hover,
+.fc-more:hover {
+  color: var(--text-interactive);
+}
+
 .fc-more:focus-visible {
   color: var(--text-interactive);
-  outline: none;
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 /*
