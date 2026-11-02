@@ -29,7 +29,10 @@ async function openSource() {
   try {
     await app.open(id)
   } catch (err) {
-    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    // Left for another conversation while open was in flight: do not toast the failure here.
+    if (app.currentID === id) {
+      notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    }
   }
 }
 </script>
