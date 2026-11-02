@@ -148,7 +148,10 @@ export async function copyImageFile(file: string): Promise<void> {
 
 export async function runPathMenu(key: string, target: PathTarget, platform: string): Promise<void> {
   if (key === "open") {
+    // hold the toast to the conversation the open started in; leaving mid-await must not flash it elsewhere
+    const held = useApp().currentID
     const result = await window.mcode.openNativePath(target.path).catch((error: unknown) => ({ ok: false as const, code: "failed", error: String(error) }))
+    if (useApp().currentID !== held) return
     if (!result.ok) notifyFailure(t("officeCard.openFailed", { error: result.code === "missing" ? t("harnessRow.pathNotExist") : result.error }))
     return
   }
