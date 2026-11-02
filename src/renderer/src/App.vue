@@ -1583,6 +1583,9 @@ const ROW_ACTIONS: Record<string, (sessionID: string, header: boolean) => void |
   },
   "row.copyMarkdown": async (sessionID) => {
     if (app.currentID !== sessionID) await app.open(sessionID)
+    // Hold the clipboard and toast to the row's session; leaving mid-open
+    // must not copy another chat's transcript or flash copiedMarkdown onto another chat.
+    if (app.currentID !== sessionID) return
     window.mcode.setClipboardText(transcriptMarkdown())
     notify(t("menu.copiedMarkdown"))
   },
