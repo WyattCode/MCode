@@ -1297,6 +1297,8 @@ async function browse() {
  */
 async function selectTab(id: string) {
   if (app.currentID !== id) await app.open(id)
+  // Left for another conversation while open was in flight: do not force the session view/history for the abandoned id.
+  if (app.currentID !== id) return
   view.value = "session"
   push({ view: "session", sessionID: id })
 }
