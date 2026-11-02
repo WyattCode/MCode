@@ -53,7 +53,18 @@ async function refresh() {
   }
 }
 
-watch(() => props.directory, refresh, { immediate: true })
+/* A new project starts clean: the old chip, menu, and dirty confirmation must not linger over it. */
+function resetForDirectory() {
+  open.value = false
+  pending.value = undefined
+  creating.value = false
+  draft.value = ""
+  query.value = ""
+  state.value = undefined
+  void refresh()
+}
+
+watch(() => props.directory, resetForDirectory, { immediate: true })
 /* A branch changed from the info card, or by this chip, is shown at once. */
 watch(() => app.branchNonce, refresh)
 
