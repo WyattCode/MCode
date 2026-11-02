@@ -181,7 +181,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="root" class="picker" @focusout="onFocusOut">
-    <button class="chip" aria-haspopup="menu" :aria-expanded="open" @click="toggle">
+    <button type="button" class="chip" aria-haspopup="menu" :aria-expanded="open" aria-controls="project-picker-menu" @click="toggle">
       <svg v-if="current" class="i" viewBox="0 0 16 16" fill="none" aria-hidden="true">
         <path v-for="d in ICON.folder" :key="d" :d="d" />
       </svg>
@@ -191,7 +191,7 @@ onBeforeUnmount(() => {
       </svg>
     </button>
 
-    <div v-if="open" ref="menuEl" class="menu" role="menu" @keydown="onMenuKeys">
+    <div v-if="open" id="project-picker-menu" ref="menuEl" class="menu" role="menu" @keydown="onMenuKeys">
       <div class="search">
         <svg class="i" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path v-for="d in ICON.search" :key="d" :d="d" />
@@ -201,6 +201,7 @@ onBeforeUnmount(() => {
           v-model="query"
           spellcheck="false"
           :placeholder="t('home.searchProjects')"
+          :aria-label="t('home.searchProjects')"
           @keydown="onSearchKeys"
         />
       </div>
@@ -213,6 +214,7 @@ onBeforeUnmount(() => {
           <button
             v-for="project in shown"
             :key="project.directory"
+            type="button"
             class="row project"
             role="menuitemradio"
             data-picker-row
@@ -233,7 +235,7 @@ onBeforeUnmount(() => {
           </button>
         </div>
       </div>
-      <button v-if="more" class="row show-more" role="menuitem" data-picker-row @click="expanded = true">
+      <button v-if="more" type="button" class="row show-more" role="menuitem" data-picker-row @click="expanded = true">
         <span class="name">{{ t("home.showMore") }}</span>
       </button>
 
@@ -263,13 +265,13 @@ onBeforeUnmount(() => {
           <path v-for="d in ICON.chev" :key="d" :d="d" />
         </svg>
         <div v-if="sub" ref="submenuEl" class="submenu" role="menu" @click.stop @keydown.left="closeSub">
-          <button class="row" role="menuitem" data-picker-row data-new-project="blank" @click="act('blank')">
+          <button type="button" class="row" role="menuitem" data-picker-row data-new-project="blank" @click="act('blank')">
             <svg class="i" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path v-for="d in ICON.folderAdd" :key="d" :d="d" />
             </svg>
             <span class="name">{{ t("home.createBlank") }}</span>
           </button>
-          <button class="row" role="menuitem" data-picker-row data-new-project="existing" @click="act('existing')">
+          <button type="button" class="row" role="menuitem" data-picker-row data-new-project="existing" @click="act('existing')">
             <svg class="i" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path v-for="d in ICON.folder" :key="d" :d="d" />
             </svg>
@@ -278,7 +280,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <button class="row no-project" role="menuitem" data-picker-row @click="act('none')">
+      <button type="button" class="row no-project" role="menuitem" data-picker-row @click="act('none')">
         <svg class="i" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path v-for="d in ICON.none" :key="d" :d="d" />
         </svg>

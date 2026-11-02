@@ -195,7 +195,7 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
 <template>
   <div class="scrim" @mousedown="emit('close')" @wheel="emit('close')" />
 
-  <div ref="panel" class="menu" :style="{ insetInlineStart: `${props.x}px`, top: `${props.y}px` }">
+  <div ref="panel" class="menu" role="menu" :style="{ insetInlineStart: `${props.x}px`, top: `${props.y}px` }">
     <div class="brand">MCode</div>
 
     <div
@@ -203,6 +203,9 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
       :key="group.key"
       class="row"
       :class="{ on: open === group.key }"
+      role="menuitem"
+      aria-haspopup="menu"
+      :aria-expanded="open === group.key"
       :data-group="group.key"
       tabindex="-1"
       @mouseenter="show(group.key, $event)"
@@ -214,10 +217,10 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
       </svg>
     </div>
 
-    <div v-if="open" class="sub" :style="{ top: `${submenuTop}px` }" @mouseleave="open = undefined">
+    <div v-if="open" class="sub" role="menu" :style="{ top: `${submenuTop}px` }" @mouseleave="open = undefined">
       <template v-for="item in groups.find((g) => g.key === open)?.items ?? []" :key="item.key">
-        <div v-if="item.divided" class="rule" />
-        <button class="item" :disabled="props.disabled?.has(item.key)" @click="pick(item)">
+        <div v-if="item.divided" class="rule" role="separator" />
+        <button type="button" class="item" role="menuitem" :disabled="props.disabled?.has(item.key)" @click="pick(item)">
           <span class="item-label">{{ item.label }}</span>
           <span v-if="item.hint" class="keys">{{ shownChord(item.hint) }}</span>
         </button>
@@ -270,6 +273,12 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
 .row:hover,
 .row.on {
   background: var(--surface-hover);
+}
+
+.row:focus-visible,
+.item:focus-visible {
+  outline: 2px solid var(--text-strong);
+  outline-offset: -2px;
 }
 
 .row svg {
