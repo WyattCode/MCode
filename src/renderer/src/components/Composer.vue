@@ -2801,11 +2801,13 @@ async function chooseAccess(next: Access) {
 }
 
 async function confirmFull() {
-  confirmingFull.value = false
   const held = pendingFullFor.value
-  pendingFullFor.value = undefined
-  await applyAccess("full", held)
-  if (await applyAccess("full")) confirmingFull.value = false
+  // One apply to the conversation that opened the sheet; close only on success (r130).
+  // Clearing pendingFullFor only after success keeps retry on the same held id.
+  if (await applyAccess("full", held)) {
+    pendingFullFor.value = undefined
+    confirmingFull.value = false
+  }
 }
 
 /*
