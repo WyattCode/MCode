@@ -1519,7 +1519,7 @@ async function compactFromBox(line: string, rebuild = false) {
   notify(t("composer.compact.starting"))
   try {
     await app.compact(id)
-    notice.success(t("composer.compact.success"))
+    if (sessionID.value === id) notice.success(t("composer.compact.success"))
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err)
     const timedOut = /timed? ?out|ETIMEDOUT/i.test(reason)
