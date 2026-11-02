@@ -30,7 +30,8 @@ const check = (label: string, ok: boolean, detail = "") => {
 class StubConfig {
   private value = {
     mcpServers: {
-      probe: { type: "local" as const, command: ["node", fixture] },
+      // The runtime running this check, which is there even on a machine with no `node` on its PATH.
+      probe: { type: "local" as const, command: [process.execPath, fixture] },
       broken: { type: "local" as const, command: ["definitely-not-a-real-command-xyz"] },
     },
   }
