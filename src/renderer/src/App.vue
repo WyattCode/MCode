@@ -62,7 +62,7 @@ import { draftFromMessage, provideRestoreDraft } from "./lib/draft"
 import { cycleVariant, findModel } from "./lib/model"
 import { PANEL_MIN_WIDTH, useRightPanel } from "./stores/right-panel"
 import { arbitratePanel, boundChord, clampSideWidth, panelWidthShown, sideFits, toolHints } from "./lib/right-tools"
-import { copyConversationMarkdownById, exportConversationById, exportConversationMarkdown } from "./lib/convo-export"
+import { exportConversationById, exportConversationMarkdown, transcriptOf } from "./lib/convo-export"
 import { ZOOM_TOAST, dismiss, notify, notifyFailure, zoomNotice } from "./lib/toast"
 import { followZoom } from "./lib/zoom-resize"
 import { openDocument } from "./lib/office-open"
@@ -488,9 +488,6 @@ function revealAction(target: string) {
 }
 
 async function exportLog() {
-  // Hold the toast to the place the person started from; leaving mid-await
-  // must not flash the log export toast onto another chat.
-  const id = app.currentID
   const header = [
     `MCode log`,
     `exported ${new Date().toISOString()}`,
@@ -502,11 +499,9 @@ async function exportLog() {
   const body = logLines.length ? logLines : [t("log.empty")]
   try {
     const saved = await saveText("mcode-log.txt", [...header, ...body].join("\n"))
-    if (saved && app.currentID === id) {
-      notify(t("log.saved"), { action: revealAction(saved) })
-    }
+    if (saved) notify(t("log.saved"), { action: revealAction(saved) })
   } catch (failure) {
-    if (app.currentID === id) reportSaveFailure(t("toast.exportFailed"), failure)
+    reportSaveFailure(t("toast.exportFailed"), failure)
   }
 }
 
@@ -1040,20 +1035,8 @@ function resizeSide(width: number, done: boolean) {
 
 /* P6-3: a project picked, brought in or made on the home screen opens the side column, as MiMo's does. */
 const revealSide = () => setSide(true)
-function fillPrompt(event: Event) {
-  const prompt = (event as CustomEvent<string>).detail
-  if (typeof prompt !== "string" || !prompt.trim()) return
-  composer.value?.set({ text: prompt, attachments: [], mentioned: new Set() })
-  composer.value?.focus()
-}
-onMounted(() => {
-  window.addEventListener("mcode:reveal-side", revealSide)
-  window.addEventListener("mcode:fill-prompt", fillPrompt)
-})
-onBeforeUnmount(() => {
-  window.removeEventListener("mcode:reveal-side", revealSide)
-  window.removeEventListener("mcode:fill-prompt", fillPrompt)
-})
+onMounted(() => window.addEventListener("mcode:reveal-side", revealSide))
+onBeforeUnmount(() => window.removeEventListener("mcode:reveal-side", revealSide))
 let sideAutoFolded = false
 watch(
   [windowWidth, leftPanel, () => rp.open, () => rp.width, () => rp.fullscreen],
@@ -1170,26 +1153,19 @@ watch(reviewRequest, () => {
  */
 watch(fileRequest, async (asked) => {
   if (!asked) return
-  // Hold the ask and the conversation it was made in: a switch while the
-  // resolve/reveal is in flight must not open the file into the new panel.
-  const heldAt = asked.at
-  const heldSession = app.currentID
-  const heldRoot = app.current?.directory?.replace(/[\\/]+$/, "")
-  const stillCurrent = () => fileRequest.value?.at === heldAt && app.currentID === heldSession
-  const candidates = [asked.path, ...(heldRoot ? [`${heldRoot}/${asked.path}`] : [])]
+  const root = app.current?.directory?.replace(/[\\/]+$/, "")
+  const candidates = [asked.path, ...(root ? [`${root}/${asked.path}`] : [])]
   const found = await window.mcode.resolveExistingPath(candidates).catch(() => null)
-  if (!stillCurrent()) return
   if (!found) {
     notifyFailure(t("harnessRow.pathNotExist"))
     return
   }
   if (found.directory) {
     const shown = await window.mcode.revealPath(found.path).catch(() => ({ ok: false, error: "" }))
-    if (!stillCurrent()) return
     if (!shown.ok) notifyFailure(t("harnessRow.revealFailed", { error: shown.error ?? "" }))
     return
   }
-  await openDocument({ path: found.path }, heldRoot)
+  await openDocument({ path: found.path }, root)
 })
 
 function copyWorkingDirectory() {
@@ -1227,7 +1203,6 @@ async function addDroppedProjects(directories: string[]) {
 /* MiMo's add then browseProject: listed, the last one the latest pick, and home with it chosen. */
 async function addAndBrowse(directories: string[]) {
   const last = directories[directories.length - 1]!
-  const heldSession = app.currentID
   let failed = false
   let failure: unknown = null
   for (const directory of directories) {
@@ -1242,8 +1217,7 @@ async function addAndBrowse(directories: string[]) {
     notifyFailure(t("common.requestFailed"), failure instanceof Error ? failure.message : String(failure))
     return
   }
-  // Left for a conversation while projects were added: do not yank home for the abandoned browse.
-  if (app.currentID === heldSession) startIn(last)
+  startIn(last)
 }
 
 /*
@@ -1277,15 +1251,13 @@ function newTaskFromSide() {
 
 async function newSessionIn(directory: string) {
   if (alreadyNewTask(directory)) return
-  const heldSession = app.currentID
   try {
     await app.addProject(directory, { used: true, silent: true })
   } catch (err) {
     notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
     return
   }
-  // Left for a conversation while the project was added: do not yank home for the abandoned new task.
-  if (app.currentID === heldSession) startIn(directory)
+  startIn(directory)
 }
 
 /*
@@ -1306,8 +1278,6 @@ async function browse() {
  */
 async function selectTab(id: string) {
   if (app.currentID !== id) await app.open(id)
-  // Left for another conversation while open was in flight: do not force the session view/history for the abandoned id.
-  if (app.currentID !== id) return
   view.value = "session"
   push({ view: "session", sessionID: id })
 }
@@ -1587,9 +1557,8 @@ const ROW_ACTIONS: Record<string, (sessionID: string, header: boolean) => void |
   },
   "row.continue": async (sessionID) => {
     if (app.currentID !== sessionID) await app.open(sessionID)
-    if (app.currentID !== sessionID) return
     const last = app.messages[app.messages.length - 1]
-    if (last) await app.forkFrom(last.id, { sessionID })
+    if (last) await app.forkFrom(last.id)
     else notifyFailure(t("stream.forkNeedsMessage"))
   },
   "row.batch": (sessionID) => {
@@ -1603,19 +1572,23 @@ const ROW_ACTIONS: Record<string, (sessionID: string, header: boolean) => void |
       notifyFailure(t("menu.moveOut"), t("common.requestFailed"))
       return
     }
-    // Hold the toast to the place the person started from; leaving mid-await
-    // must not flash the move outcome onto another chat.
-    const held = app.currentID
     try {
       await client.request({ type: "session.moveOut", sessionID })
     } catch (failure) {
-      if (app.currentID === held) notifyFailure(t("menu.moveOut"), reasonOf(failure))
+      notifyFailure(t("menu.moveOut"), reasonOf(failure))
     }
   },
   "row.newProjectMove": (sessionID) => {
     namingProject.value = { sessionID }
   },
-  "row.copyMarkdown": (sessionID) => void copyConversationMarkdownById(sessionID),
+  "row.copyMarkdown": async (sessionID) => {
+    if (app.currentID !== sessionID) await app.open(sessionID)
+    // Hold the clipboard and toast to the row's session; leaving mid-open
+    // must not copy another chat's transcript or flash copiedMarkdown onto another chat.
+    if (app.currentID !== sessionID) return
+    window.mcode.setClipboardText(transcriptMarkdown())
+    notify(t("menu.copiedMarkdown"))
+  },
   /* Round 3 AR15 (artifacts agent): MiMo's 导出对话记录 saves the named conversation as Markdown without opening it. */
   "session.export": (sessionID) => exportConversationById(sessionID),
   /* MiMo's copy notices are the title alone; what was copied is already on the clipboard. */
@@ -1660,16 +1633,11 @@ const ROW_ACTIONS: Record<string, (sessionID: string, header: boolean) => void |
       notifyFailure(t("menu.restrictConversation"), t("common.requestFailed"))
       return
     }
-    // Hold the toast to the place the person started from; leaving mid-await
-    // must not flash the restriction outcome onto another chat.
-    const held = app.currentID
     try {
       await client.request({ type: "session.reviewRestricted", sessionID, restricted: !target.reviewRestricted })
-      if (app.currentID === held) {
-        notify(t(target.reviewRestricted ? "menu.allowContinue" : "menu.restrictConversation"))
-      }
+      notify(t(target.reviewRestricted ? "menu.allowContinue" : "menu.restrictConversation"))
     } catch (failure) {
-      if (app.currentID === held) notifyFailure(t("menu.restrictConversation"), reasonOf(failure))
+      notifyFailure(t("menu.restrictConversation"), reasonOf(failure))
     }
   },
 }
@@ -1978,12 +1946,9 @@ async function runSessionMenu(key: string) {
     return
   }
   if (app.currentID !== target) {
+    view.value = "session"
     await app.open(target)
-    // The reader may have left while opening; only force the session view if this target is still current.
-    if (app.currentID === target) view.value = "session"
   }
-  // Left for another conversation while open was in flight: do not run the row command against the screen now.
-  if (app.currentID !== target) return
   await commands.value.find((entry) => entry.id === key)?.run()
 }
 
@@ -2091,12 +2056,19 @@ async function createNamedProject(title: string, source?: string) {
       return
     }
     if (app.currentID !== moving) await app.open(moving)
-    // Left for another conversation while open was in flight: do not force the session view for the abandoned move target.
-    if (app.currentID === moving) view.value = "session"
+    view.value = "session"
     return
   }
   // DL15: MiMo lands on the home screen with the new project picked, and makes no conversation for it.
   await addAndBrowse([directory])
+}
+
+/**
+ * The conversation on show as Markdown, in MiMo's shape (lib/convo-export.ts).
+ * Round 3 AR16 (artifacts agent).
+ */
+function transcriptMarkdown(): string {
+  return transcriptOf(app.current ? sessionTitle(app.current.title) : "", app.messages)
 }
 
 /**
@@ -2139,11 +2111,7 @@ function reasonOf(failure: unknown): string {
 
 async function exportSession() {
   if (!app.messages.length) return
-  const id = app.currentID
-  // Hold the export toast to the conversation the person started from (#343).
-  await exportConversationMarkdown(app.current ? sessionTitle(app.current.title) : "", app.messages, {
-    stillHere: () => app.currentID === id,
-  })
+  await exportConversationMarkdown(app.current ? sessionTitle(app.current.title) : "", app.messages)
 }
 
 /**
@@ -2155,8 +2123,6 @@ async function exportSession() {
  * message. Unsharing is deleting that file, which is the user's to do.
  */
 async function shareSession() {
-  const id = app.currentID
-  if (!id) return
   if (!app.messages.length) return
   const title = app.current ? sessionTitle(app.current.title) : "session"
   const name = title.replace(/[\/:*?"<>|]/g, "-").slice(0, 60)
@@ -2226,13 +2192,13 @@ async function shareSession() {
   try {
     const saved = await saveText(`${name}.html`, page)
     // The page is meant to be looked at, so this one opens rather than reveals.
-    if (saved && app.currentID === id) {
+    if (saved) {
       notify(t("share.saved"), {
         action: { label: t("share.view"), run: () => void window.mcode.openSaved(saved) },
       })
     }
   } catch (failure) {
-    if (app.currentID === id) reportSaveFailure(t("toast.shareFailed"), failure)
+    reportSaveFailure(t("toast.shareFailed"), failure)
   }
 }
 
@@ -2261,10 +2227,9 @@ async function undoTurn() {
   if (!id) return
   try {
     const files = await app.undo(id)
-    if (app.currentID === id) notify(t("toast.undone", { n: files }))
+    notify(t("toast.undone", { n: files }))
   } catch (failure) {
-    // Only surface the failure while still on the session that owns it.
-    if (app.currentID === id) notifyFailure(t("toast.undoFailed"), reasonOf(failure))
+    notifyFailure(t("toast.undoFailed"), reasonOf(failure))
   }
 }
 
@@ -2273,10 +2238,9 @@ async function redoTurn() {
   if (!id) return
   try {
     const files = await app.redo(id)
-    if (app.currentID === id) notify(t("toast.redone", { n: files }))
+    notify(t("toast.redone", { n: files }))
   } catch (failure) {
-    // Only surface the failure while still on the session that owns it.
-    if (app.currentID === id) notifyFailure(t("toast.redoFailed"), reasonOf(failure))
+    notifyFailure(t("toast.redoFailed"), reasonOf(failure))
   }
 }
 
@@ -2285,10 +2249,9 @@ async function compactSession() {
   if (!id) return
   try {
     await app.compact(id)
-    if (app.currentID === id) notify(t("toast.compacted"))
+    notify(t("toast.compacted"))
   } catch (failure) {
-    // Only surface the failure while still on the session that owns it.
-    if (app.currentID === id) notifyFailure(t("toast.compactFailed"), reasonOf(failure))
+    notifyFailure(t("toast.compactFailed"), reasonOf(failure))
   }
 }
 
@@ -2338,31 +2301,25 @@ function goPlugins() {
 
 /* A conversation picked in the side column always shows it, even the current one sitting behind the artifacts page. */
 async function openFromSide(sessionID: string) {
+  view.value = "session"
   if (app.currentID !== sessionID) await app.open(sessionID)
-  // Left for another conversation while open was in flight: do not force the session view for the abandoned pick.
-  if (app.currentID === sessionID) view.value = "session"
 }
 
 /* subagents: MiMo 26.920's chip on a side column row - the conversation, then its 子智能体 tab. */
 async function openSubagentsFromSide(sessionID: string) {
   await openFromSide(sessionID)
-  // Left for another conversation while open was in flight: do not open subagents against the new one.
-  if (app.currentID !== sessionID) return
   rp.openSubagents()
 }
 
 /** A file's session, opened from the artifacts page. */
 async function openFromArtifacts(sessionID: string) {
+  view.value = "session"
   await app.open(sessionID)
-  // Left for another conversation while open was in flight: do not force the session view for the abandoned pick.
-  if (app.currentID === sessionID) view.value = "session"
 }
 
 /* A8: a conversation found by what was said in it opens at that message, as MiMo's requestReveal does. */
 async function openFromSearch(sessionID: string, messageID?: string) {
   await openFromArtifacts(sessionID)
-  // Left for another conversation while open was in flight: do not reveal against the new one.
-  if (app.currentID !== sessionID) return
   if (messageID) app.revealMessage(messageID)
 }
 
@@ -2381,8 +2338,6 @@ async function trySkill(name: string, title: string) {
   if (current && !current.archived && !current.parentID && !current.sideOf) {
     addDraftSkill(`main:${current.id}`, name)
     await openFromSide(current.id)
-    // held: user may have switched mid-flight; only follow up on the same conversation
-    if (app.currentID !== current.id) return
     push({ view: "session", sessionID: current.id })
   } else {
     addDraftSkill("home", name)
@@ -2410,10 +2365,8 @@ async function stepUnread(by: 1 | -1) {
   const at = app.currentID ? chats.indexOf(app.currentID) : -1
   for (let step = 1; step <= chats.length; step += 1) {
     const candidate = chats[(at + by * step + chats.length * step) % chats.length]
-    if (candidate && (app.unread(candidate) || confirmDock.needsConfirm(candidate))) {
+    if (candidate && app.unread(candidate)) {
       await app.open(candidate)
-      // Left for another conversation while open was in flight: do not force the session view for the abandoned unread.
-      if (app.currentID === candidate) view.value = "session"
       return
     }
   }
@@ -2445,8 +2398,7 @@ function receiveLink(link: SessionLinkTarget) {
 async function openLink(link: SessionLinkTarget) {
   try {
     if (link.sessionID !== app.currentID) await app.open(link.sessionID)
-    // Left for another conversation while open was in flight: do not force the session view for the abandoned link.
-    if (app.currentID === link.sessionID) view.value = "session"
+    view.value = "session"
   } catch {
     notifyFailure(t("menu.linkMissing"))
   }
@@ -2472,8 +2424,7 @@ async function stepRecent(by: 1 | -1) {
   walk.at = (walk.at + by + walk.order.length) % walk.order.length
   const target = walk.order[walk.at]
   if (target !== app.currentID) await app.open(target)
-  // Left for another conversation while open was in flight: do not force the session view for the abandoned walk target.
-  if (app.currentID === target) view.value = "session"
+  view.value = "session"
 }
 
 function endRecentWalk(event?: KeyboardEvent) {
@@ -2508,11 +2459,7 @@ async function stepProject(by: 1 | -1) {
   const newest = app.sessions
     .filter((session) => session.directory === target && !session.archived)
     .sort((a, b) => b.updated - a.updated)[0]
-  if (newest) {
-    await app.open(newest.id)
-    // Left for another conversation while open was in flight: do not force the session view for the abandoned project step.
-    if (app.currentID === newest.id) view.value = "session"
-  }
+  if (newest) await app.open(newest.id)
 }
 
 /**
@@ -2562,8 +2509,7 @@ async function apply(location: Location) {
         return
       }
       if (app.currentID !== location.sessionID) await app.open(location.sessionID)
-      // Left for another conversation while open was in flight: do not force the session view for the abandoned history target.
-      if (app.currentID === location.sessionID) view.value = "session"
+      view.value = "session"
     } else if (location.view === "artifacts") {
       view.value = "artifacts"
     } else if (location.view === "plugins") {
@@ -3146,10 +3092,9 @@ const bindableCommands = computed((): AppCommand[] => {
       title: t("key.label.fork-chat"),
       enabled: hasSession,
       run: () => {
-        const target = app.currentID
         const last = app.messages[app.messages.length - 1]
         if (!last) notifyFailure(t("stream.forkNeedsMessage"))
-        else void app.forkFrom(last.id, { titleSuffix: true, sessionID: target })
+        else void app.forkFrom(last.id, { titleSuffix: true })
       },
     },
     {
@@ -3833,15 +3778,12 @@ async function cycleAgent(by: 1 | -1) {
   try {
     await app.setAgent(next, target)
   } catch (err) {
-    // Left mid-await → do not flash the failure on another conversation.
-    if (app.currentID === target)
-      notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
     return
   }
   // Announced only once the write landed: a failed switch has no new mode to
   // announce, and announcing the old one would read as if nothing was tried.
-  // Held to the same conversation: a reader who left mid-await is not told.
-  if (app.currentID === target) app.announceMode(before, target)
+  app.announceMode(before, target)
 }
 
 /**
@@ -3859,9 +3801,10 @@ async function cycleEffort() {
   const target = app.currentID
   const variants = findModel(app.providers, app.shownModel(app.current?.model) ?? app.config?.model)?.variants ?? []
   const next = cycleVariant(variants, app.current?.effort ?? app.config?.effort)
+  if (next) await app.setEffort(next, target)
   if (!next) return
   try {
-    await app.setEffort(next, target)
+    await app.setEffort(next)
   } catch (err) {
     notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
   }
@@ -3876,9 +3819,10 @@ async function stepEffort(by: 1 | -1) {
   const current = app.current?.effort ?? app.config?.effort
   const at = current ? variants.indexOf(current) : -1
   const next = at === -1 ? variants[0] : variants[at + by]
+  if (next && next !== current) await app.setEffort(next, target)
   if (!next || next === current) return
   try {
-    await app.setEffort(next, target)
+    await app.setEffort(next)
   } catch (err) {
     notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
   }
@@ -4038,7 +3982,6 @@ onBeforeUnmount(() => {
   <div class="app" :data-platform="app.platform || undefined">
     <!-- MiMo's one title-bar button on the right, on every screen: the side panel. -->
     <button
-      type="button"
       class="side-panel-toggle"
       :class="{ on: rp.open }"
       :aria-pressed="rp.open"
@@ -4113,7 +4056,7 @@ onBeforeUnmount(() => {
         <!-- Boot failures only: a drop after boot keeps the view, and the reconnect notice escalates instead. -->
         <div v-if="app.error" class="boot">
           <p class="boot-msg">{{ app.error }}</p>
-          <button type="button" class="boot-retry" @click="retry">{{ t("common.retry") }}</button>
+          <button class="boot-retry" @click="retry">{{ t("common.retry") }}</button>
         </div>
 
         <ArtifactsView v-else-if="isArtifacts" @open="openFromArtifacts" />
@@ -4235,7 +4178,6 @@ onBeforeUnmount(() => {
         -->
         <button
           v-if="isHome"
-          type="button"
           class="home-bottom"
           :aria-pressed="terminalUp"
           :disabled="!homeShellDirectory"
@@ -4491,11 +4433,6 @@ onBeforeUnmount(() => {
 .boot-retry:hover {
   background: var(--surface-hover);
   border-color: var(--border-strong);
-}
-
-.boot-retry:focus-visible {
-  outline: 2px solid var(--interactive);
-  outline-offset: 2px;
 }
 
 /* The window itself is the darker frame the workspace is set into. */
@@ -4836,16 +4773,6 @@ onBeforeUnmount(() => {
 .home-bottom:hover {
   color: var(--text-strong);
   background: var(--surface-hover);
-}
-
-.side-panel-toggle:focus-visible {
-  outline: 2px solid var(--interactive);
-  outline-offset: 2px;
-}
-
-.home-bottom:focus-visible:not(:disabled) {
-  outline: 2px solid var(--interactive);
-  outline-offset: 2px;
 }
 
 .side-panel-toggle.on {
