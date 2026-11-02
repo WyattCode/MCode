@@ -111,7 +111,7 @@ export function actorTarget(input: Record<string, unknown> | undefined): string 
 /* ------------------------------------------------ calls saved before the rename */
 
 /** The task registry's verbs, which a subagent call never used. */
-const REGISTRY_ACTIONS = new Set(["create", "list", "get", "start", "block", "unblock", "done", "abandon", "rename"])
+const REGISTRY_ACTIONS = new Set(["create", "list", "get", "start", "block", "unblock", "done", "abandon", "rename", "plan"])
 
 /**
  * Whether a saved `task` call is a subagent call from before the tool was named

@@ -234,6 +234,20 @@ export const THOUGHT_LENGTH_NOTE =
 export const TEXT_TOOL_NOTE = "Your previous reply wrote a tool call out as text, so nothing ran. Make that call again as a real tool call."
 export const EMPTY_NOTE = "Your previous reply had no answer and no tool call. Answer the user or call a tool; thinking alone is not a reply."
 
+export const ANNOUNCED_NOTE = "Your previous reply said what you were about to do, but made no tool call, so nothing has been done. Do it now with a tool call. If that reply was already your complete answer, say it again and stop."
+
+/**
+ * A long think that ends in one short line and no call: the model has planned
+ * the work and only announced it. Measured on the user's local Qwen: three turns
+ * in five thought 9-23k characters, wrote "我来直接写这个文件" and ended, with no
+ * file. Judged by shape, not wording, so it holds in any language; a real short
+ * answer after long thought only costs one step that repeats it.
+ */
+function announcedOnly(message: AssistantMessage, text: string): boolean {
+  const thought = message.parts.reduce((sum, part) => sum + (part.type === "reasoning" ? part.text.length : 0), 0)
+  return text.length <= 200 && thought >= 2000 && thought >= text.length * 20
+}
+
 /** Tool-call markup a model wrote as prose, as MiMo spots it. */
 const TEXT_TOOL_CALL = /<invoke name=|<parameter name=|<\/invoke>|<function_calls>|<tool_call>|tool_call:|to=functions\./
 
@@ -253,6 +267,9 @@ export type Continuation = { note?: string; error?: { message: string; code?: st
  * output limit cut off carries on inside the same message - so that what this
  * step wrote is what gets judged, and a continuation that answered with
  * nothing is still an empty reply.
+ *
+ * `opening` is a local model's first step of a turn, the one place it can have
+ * announced the work and stopped (`announcedOnly`).
  */
 export function continuationFor(
   message: AssistantMessage,
@@ -261,6 +278,7 @@ export function continuationFor(
   modelID: string,
   counts: { length: number; textTool: number; empty: number; interrupted: number },
   said = "",
+  opening = false,
 ): Continuation {
   if (finishReason === INTERRUPTED_FINISH) {
     // Still breaking after as many continuations as retries: the link is the problem, and the reader is told so.
@@ -292,6 +310,10 @@ export function continuationFor(
     if (counts.textTool >= CONTINUATION_LIMITS.textTool) return { error }
     counts.textTool += 1
     return { note: TEXT_TOOL_NOTE, error }
+  }
+  if (text && opening && stop === "end_turn" && counts.empty < CONTINUATION_LIMITS.empty && announcedOnly(message, text)) {
+    counts.empty += 1
+    return { note: ANNOUNCED_NOTE }
   }
   if (text) return {}
   const reasoned = message.parts.some((part) => part.type === "reasoning" && part.text.trim())

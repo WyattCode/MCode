@@ -3221,8 +3221,13 @@ export class SessionRunner {
         systemTail,
         history: sentHistory,
         tools: sentTools,
-        // MiMo's last step: the tools stay defined, since the history carries calls to them, but none may be called.
-        ...(lastStep ? { toolChoice: "none" as const } : {}),
+        /*
+         * MiMo's last step: the tools stay defined, since the history carries calls to them, but none may be called.
+         * Not asked of a local server: its chat template leaves the tools out of the prompt at `none`, which starts its
+         * cache over (measured on the user's Qwen: 48 s against 0.5 s at 105k tokens). The instruction says it, and a
+         * call made anyway is dropped below.
+         */
+        ...(lastStep && !this.isLocal(session) ? { toolChoice: "none" as const } : {}),
         effort: effort ?? "",
 
         signal: controller.signal,
@@ -3383,10 +3388,8 @@ export class SessionRunner {
       const replied = textOf(assistant).slice(said.length)
       /* The stream was cut mid-reply for repeating itself, as MiMo cuts its own. */
       const looped = outcome.finishReason === LOOP_FINISH
-      if (looped) {
-        // A call announced while the stream was cut never ran and has no settled arguments to run with.
-        assistant.parts = assistant.parts.filter((part) => part.type !== "tool")
-      }
+      // A call announced while the stream was cut never ran and has no settled arguments to run with; one made on the last step may not run at all.
+      if (looped || lastStep) assistant.parts = assistant.parts.filter((part) => part.type !== "tool")
       const repeatNote = repeatNoteFor(replied, repeated)
       if (repeatNote) {
         repeated += 1
@@ -3426,7 +3429,7 @@ export class SessionRunner {
 
       let pending = assistant.parts.filter((part): part is ToolPart => part.type === "tool")
       if (outcome.stop !== "tool_use" || pending.length === 0) {
-        const next = continuationFor(assistant, outcome.stop, outcome.finishReason, session.model.model, continued, said)
+        const next = continuationFor(assistant, outcome.stop, outcome.finishReason, session.model.model, continued, said, step === 0 && this.isLocal(session))
         /*
          * One copy of each note per message. A reply cut twice hangs both of
          * its notes off the same message now that a continuation stays in it,

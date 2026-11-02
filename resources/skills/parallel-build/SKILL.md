@@ -85,12 +85,14 @@ measurable facts of the contract as data, so no check has to be written as code:
 ```
 
 `state` is JavaScript run once per frame, before the updates, on the shared object
-`s` (it keeps its fields between frames). The `expect` kinds are described at the
-top of `scripts/checks.js`: `shape_near` (an element about this size, centred
-here), `covers` (the topmost thing at a point is in these layers), `small` (nothing
-in these layers is huge), `stable` (a layer does not wander or change size while
-animating), `moves` (scenery whose content must change while the animation runs).
-**Every place where one part must meet another gets a `touches` entry**, for
+`s` (it keeps its fields between frames). The `expect` kinds, all of them, with the
+fields shown above: `shape_near` (an element about this size, centred here; `size`
+is `[min, max]` for both width and height, `tol` how far off centre), `covers` (the
+topmost thing at a point is in these layers), `small` (nothing in these layers is
+bigger than `max`), `stable` (a layer does not wander more than `move` or change size
+by more than the fraction `scale` while animating), `moves` (scenery whose content
+must change while the animation runs). Every entry takes an optional `text`, the
+message to show instead of the usual one. **Every place where one part must meet another gets a `touches` entry**, for
 example a foot and its pedal, a hand and its grip, a fork and its wheel's hub:
 `{ "kind": "touches", "part": "pelican", "a": "#pl_foot1", "b": "#bk_pedal1", "gap": 12 }`.
 It is checked at every moment of the animation, and a part that draws its limbs in

@@ -193,7 +193,7 @@ export async function rerunAfterEdit(
 ): Promise<string> {
   try {
     if (process.env.MCODE_RERUN_TESTS === "0") return ""
-    if (process.platform === "win32") return ""
+    if (process.platform === "win32" && !options.run) return ""
 
     const remembered = failingTests.get(sessionID)
     if (!remembered) return ""
