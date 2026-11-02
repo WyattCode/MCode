@@ -210,10 +210,14 @@ async function pick(key: string) {
     return
   }
   if (key === "downloadImage") {
+    // Hold the toast to the place the person started from; leaving mid-await
+    // must not flash the download outcome onto another conversation.
+    const held = useApp().currentID
     try {
       const png = await picture()
       await savePng(downloadName.value.replace(/\.svg$/i, ".png"), await blobToBase64(png))
     } catch {
+      if (useApp().currentID !== held) return
       notifyFailure(t("mermaid.copyImageFailed"))
     }
   }
