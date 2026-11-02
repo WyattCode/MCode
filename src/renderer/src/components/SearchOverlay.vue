@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import type { MessageHit, SessionArtifacts } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { sessionTitle, t } from "../lib/i18n"
@@ -16,8 +16,8 @@ import { badgeOf } from "../lib/artifact-kind"
  * what was said in them (read by the server, which holds every transcript),
  * project names and paths, and the files conversations wrote; each kind gets a
  * heading, the kind with the best match first, and the words are marked where
- * they were found. Arrow keys move a highlight through the rows; Enter opens
- * it. Escape still closes.
+ * they were found. As in MiMo, rows are chosen with the pointer; only Escape is
+ * bound.
  */
 const emit = defineEmits<{ close: []; open: [sessionID: string, messageID?: string]; project: [directory: string] }>()
 
@@ -185,52 +185,6 @@ const groups = computed(() => {
 
 const flat = computed(() => groups.value.flatMap((group) => group.items))
 
-/** Keyboard highlight into `flat`; -1 means none. */
-const active = ref(-1)
-
-watch(flat, (rows) => {
-  active.value = rows.length ? Math.min(Math.max(active.value, 0), rows.length - 1) : -1
-})
-
-watch(query, () => {
-  active.value = flat.value.length ? 0 : -1
-})
-
-function moveActive(delta: number) {
-  const rows = flat.value
-  if (!rows.length) {
-    active.value = -1
-    return
-  }
-  const start = active.value < 0 ? (delta > 0 ? -1 : 0) : active.value
-  active.value = (start + delta + rows.length) % rows.length
-  void nextTick(() => {
-    document
-      .querySelector<HTMLElement>(`.search-results .sr-item[data-active="1"]`)
-      ?.scrollIntoView({ block: "nearest" })
-  })
-}
-
-function onSearchKeys(event: KeyboardEvent) {
-  if (event.key === "ArrowDown") {
-    event.preventDefault()
-    moveActive(1)
-    return
-  }
-  if (event.key === "ArrowUp") {
-    event.preventDefault()
-    moveActive(-1)
-    return
-  }
-  if (event.key === "Enter") {
-    const item = flat.value[active.value]
-    if (!item) return
-    event.preventDefault()
-    choose(item)
-  }
-}
-
-
 /** A span cut into plain runs and marked ones. */
 function pieces(span: Span) {
   const out: { text: string; mark: boolean }[] = []
@@ -365,19 +319,20 @@ defineExpose({ close })
 <template>
   <!-- MiMo closes on the click, not on the press: a drag out of the card never closes it. -->
   <div class="search-overlay" :class="{ closing }" @click.self="close">
-    <div v-modal class="search-card" role="dialog" data-new-task-clears :aria-label="t('searchOverlay.placeholder')">
+    <div v-modal class="search-card" role="dialog" aria-modal="true" data-new-task-clears :aria-label="t('searchOverlay.placeholder')">
       <div class="search-bar">
         <svg class="i" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <circle cx="11" cy="11" r="7" />
           <path d="m21 21-4.3-4.3" />
         </svg>
         <input
+          id="search-overlay-query"
           ref="field"
           v-model="query"
           :placeholder="t('searchOverlay.placeholder')"
+          :aria-label="t('searchOverlay.placeholder')"
           spellcheck="false"
           autocomplete="off"
-          @keydown="onSearchKeys"
         />
       </div>
       <div class="search-results" @scroll.passive="onResultsScroll">
@@ -389,7 +344,7 @@ defineExpose({ close })
           <span>{{ t("searchOverlay.error") }}</span>
           <button type="button" @click="search">{{ t("searchOverlay.retry") }}</button>
         </div>
-        <div v-if="!flat.length && artifactStatus === 'loading'" class="sr-empty" data-search-loading>{{ t("searchOverlay.loading") }}</div>
+        <div v-if="!flat.length && artifactStatus === 'loading'" class="sr-empty" role="status" aria-live="polite" data-search-loading>{{ t("searchOverlay.loading") }}</div>
         <div v-else-if="!flat.length && artifactStatus !== 'error' && !messageFailed" class="sr-empty">{{ t("searchOverlay.empty") }}</div>
         <div v-for="group in groups" :key="group.kind" class="sr-group">
           <div class="sr-head">{{ t(HEAD[group.kind]) }}</div>
@@ -397,10 +352,7 @@ defineExpose({ close })
             v-for="item in group.items"
             :key="item.kind + item.id"
             class="sr-item"
-            :class="{ hot: flat[active]?.id === item.id && flat[active]?.kind === item.kind }"
             :data-kind="item.kind"
-            :data-active="flat[active]?.id === item.id && flat[active]?.kind === item.kind ? '1' : undefined"
-            @mouseenter="active = flat.findIndex((row) => row.id === item.id && row.kind === item.kind)"
             @click="choose(item)"
           >
             <span class="sr-line">
@@ -534,8 +486,9 @@ defineExpose({ close })
   background: var(--surface-hover);
 }
 
-.sr-item.hot {
-  background: var(--surface-hover);
+.sr-item:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: -2px;
 }
 
 .sr-line {
@@ -613,6 +566,11 @@ defineExpose({ close })
   border-radius: 7px;
   font: inherit;
   cursor: pointer;
+}
+
+.sr-artifact-error button:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: 2px;
 }
 
 /*

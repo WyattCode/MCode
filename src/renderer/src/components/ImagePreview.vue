@@ -486,7 +486,7 @@ onBeforeUnmount(() => {
       @click="close"
       @wheel.prevent.stop="onWheel"
     >
-      <div class="ip-ground" :style="{ opacity: shown ? 0.72 : 0 }" data-image-preview-ground @transitionend="onGroundFaded" />
+      <div class="ip-ground" :style="{ opacity: shown ? 0.72 : 0 }" data-image-preview-ground aria-hidden="true" @transitionend="onGroundFaded" />
 
       <div class="ip-corner" :class="{ mac: app.platform === 'darwin' }" :style="{ opacity: shown ? 1 : 0 }" @click.stop>
         <button type="button" class="ip-close" :aria-label="t('imagePreview.close')" data-image-preview-close @click="close">
@@ -673,6 +673,11 @@ onBeforeUnmount(() => {
   background: rgb(255 255 255 / 0.2);
 }
 
+.ip-close:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
 .ip-close svg {
   width: 19px;
   height: 19px;
@@ -762,6 +767,11 @@ onBeforeUnmount(() => {
 
 .ip-tool button:hover {
   background: rgb(255 255 255 / 0.15);
+}
+
+.ip-tool button:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
 }
 
 /* The boxing mode stays lit while it is on, so the crosshair is explained. */
