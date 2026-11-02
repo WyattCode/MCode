@@ -1766,12 +1766,12 @@ onBeforeUnmount(() => {
     <div ref="dialogEl" v-modal class="dialog" data-modal-keep-focus data-new-task-clears>
       <!-- 2.0: MiMo's dialog closes from its own corner as well as from Escape
            and the scrim, which a pointer-only reader otherwise has to find. -->
-      <button class="close" :aria-label="t('set.close')" data-settings-close @click="requestClose">
+      <button type="button" class="close" :aria-label="t('set.close')" data-settings-close @click="requestClose">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
         </svg>
       </button>
-      <nav class="nav" :class="{ 'mouse-active': pointerMoved }" @pointermove="pointerMoved = true">
+      <nav class="nav" :class="{ 'mouse-active': pointerMoved }" @pointermove="pointerMoved = true" :aria-label="t('rail.settings')">
         <!-- The title and the search stay put; only the list under them scrolls, as MiMo's does. -->
         <div class="nav-top">
           <div class="nav-title">{{ t("rail.settings") }}</div>
@@ -1792,7 +1792,7 @@ onBeforeUnmount(() => {
         <div ref="navScrollEl" class="nav-scroll u-scrollbar-thin" data-settings-nav-scroll>
           <div v-show="navShows('general') || navShows('usage') || navShows('appearance') || navShows('files') || navShows('models') || navShows('personal') || navShows('keys')" class="nav-group">{{ t("set.group.personal") }}</div>
 
-          <button v-show="navShows('general')" class="nav-item" :class="{ on: section === 'general' }" @click="section = 'general'">
+          <button type="button" v-show="navShows('general')" class="nav-item" :class="{ on: section === 'general' }" @click="section = 'general'" :aria-current="section === 'general' ? 'page' : undefined">
             <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
               <path d="M3.6 5.55h12.8a.7.7 0 0 1 0 1.4H3.6a.7.7 0 0 1 0-1.4Z" />
               <path d="M3.6 13.05h12.8a.7.7 0 0 1 0 1.4H3.6a.7.7 0 0 1 0-1.4Z" />
@@ -1802,7 +1802,7 @@ onBeforeUnmount(() => {
             {{ t("set.nav.general") }}
           </button>
 
-          <button v-show="navShows('usage')" class="nav-item" :class="{ on: section === 'usage' }" @click="section = 'usage'">
+          <button type="button" v-show="navShows('usage')" class="nav-item" :class="{ on: section === 'usage' }" @click="section = 'usage'" :aria-current="section === 'usage' ? 'page' : undefined">
             <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
               <rect x="2.7" y="9" width="2.6" height="7.3" rx="1.1" />
               <rect x="6.8" y="5" width="2.6" height="11.3" rx="1.1" />
@@ -1812,28 +1812,28 @@ onBeforeUnmount(() => {
             <span>{{ t("set.nav.usage") }}</span>
           </button>
 
-          <button v-show="navShows('appearance')" class="nav-item" :class="{ on: section === 'appearance' }" @click="section = 'appearance'">
+          <button type="button" v-show="navShows('appearance')" class="nav-item" :class="{ on: section === 'appearance' }" @click="section = 'appearance'" :aria-current="section === 'appearance' ? 'page' : undefined">
             <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd" aria-hidden="true">
               <path d="M10 2.6a7.4 7.4 0 1 1 0 14.8 7.4 7.4 0 0 1 0-14.8ZM10 4.2a5.8 5.8 0 0 0 0 11.6Z" />
             </svg>
             <span>{{ t("set.appearance") }}</span>
           </button>
 
-          <button v-show="navShows('files')" class="nav-item" :class="{ on: section === 'files' }" @click="section = 'files'">
+          <button type="button" v-show="navShows('files')" class="nav-item" :class="{ on: section === 'files' }" @click="section = 'files'" :aria-current="section === 'files' ? 'page' : undefined">
             <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd" aria-hidden="true">
               <path d="M5.4 2.6h5.4l4.4 4.4v9.8a.6.6 0 0 1-.6.6H5.4a.6.6 0 0 1-.6-.6V3.2a.6.6 0 0 1 .6-.6ZM11 4.1v3.2h3.2L11 4.1Z" />
             </svg>
             <span>{{ t("set.nav.files") }}</span>
           </button>
 
-          <button v-show="navShows('models')" class="nav-item" :class="{ on: section === 'models' }" @click="section = 'models'">
+          <button type="button" v-show="navShows('models')" class="nav-item" :class="{ on: section === 'models' }" @click="section = 'models'" :aria-current="section === 'models' ? 'page' : undefined">
             <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
               <path d="M17.5 10C12.2917 10 10 12.2917 10 17.5 10 12.2917 7.70833 10 2.5 10 7.70833 10 10 7.70833 10 2.5c0 5.20833 2.2917 7.5 7.5 7.5Z" />
             </svg>
             {{ t("set.models") }}
           </button>
 
-          <button v-show="navShows('personal')" class="nav-item" :class="{ on: section === 'personal' }" @click="section = 'personal'">
+          <button type="button" v-show="navShows('personal')" class="nav-item" :class="{ on: section === 'personal' }" @click="section = 'personal'" :aria-current="section === 'personal' ? 'page' : undefined">
             <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
               <path d="M10 3.4a3.2 3.2 0 1 1 0 6.4 3.2 3.2 0 0 1 0-6.4Z" />
               <path d="M10 11.2c3.2 0 5.8 1.9 5.8 4.8a.6.6 0 0 1-.6.6H4.8a.6.6 0 0 1-.6-.6c0-2.9 2.6-4.8 5.8-4.8Z" />
@@ -1841,7 +1841,7 @@ onBeforeUnmount(() => {
             <span>{{ t("set.personal") }}</span>
           </button>
 
-          <button v-show="navShows('keys')" class="nav-item" :class="{ on: section === 'keys' }" @click="section = 'keys'">
+          <button type="button" v-show="navShows('keys')" class="nav-item" :class="{ on: section === 'keys' }" @click="section = 'keys'" :aria-current="section === 'keys' ? 'page' : undefined">
             <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd" aria-hidden="true">
               <path d="M2.4 5.3h15.2a1 1 0 0 1 1 1v7.9a1 1 0 0 1-1 1H2.4a1 1 0 0 1-1-1V6.3a1 1 0 0 1 1-1Z" />
               <path d="M3.7 7.4h1.7v1.7H3.7ZM6.9 7.4h1.7v1.7H6.9ZM10.1 7.4h1.7v1.7h-1.7ZM13.3 7.4h1.7v1.7h-1.7ZM16.5 7.4h-.8v1.7h.8ZM5.6 11.1h8.8v1.7H5.6Z" />
@@ -1851,7 +1851,7 @@ onBeforeUnmount(() => {
 
           <div v-show="navShows('mcp')" class="nav-group">{{ t("set.group.integrations") }}</div>
 
-          <button v-show="navShows('mcp')" class="nav-item" :class="{ on: section === 'mcp' }" @click="section = 'mcp'">
+          <button type="button" v-show="navShows('mcp')" class="nav-item" :class="{ on: section === 'mcp' }" @click="section = 'mcp'" :aria-current="section === 'mcp' ? 'page' : undefined">
             <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
               <path d="M6.75 2.7a.75.75 0 0 1 .75.75V6h-1.5V3.45a.75.75 0 0 1 .75-.75Z" />
               <path d="M13.25 2.7a.75.75 0 0 1 .75.75V6h-1.5V3.45a.75.75 0 0 1 .75-.75Z" />
@@ -1862,7 +1862,7 @@ onBeforeUnmount(() => {
 
           <div v-show="navShows('environment')" class="nav-group">{{ t("set.group.coding") }}</div>
 
-          <button v-show="navShows('environment')" class="nav-item" :class="{ on: section === 'environment' }" @click="section = 'environment'">
+          <button type="button" v-show="navShows('environment')" class="nav-item" :class="{ on: section === 'environment' }" @click="section = 'environment'" :aria-current="section === 'environment' ? 'page' : undefined">
             <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
               <path d="M5.85 3.6h1.3v12.8h-1.3Z" />
               <path d="M6.5 9.35h7.4v1.3H6.5Z" />
@@ -1876,7 +1876,7 @@ onBeforeUnmount(() => {
           <!-- MiMo 26.920's 实验室 group, always shown, between 编码 and 已归档. -->
           <div v-show="navShows('lab')" class="nav-group">{{ t("set.group.lab") }}</div>
 
-          <button v-show="navShows('lab')" class="nav-item" :class="{ on: section === 'lab' }" data-nav-lab @click="section = 'lab'">
+          <button type="button" v-show="navShows('lab')" class="nav-item" :class="{ on: section === 'lab' }" data-nav-lab @click="section = 'lab'" :aria-current="section === 'lab' ? 'page' : undefined">
             <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
               <path d="M7.4 2.6h5.2v1.5h-1v4.2l4.3 7.4c.41.7-.1 1.6-.91 1.6H5.01c-.81 0-1.32-.9-.91-1.6l4.3-7.4V4.1h-1V2.6Z" />
             </svg>
@@ -1885,7 +1885,7 @@ onBeforeUnmount(() => {
 
           <div v-show="navShows('archive')" class="nav-group">{{ t("set.group.archived") }}</div>
 
-          <button v-show="navShows('archive')" class="nav-item" :class="{ on: section === 'archive' }" @click="section = 'archive'">
+          <button type="button" v-show="navShows('archive')" class="nav-item" :class="{ on: section === 'archive' }" @click="section = 'archive'" :aria-current="section === 'archive' ? 'page' : undefined">
             <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd" aria-hidden="true">
               <path d="M2.4 2.6h15.2a.8.8 0 0 1 .8.8v2.1a.8.8 0 0 1-.8.8H2.4a.8.8 0 0 1-.8-.8V3.4a.8.8 0 0 1 .8-.8Z" />
               <path d="M3.1 7.4h13.8v9.3a.7.7 0 0 1-.7.7H3.8a.7.7 0 0 1-.7-.7V7.4ZM8.2 9.4h3.6v1.5H8.2Z" />
@@ -1895,7 +1895,7 @@ onBeforeUnmount(() => {
 
           <div v-show="navShows('updates')" class="nav-group">{{ t("set.groupAbout") }}</div>
 
-          <button v-show="navShows('updates')" class="nav-item" :class="{ on: section === 'updates' }" @click="section = 'updates'">
+          <button type="button" v-show="navShows('updates')" class="nav-item" :class="{ on: section === 'updates' }" @click="section = 'updates'" :aria-current="section === 'updates' ? 'page' : undefined">
             <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
               <path d="M10 3.1 14.5 7.6h-3.1v4.9H8.6V7.6H5.5L10 3.1Z" />
               <path d="M4 13.4h1.5v1.6h9V13.4H16v2.4a.7.7 0 0 1-.7.7H4.7a.7.7 0 0 1-.7-.7v-2.4Z" />
@@ -5170,6 +5170,11 @@ h3 {
   overflow-wrap: anywhere;
 }
 
+.nav-item:focus-visible {
+  outline: 2px solid var(--text-strong);
+  outline-offset: -2px;
+}
+
 /*
  * MiMo's nav icons are 17 square in the label's own colour, and every one of
  * them is a solid glyph (its .i.filled): the column reads as a block of marks
@@ -5354,6 +5359,11 @@ h3 {
   border-radius: 999px;
 }
 
+.switch:focus-visible {
+  outline: 2px solid var(--text-strong);
+  outline-offset: -2px;
+}
+
 .switch:hover {
   background: #e3e3e0;
 }
@@ -5386,6 +5396,11 @@ h3 {
   border-radius: 8px;
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
+}
+
+.ctl-btn:focus-visible {
+  outline: 2px solid var(--text-strong);
+  outline-offset: -2px;
 }
 
 .ctl-btn:hover:not(:disabled) {
