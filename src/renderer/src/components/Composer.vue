@@ -3159,17 +3159,14 @@ async function chooseAgent(next: (typeof AGENTS)[number]) {
   const before = app.modeOf(target)
   // No session on the home screen, so the choice is the app's default - which
   // is what the task this box creates will start as.
-  if (!target) await app.patchConfig({ agent: next })
-  else await app.setAgent(next, target)
-  app.announceMode(before, target)
   try {
-    if (!sessionID.value) await app.patchConfig({ agent: next }, { quiet: true })
-    else await app.setAgent(next)
+    if (!target) await app.patchConfig({ agent: next })
+    else await app.setAgent(next, target)
   } catch (err) {
     notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
     return
   }
-  app.announceMode(before, sessionID.value)
+  app.announceMode(before, target)
 }
 
 async function chooseModel(provider: string, model: string) {
