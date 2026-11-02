@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from "vue"
 import { typeAheadBuffer, typeAheadMatch } from "../lib/type-ahead"
 
 /**
@@ -47,6 +47,9 @@ const GAP = 4
 const MARGIN = 12
 
 const open = ref(false)
+const autoId = useId()
+const triggerId = computed(() => props.id || autoId)
+const listboxId = computed(() => `${triggerId.value}-listbox`)
 const root = ref<HTMLElement>()
 /** Row the keyboard is on; -1 while the pointer is driving. */
 const active = ref(-1)
@@ -198,7 +201,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="root" class="select" :style="{ width: width ? `${width}px` : undefined }">
-    <button :id="id" type="button" class="trigger" :class="{ open }" @click="toggle">
+    <button :id="triggerId" type="button" class="trigger" :class="{ open }" aria-haspopup="listbox" :aria-expanded="open" :aria-controls="listboxId" @click="toggle">
       <slot name="icon" />
       <template v-if="chosen?.icon !== undefined">
         <img v-if="chosen.icon" class="opt-icon" :src="chosen.icon" alt="" data-select-icon />
@@ -213,8 +216,11 @@ onBeforeUnmount(() => {
     <Teleport to="body">
       <div
         v-if="open"
+        :id="listboxId"
         class="select-pop"
         :class="{ flip: box.flip }"
+        role="listbox"
+        :aria-labelledby="triggerId"
         :style="{
           left: `${box.left}px`,
           top: `${box.top}px`,
@@ -226,8 +232,11 @@ onBeforeUnmount(() => {
         <template v-for="(option, index) in options" :key="option.value">
           <div v-if="option.divider" class="rule" role="separator" />
           <button
+            type="button"
             class="item"
             :class="{ on: option.value === modelValue, active: index === active }"
+            role="option"
+            :aria-selected="option.value === modelValue"
             @click="choose(option.value)"
             @mousemove="active = index"
           >
@@ -391,6 +400,11 @@ onBeforeUnmount(() => {
 .select-pop .item:hover,
 .select-pop .item.active {
   background: var(--surface-hover);
+}
+
+.select-pop .item:focus-visible {
+  outline: 1px solid var(--ring);
+  outline-offset: 0;
 }
 
 /* MiMo's picked row carries only the check; the fill is the focused row's. */
