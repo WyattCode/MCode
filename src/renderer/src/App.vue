@@ -2506,7 +2506,8 @@ async function apply(location: Location) {
         return
       }
       if (app.currentID !== location.sessionID) await app.open(location.sessionID)
-      view.value = "session"
+      // Left for another conversation while open was in flight: do not force the session view for the abandoned history target.
+      if (app.currentID === location.sessionID) view.value = "session"
     } else if (location.view === "artifacts") {
       view.value = "artifacts"
     } else if (location.view === "plugins") {
