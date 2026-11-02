@@ -1094,7 +1094,7 @@ const noteInside = (target: Node) => Boolean(rootEl.value?.contains(target))
       <button type="button" class="pdf-tool" data-pdf-zoom-out :title="t('rp.pdf.zoomOut')" :aria-label="t('rp.pdf.zoomOut')" @click="setZoom(zoom - 0.1)">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35M8 11h6" /></svg>
       </button>
-      <span class="pdf-zoom" data-pdf-zoom>{{ Math.round(zoom * 100) }}%</span>
+      <span class="pdf-zoom" data-pdf-zoom role="status">{{ Math.round(zoom * 100) }}%</span>
       <button type="button" class="pdf-tool" data-pdf-zoom-in :title="t('rp.pdf.zoomIn')" :aria-label="t('rp.pdf.zoomIn')" @click="setZoom(zoom + 0.1)">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35M11 8v6M8 11h6" /></svg>
       </button>
@@ -1118,7 +1118,7 @@ const noteInside = (target: Node) => Boolean(rootEl.value?.contains(target))
 
     <!-- MiMo 26.920's footer line under every document view. -->
     <ViewerAiNote viewer="pdf" />
-    <div v-if="(loading && !restoring) || failure" class="pdf-note" :data-pdf-failed="failure ? '' : undefined">
+    <div v-if="(loading && !restoring) || failure" class="pdf-note" :data-pdf-failed="failure ? '' : undefined" :role="failure ? 'alert' : 'status'">
       {{ failure || t("rp.pdf.loading") }}
     </div>
   </div>
