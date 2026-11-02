@@ -692,7 +692,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" />
           </svg>
-          <input v-model="filter" data-ft-filter spellcheck="false" :placeholder="t('rp.files.filterPlaceholder')" />
+          <input v-model="filter" data-ft-filter spellcheck="false" :placeholder="t('rp.files.filterPlaceholder')" :aria-label="t('rp.files.filterPlaceholder')" />
         </div>
         <div class="fv-rows">
           <div v-if="!root" class="fv-note">{{ t("rp.files.noProject") }}</div>
@@ -730,6 +730,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
               :class="{ on: !row.directory && row.path === viewFile, open: row.open }"
               :data-ft-dir="row.directory ? row.path : undefined"
               :data-ft-file="row.directory ? undefined : row.path"
+              :aria-expanded="row.directory ? (row.open ? 'true' : 'false') : undefined"
               :style="{ paddingInlineStart: `${rowIndent(row)}px` }"
               @click="row.directory ? toggleFolder(row.path) : choose(row.path)"
               @contextmenu.prevent="openMenu($event, rowMenuTarget(row))"
@@ -752,8 +753,8 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
           <svg class="fv-find-ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" />
           </svg>
-          <input ref="findInput" v-model="query" class="fv-find-input" :placeholder="t('rp.files.findPlaceholder')" @keydown="onFindKey" />
-          <span class="fv-find-count" data-ft-find-count>{{ findCount }}</span>
+          <input ref="findInput" v-model="query" class="fv-find-input" :placeholder="t('rp.files.findPlaceholder')" :aria-label="t('rp.files.findPlaceholder')" @keydown="onFindKey" />
+          <span class="fv-find-count" data-ft-find-count role="status" aria-live="polite">{{ findCount }}</span>
           <button type="button" class="fv-find-btn" :aria-label="t('rp.files.findPrev')" :disabled="findTotal === 0" @click="stepFind(-1)">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m18 15-6-6-6 6" /></svg>
           </button>
@@ -902,6 +903,11 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
   background: var(--surface-hover);
 }
 
+.fv-icon:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: -2px;
+}
+
 /* MiMo's fc-btn: a 14px muted icon and a label, 1px line on the page colour, 5 by 13 on an 8px corner. */
 .fc-btn {
   display: inline-flex;
@@ -929,6 +935,11 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
 .fc-btn:disabled {
   opacity: 0.55;
   cursor: default;
+}
+
+.fc-btn:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: -2px;
 }
 
 @container fthead (max-width: 340px) {
@@ -1017,6 +1028,11 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
 
 .fv-row.on {
   background: var(--surface-selected);
+}
+
+.fv-row:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: -2px;
 }
 
 .fv-chev {
@@ -1219,6 +1235,11 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
 
 .fv-find-btn:disabled {
   opacity: 0.4;
+}
+
+.fv-find-btn:focus-visible {
+  outline: 2px solid var(--text-interactive);
+  outline-offset: -2px;
 }
 
 /* Code: 12px mono on a 1.6 line, 10 above and below, scrolling sideways rather than wrapping. */
