@@ -53,18 +53,19 @@ async function refresh() {
   }
 }
 
-/* A new project starts clean: the old chip, menu, and dirty confirmation must not linger over it. */
-function resetForDirectory() {
-  open.value = false
-  pending.value = undefined
-  creating.value = false
-  draft.value = ""
-  query.value = ""
-  state.value = undefined
-  void refresh()
-}
-
-watch(() => props.directory, resetForDirectory, { immediate: true })
+watch(
+  () => props.directory,
+  () => {
+    /* Left for another project while the dirty confirm was up: do not force-switch that branch under this folder. */
+    pending.value = undefined
+    open.value = false
+    creating.value = false
+    draft.value = ""
+    query.value = ""
+    refresh()
+  },
+  { immediate: true },
+)
 /* A branch changed from the info card, or by this chip, is shown at once. */
 watch(() => app.branchNonce, refresh)
 
@@ -96,7 +97,6 @@ async function checkout(branch: string, force = false) {
   const directory = props.directory
   if (!directory) return
   const outcome = await switchBranch(directory, branch, state.value?.branch, force)
-  if (props.directory !== directory) return
   if (outcome.kind === "unchanged") return
   if (outcome.kind === "switched") {
     if (outcome.conflicts) notifyFailure(t("home.branchSwitchedConflicts", { branch: outcome.branch }))
@@ -124,7 +124,6 @@ async function create() {
   busy.value = true
   try {
     const result = await app.client?.request({ type: "git.checkout", directory, branch, create: true })
-    if (props.directory !== directory) return
     if (!result) {
       notifyFailure(t("home.branchCreateFailed", { error: t("common.requestFailed") }))
       return
@@ -226,7 +225,7 @@ onBeforeUnmount(() => {
           <path d="M7.2 2.8a4.4 4.4 0 1 0 0 8.8 4.4 4.4 0 0 0 0-8.8z" />
           <path d="M13.2 13.2l-2.8-2.8" />
         </svg>
-        <input ref="search" v-model="query" spellcheck="false" :placeholder="t('home.branchSearch')" :aria-label="t('home.branchSearch')" @keydown.stop />
+        <input ref="search" v-model="query" spellcheck="false" :placeholder="t('home.branchSearch')" @keydown.stop />
       </div>
 
       <div class="list" data-branch-list>
@@ -272,7 +271,6 @@ onBeforeUnmount(() => {
         v-model="draft"
         class="new-branch"
         data-branch-create-input
-        :aria-label="t('home.branchCreatePlaceholder')"
         spellcheck="false"
         :placeholder="t('home.branchCreatePlaceholder')"
         :disabled="busy"
@@ -430,12 +428,6 @@ svg circle {
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
-.search input:focus-visible {
-  outline: 2px solid var(--interactive);
-  outline-offset: 2px;
-  border-radius: 4px;
-}
-
 .search input::placeholder {
   color: var(--text-weak);
 }
@@ -521,11 +513,6 @@ svg circle {
   border: 1px solid var(--border-weak);
   border-radius: 8px;
   outline: none;
-}
-
-.new-branch:focus-visible {
-  outline: 2px solid var(--interactive);
-  outline-offset: 2px;
 }
 
 .new-branch::placeholder {
