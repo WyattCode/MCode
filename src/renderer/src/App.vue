@@ -724,10 +724,13 @@ async function undoArchive(ids: readonly string[]) {
     notifyFailure(t("toast.archiveUndoFailed"))
     return
   }
+  // Hold the toast to the place the person started from: leaving mid-await must not
+  // flash the undo-failed outcome onto another chat.
+  const held = app.currentID
   try {
     for (const sessionID of still) await app.archive(sessionID, false)
   } catch {
-    notifyFailure(t("toast.archiveUndoFailed"))
+    if (app.currentID === held) notifyFailure(t("toast.archiveUndoFailed"))
   }
 }
 
