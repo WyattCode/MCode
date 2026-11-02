@@ -2053,7 +2053,8 @@ async function createNamedProject(title: string, source?: string) {
       return
     }
     if (app.currentID !== moving) await app.open(moving)
-    view.value = "session"
+    // Left for another conversation while open was in flight: do not force the session view for the abandoned move target.
+    if (app.currentID === moving) view.value = "session"
     return
   }
   // DL15: MiMo lands on the home screen with the new project picked, and makes no conversation for it.
