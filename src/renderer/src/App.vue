@@ -2028,17 +2028,24 @@ async function confirmRemoveProjects() {
 async function createNamedProject(title: string, source?: string) {
   const moving = namingProject.value?.sessionID
   namingProject.value = undefined
+  // Hold the create-project failure toast to the place the person started from;
+  // leaving mid-await must not flash it onto another chat.
+  const held = app.currentID
   let directory = source
   if (!directory) {
     try {
       directory = (await app.client?.request({ type: "project.createBlank", name: title }))?.directory
     } catch (failure) {
-      notifyFailure(t("menu.createFailed", { error: reasonOf(failure) }))
+      if (app.currentID === held) {
+        notifyFailure(t("menu.createFailed", { error: reasonOf(failure) }))
+      }
       return
     }
   }
   if (!directory) {
-    notifyFailure(t("menu.createFailed", { error: t("common.requestFailed") }))
+    if (app.currentID === held) {
+      notifyFailure(t("menu.createFailed", { error: t("common.requestFailed") }))
+    }
     return
   }
   if (source && title !== folderName(source)) {
@@ -2049,7 +2056,9 @@ async function createNamedProject(title: string, source?: string) {
       await app.addProject(directory, { silent: true })
       await app.move(moving, directory)
     } catch (err) {
-      notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+      if (app.currentID === held) {
+        notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+      }
       return
     }
     if (app.currentID !== moving) await app.open(moving)
