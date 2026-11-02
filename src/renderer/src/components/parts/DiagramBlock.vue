@@ -5,6 +5,7 @@ import type { MenuItem } from "../../lib/menu"
 import { t } from "../../lib/i18n"
 import { savePng, saveText } from "../../lib/native-pick"
 import { notifyFailure } from "../../lib/toast"
+import { useApp } from "../../stores/app"
 import { openImagePreview } from "../../lib/image-preview"
 import { svgSize } from "../../lib/svg-safe"
 import {
@@ -139,13 +140,18 @@ async function picture(): Promise<Blob> {
 }
 
 async function copyImage() {
+  // Hold the toast to the place the person started from; leaving mid-await
+  // must not flash the copy outcome onto another conversation.
+  const held = useApp().currentID
   try {
     const png = await picture()
     await navigator.clipboard.write([new ClipboardItem({ "image/png": png })])
+    if (useApp().currentID !== held) return
     copiedImage.value = true
     clearTimeout(copiedTimer)
     copiedTimer = setTimeout(() => (copiedImage.value = false), 2000)
   } catch {
+    if (useApp().currentID !== held) return
     notifyFailure(t("mermaid.copyImageFailed"))
   }
 }
