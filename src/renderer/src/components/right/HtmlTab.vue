@@ -70,8 +70,7 @@ async function runInit(file: string) {
 /* One init per page at a time: opening the tab, making a note and sending it all ask, and would otherwise race. */
 const initing = new Map<string, Promise<void>>()
 
-function initVersions(): Promise<void> {
-  const file = path.value
+function initVersions(file = path.value): Promise<void> {
   let running = initing.get(file)
   if (!running) {
     running = runInit(file).finally(() => initing.delete(file))
@@ -136,12 +135,12 @@ interface Picked {
   rect: { left: number; top: number; right: number; bottom: number }
 }
 
-function buildNote(picked: Picked, comment: string): Annotation {
+function buildNote(picked: Picked, comment: string, file: string, name: string): Annotation {
   return {
     id: annotationId(),
     kind: "html",
-    path: path.value,
-    name: props.tab.name || "网页",
+    path: file,
+    name: name || "网页",
     selector: picked.selector,
     tag: picked.tag,
     ...(picked.text ? { quote: picked.text } : {}),
@@ -149,11 +148,12 @@ function buildNote(picked: Picked, comment: string): Annotation {
   }
 }
 
-async function sendNow(note: Annotation) {
+async function sendNow(note: Annotation, heldOrigin?: string) {
   ownRequest = null
-  lastComment = note.text
-  await ensureVersions()
-  const result = await sendAnnotationNow(note, path.value, note.text, { origin: props.tab.origin })
+  const file = note.path || path.value
+  if (path.value === file) lastComment = note.text
+  if (!versions.byPath[file]?.versions.length) await initVersions(file)
+  const result = await sendAnnotationNow(note, file, note.text, { origin: heldOrigin })
   if (!result.ok && result.reason) notifyFailure(result.reason)
 }
 
@@ -181,19 +181,22 @@ function sayIfRefused(note: Annotation) {
 function openBox(picked: Picked) {
   const box = frame.value?.getBoundingClientRect()
   if (!box) return
+  const heldPath = path.value
+  const heldName = props.tab.name
+  const heldOrigin = props.tab.origin
   const request: AnnotationRequest = {
     rect: { left: box.left + picked.rect.left, top: box.top + picked.rect.top, right: box.left + picked.rect.right, bottom: box.top + picked.rect.bottom },
     initialText: "",
     make: (comment) => {
-      lastComment = comment.trim()
-      void ensureVersions()
-      const note = buildNote(picked, comment)
+      if (path.value === heldPath) lastComment = comment.trim()
+      if (!versions.byPath[heldPath]?.versions.length) void initVersions(heldPath)
+      const note = buildNote(picked, comment, heldPath, heldName ?? "")
       sayIfRefused(note)
       return note
     },
     sendNow: (note) => {
       sentAtOnce.add(note.id)
-      void sendNow(note)
+      void sendNow(note, heldOrigin)
     },
     onClose: () => post({ type: "clearSel" }),
   }
