@@ -269,7 +269,7 @@ onBeforeUnmount(() => {
     <Teleport to="body">
       <div v-if="pending" class="scrim" @mousedown.self="pending = undefined">
         <!-- MiMo focuses nothing when this opens, so Enter cannot switch over uncommitted work by accident. -->
-        <div v-modal class="dialog" data-branch-switch-dialog data-modal-keep-focus role="dialog" aria-labelledby="branch-switch-title">
+        <div v-modal class="dialog" data-branch-switch-dialog data-modal-keep-focus role="dialog" aria-modal="true" aria-labelledby="branch-switch-title" aria-describedby="branch-switch-desc">
           <div class="dialog-head">
             <h2 id="branch-switch-title" class="dialog-title">{{ t("home.branchSwitchTitle", { branch: pending }) }}</h2>
             <button
@@ -285,7 +285,7 @@ onBeforeUnmount(() => {
               </svg>
             </button>
           </div>
-          <p class="dialog-desc">{{ t("home.branchSwitchDesc", { branch: pending }) }}</p>
+          <p id="branch-switch-desc" class="dialog-desc">{{ t("home.branchSwitchDesc", { branch: pending }) }}</p>
           <div class="dialog-actions">
             <button type="button" class="dialog-btn" data-branch-switch-cancel @click="pending = undefined">{{ t("common.cancel") }}</button>
             <button type="button" class="dialog-btn danger" data-branch-switch-ok @click="checkout(pending!, true)">
@@ -562,6 +562,12 @@ svg circle {
 .dialog-close:hover {
   color: var(--text-strong);
   background: var(--surface-hover);
+}
+
+.dialog-close:focus-visible,
+.dialog-btn:focus-visible {
+  outline: 2px solid var(--text-strong);
+  outline-offset: 2px;
 }
 
 /* MiMo's permc-desc: 14px in --color-txt. */
