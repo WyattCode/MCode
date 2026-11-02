@@ -87,6 +87,8 @@ async function finishEdit() {
   try {
     await app.rename(session.id, next)
   } catch (err) {
+    // Left for another conversation while rename was in flight: do not paint its old title on this screen.
+    if (app.currentID !== session.id) return
     el.textContent = previous
     el.scrollLeft = 0
     notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
