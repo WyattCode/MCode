@@ -285,6 +285,11 @@ onBeforeUnmount(() => {
   -webkit-app-region: no-drag;
 }
 
+.notice:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
 .notice.success {
   background: #e5f3ff;
   border-color: #c9e6ff;
@@ -377,6 +382,13 @@ onBeforeUnmount(() => {
   text-decoration: underline;
 }
 
+.link:focus-visible,
+.close:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 :root[data-theme="dark"] .link {
   color: #5a9cff;
 }
@@ -435,3 +447,4 @@ onBeforeUnmount(() => {
   }
 }
 </style>
+

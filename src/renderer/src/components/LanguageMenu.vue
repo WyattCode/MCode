@@ -19,9 +19,11 @@ const GAP = 4
 const EDGE = 12
 const WIDTH = 240
 
+/* The popover's id, so the trigger can point at it whether it is open or not. */
+const LISTBOX_ID = "language-menu-listbox"
+
 const root = ref<HTMLElement>()
 const pop = ref<HTMLElement>()
-const popId = "lang-pop-listbox"
 const search = ref<HTMLInputElement>()
 const open = ref(false)
 const query = ref("")
@@ -64,14 +66,13 @@ async function toggle() {
 }
 
 /* The query goes with the menu, so it opens on the full list next time. */
-function close(restoreFocus = false) {
+function close() {
   open.value = false
   query.value = ""
-  if (restoreFocus) root.value?.querySelector<HTMLElement>("[data-language-trigger]")?.focus()
 }
 
 function choose(value: string) {
-  close(true)
+  close()
   if (value !== props.modelValue) emit("update:modelValue", value)
 }
 
@@ -80,7 +81,7 @@ function onSearchKey(event: KeyboardEvent) {
   event.stopPropagation()
   if (event.key === "Escape") {
     event.preventDefault()
-    close(true)
+    close()
   } else if (event.key === "Enter" && !composing(event)) {
     event.preventDefault()
     const first = matches.value[0]
@@ -103,7 +104,7 @@ function onPointerDown(event: MouseEvent) {
 function onKeydown(event: KeyboardEvent) {
   if (open.value && event.key === "Escape") {
     event.stopPropagation()
-    close(true)
+    close()
   }
 }
 
@@ -127,7 +128,15 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="root" class="lang-menu">
-    <button class="lang-trigger" type="button" data-language-trigger :aria-expanded="open" :aria-controls="open ? popId : undefined" aria-haspopup="listbox" @click="toggle">
+    <button
+      class="lang-trigger"
+      type="button"
+      data-language-trigger
+      :aria-expanded="open"
+      aria-haspopup="listbox"
+      :aria-controls="LISTBOX_ID"
+      @click="toggle"
+    >
       <span class="lang-label">{{ label }}</span>
       <svg class="lang-caret" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
         <path d="M5 6.5L8 9.5L11 6.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
@@ -137,7 +146,7 @@ onBeforeUnmount(() => {
     <Teleport to="body">
       <div
         v-if="open"
-        :id="popId"
+        :id="LISTBOX_ID"
         ref="pop"
         class="lang-pop"
         :class="{ flip: box.flip }"
@@ -216,7 +225,7 @@ onBeforeUnmount(() => {
 }
 
 .lang-trigger:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--interactive);
   outline-offset: 2px;
 }
 
@@ -303,6 +312,12 @@ onBeforeUnmount(() => {
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
+.lang-pop .lang-search-input:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 .lang-pop .lang-list {
   display: flex;
   flex: 1;
@@ -335,8 +350,8 @@ onBeforeUnmount(() => {
 }
 
 .lang-pop .lang-item:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  outline: 2px solid var(--interactive);
+  outline-offset: -2px;
 }
 
 .lang-pop .lang-check {
@@ -351,3 +366,4 @@ onBeforeUnmount(() => {
   text-align: center;
 }
 </style>
+
