@@ -3775,7 +3775,9 @@ async function cycleAgent(by: 1 | -1) {
   try {
     await app.setAgent(next, target)
   } catch (err) {
-    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    // Left mid-await → do not flash the failure on another conversation.
+    if (app.currentID === target)
+      notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
     return
   }
   // Announced only once the write landed: a failed switch has no new mode to

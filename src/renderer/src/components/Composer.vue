@@ -2829,7 +2829,9 @@ async function chooseModelEffort(provider: string, model: string, level: Effort)
       await app.setEffort(level, target)
     }
   } catch (err) {
-    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    // Left mid-await → do not flash the failure on another conversation.
+    if (!target || sessionID.value === target)
+      notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
     return
   }
   app.announceModel(before, { provider, model })
@@ -3191,7 +3193,9 @@ async function chooseModel(provider: string, model: string) {
       if (effort && effort !== (hereEffort ?? app.config?.effort)) await app.setEffort(effort, target)
     }
   } catch (err) {
-    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    // Left mid-await → do not flash the failure on another conversation.
+    if (!target || sessionID.value === target)
+      notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
     return
   }
   app.announceModel(before, { provider, model })
@@ -3209,7 +3213,9 @@ async function chooseSmart() {
     if (!target) await app.patchConfig({ smart: true }, { quiet: true })
     else await app.setSmart(target)
   } catch (err) {
-    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    // Left mid-await → do not flash the failure on another conversation.
+    if (!target || sessionID.value === target)
+      notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
     return
   }
   app.announceModel(before, "smart")
