@@ -1961,8 +1961,9 @@ async function runSessionMenu(key: string) {
     return
   }
   if (app.currentID !== target) {
-    view.value = "session"
     await app.open(target)
+    // The reader may have left while opening; only force the session view if this target is still current.
+    if (app.currentID === target) view.value = "session"
   }
   // Left for another conversation while open was in flight: do not run the row command against the screen now.
   if (app.currentID !== target) return
