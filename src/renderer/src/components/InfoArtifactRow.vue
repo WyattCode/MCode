@@ -8,7 +8,14 @@ const emit = defineEmits<{ open: [artifact: SessionArtifact] }>()
 </script>
 
 <template>
-  <button type="button" class="artifact" :title="artifact.path" :data-info-artifact="artifact.role" @click="emit('open', artifact)">
+  <button
+    type="button"
+    class="artifact"
+    :title="artifact.path"
+    :aria-label="`${baseName(artifact.path)} (${artifact.kind})`"
+    :data-info-artifact="artifact.role"
+    @click="emit('open', artifact)"
+  >
     <span class="kind" :data-kind="artifact.kind" aria-hidden="true">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
         <path d="M4 1.8h5.2L12.5 5v9.2H4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
@@ -51,8 +58,9 @@ const emit = defineEmits<{ open: [artifact: SessionArtifact] }>()
 }
 
 .artifact:focus-visible {
-  outline: 2px solid var(--interactive);
-  outline-offset: 1px;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 7px;
 }
 
 .kind {

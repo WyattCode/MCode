@@ -25,12 +25,6 @@ const latest = computed(() => latestTurnParts(app.visible, !app.busy))
 
 const changes = computed(() => editedFiles(latest.value, app.current?.directory))
 
-/** Screen readers need the purpose (review), not only the count on the face. */
-const pillLabel = computed(() => {
-  const count = t("composer.filesChanged", { n: changes.value.files.length })
-  return `${t("stream.reviewFiles")}: ${count} (+${changes.value.add} −${changes.value.del})`
-})
-
 function toggle() {
   const diffs: string[] = []
   for (const part of latest.value) {
@@ -48,9 +42,8 @@ function toggle() {
       type="button"
       class="live-edit-pill"
       data-live-edit-pill
-      :aria-label="pillLabel"
-      :title="pillLabel"
       :aria-expanded="expanded"
+      :aria-label="`${t('composer.filesChanged', { n: changes.files.length })} +${changes.add} -${changes.del}`"
       @click="toggle"
     >
       <span class="live-edit-pill-text">{{ t("composer.filesChanged", { n: changes.files.length }) }}</span>
@@ -100,6 +93,12 @@ function toggle() {
 
 .live-edit-pill:hover {
   color: var(--text-strong);
+}
+
+.live-edit-pill:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 12px;
 }
 
 .live-edit-pill-text {

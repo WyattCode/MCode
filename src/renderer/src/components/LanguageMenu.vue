@@ -21,6 +21,7 @@ const WIDTH = 240
 
 const root = ref<HTMLElement>()
 const pop = ref<HTMLElement>()
+const popId = "lang-pop-listbox"
 const search = ref<HTMLInputElement>()
 const open = ref(false)
 const query = ref("")
@@ -63,13 +64,14 @@ async function toggle() {
 }
 
 /* The query goes with the menu, so it opens on the full list next time. */
-function close() {
+function close(restoreFocus = false) {
   open.value = false
   query.value = ""
+  if (restoreFocus) root.value?.querySelector<HTMLElement>("[data-language-trigger]")?.focus()
 }
 
 function choose(value: string) {
-  close()
+  close(true)
   if (value !== props.modelValue) emit("update:modelValue", value)
 }
 
@@ -78,7 +80,7 @@ function onSearchKey(event: KeyboardEvent) {
   event.stopPropagation()
   if (event.key === "Escape") {
     event.preventDefault()
-    close()
+    close(true)
   } else if (event.key === "Enter" && !composing(event)) {
     event.preventDefault()
     const first = matches.value[0]
@@ -101,7 +103,7 @@ function onPointerDown(event: MouseEvent) {
 function onKeydown(event: KeyboardEvent) {
   if (open.value && event.key === "Escape") {
     event.stopPropagation()
-    close()
+    close(true)
   }
 }
 
@@ -125,15 +127,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="root" class="lang-menu">
-    <button
-      class="lang-trigger"
-      type="button"
-      data-language-trigger
-      :aria-label="t('set.language')"
-      :aria-expanded="open"
-      aria-haspopup="listbox"
-      @click="toggle"
-    >
+    <button class="lang-trigger" type="button" data-language-trigger :aria-expanded="open" :aria-controls="open ? popId : undefined" aria-haspopup="listbox" @click="toggle">
       <span class="lang-label">{{ label }}</span>
       <svg class="lang-caret" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
         <path d="M5 6.5L8 9.5L11 6.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
@@ -143,6 +137,7 @@ onBeforeUnmount(() => {
     <Teleport to="body">
       <div
         v-if="open"
+        :id="popId"
         ref="pop"
         class="lang-pop"
         :class="{ flip: box.flip }"
@@ -218,6 +213,11 @@ onBeforeUnmount(() => {
   box-shadow: var(--shadow-xs);
   font-size: calc(14px * var(--ui-font-scale, 1));
   white-space: nowrap;
+}
+
+.lang-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .lang-label {
@@ -332,6 +332,11 @@ onBeforeUnmount(() => {
 
 .lang-pop .lang-item:hover {
   background: var(--surface-hover);
+}
+
+.lang-pop .lang-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .lang-pop .lang-check {
