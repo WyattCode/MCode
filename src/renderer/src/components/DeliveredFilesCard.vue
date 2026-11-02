@@ -155,7 +155,10 @@ async function pick(key: string) {
     window.mcode.setClipboardText(target.path)
     notify(t("rp.files.pathCopied"))
   } else if (key === "reveal") {
+    const held = app.currentID
     const result = await window.mcode.revealPath(target.path).catch((error: unknown) => ({ ok: false, error: String(error) }))
+    // Hold the reveal failure toast to the place the person started from; leaving mid-await must not flash the file-manager outcome onto another conversation.
+    if (app.currentID !== held) return
     if (!result.ok) notifyFailure(t("officeCard.revealFailed", { error: result.error ?? "" }))
   } else if (key === "saveCopy") {
     const result = await window.mcode.saveCopy(target.path).catch((error: unknown) => ({ ok: false as const, error: String(error) }))
