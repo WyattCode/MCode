@@ -1995,7 +1995,10 @@ export const useApp = defineStore("app", () => {
     try {
       await setGoalMode(next, target)
     } catch (err) {
-      notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+      // Left mid-await → do not flash the failure on another conversation.
+      if (home || currentID.value === target) {
+        notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+      }
       return
     }
     // Left for another conversation mid-flight: do not flash goal on/off there.
