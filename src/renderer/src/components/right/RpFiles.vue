@@ -316,7 +316,11 @@ async function save() {
 
 async function reveal(rel: string | undefined) {
   if (!root.value || !rel) return
+  // Hold the toast to the place the person started from; leaving mid-await
+  // must not flash the reveal outcome onto another conversation.
+  const held = app.currentID
   const result = await window.mcode.revealPath(absolute(rel)).catch((err: unknown) => ({ ok: false, error: String(err) }))
+  if (app.currentID !== held) return
   if (result.ok) notify(t("menu.revealedIn", { manager: fileManagerName(app.platform) }))
   else {
     const error = result.error && result.error !== "not found" ? result.error : t("rp.files.pathNotExist")
