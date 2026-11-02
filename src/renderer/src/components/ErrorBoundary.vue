@@ -94,6 +94,11 @@ watch(
   background: #fee2e2;
 }
 
+.retry:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
 :root[data-theme="dark"] .render-error {
   background: rgb(69 10 10 / 0.3);
   border-color: #991b1b;
