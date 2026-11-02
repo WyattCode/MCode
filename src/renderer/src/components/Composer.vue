@@ -1136,8 +1136,9 @@ async function toggleVoice() {
       voiceState.value = "idle"
       reportVoiceStatus(undefined)
       voiceOwner.value = undefined
+      // Left or cancelled while starting: do not toast for this attempt.
+      showVoiceFailure(micFailure(err))
     }
-    showVoiceFailure(micFailure(err))
   }
 }
 
