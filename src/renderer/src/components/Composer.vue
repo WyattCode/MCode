@@ -2747,10 +2747,16 @@ async function applyAccess(next: Access, to?: string | null): Promise<boolean> {
   if (forSession && id) {
     try {
       await app.setAccess(id, next)
-      app.announceAccess(next)
+      // Held to the same conversation: don't flash the toast elsewhere if the
+      // reader left this conversation mid-flight.
+      if (sessionID.value === id) app.announceAccess(next)
       return true
     } catch (err) {
-      notifyFailure(t("composer.access.failed"), err instanceof Error ? err.message : String(err))
+      // Left for another conversation mid-flight: keep the failure on the
+      // conversation that owns the held session.
+      if (sessionID.value === id) {
+        notifyFailure(t("composer.access.failed"), err instanceof Error ? err.message : String(err))
+      }
       return false
     }
   }
