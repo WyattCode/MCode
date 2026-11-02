@@ -328,10 +328,15 @@ function openInBrowser(rel: string | undefined) {
 }
 
 async function copyText(text: string) {
+  // Hold the toast to the place the person started from; leaving mid-await
+  // must not flash the copy-path outcome onto another conversation.
+  const held = app.currentID
   try {
     await writeText(text)
+    if (app.currentID !== held) return
     notify(t("rp.files.pathCopied"))
   } catch {
+    if (app.currentID !== held) return
     notifyFailure(t("rp.files.copyPathFailed"))
   }
 }
