@@ -2138,6 +2138,8 @@ async function exportSession() {
  * message. Unsharing is deleting that file, which is the user's to do.
  */
 async function shareSession() {
+  const id = app.currentID
+  if (!id) return
   if (!app.messages.length) return
   const title = app.current ? sessionTitle(app.current.title) : "session"
   const name = title.replace(/[\/:*?"<>|]/g, "-").slice(0, 60)
@@ -2207,13 +2209,13 @@ async function shareSession() {
   try {
     const saved = await saveText(`${name}.html`, page)
     // The page is meant to be looked at, so this one opens rather than reveals.
-    if (saved) {
+    if (saved && app.currentID === id) {
       notify(t("share.saved"), {
         action: { label: t("share.view"), run: () => void window.mcode.openSaved(saved) },
       })
     }
   } catch (failure) {
-    reportSaveFailure(t("toast.shareFailed"), failure)
+    if (app.currentID === id) reportSaveFailure(t("toast.shareFailed"), failure)
   }
 }
 
