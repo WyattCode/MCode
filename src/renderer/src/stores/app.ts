@@ -380,9 +380,12 @@ export const useApp = defineStore("app", () => {
     const was = next.has(sessionID)
     if (was) next.delete(sessionID)
     else next.add(sessionID)
+    // Hold the toast to the place the person started from; leaving mid-await
+    // must not flash the pin outcome onto another chat.
+    const held = currentID.value
     try {
       await patchConfig({ pinnedTabs: [...next] })
-      notify(t(was ? "side.unpinnedToast" : "side.pinnedToast"))
+      if (currentID.value === held) notify(t(was ? "side.unpinnedToast" : "side.pinnedToast"))
     } catch {
       // patchConfig already toasts prefSaveFailed; leave pin state for retry.
       return
