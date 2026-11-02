@@ -1202,7 +1202,8 @@ async function toggleGoalMode() {
     notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
     return
   }
-  notify(t(next ? "toast.goalOn" : "toast.goalOff"))
+  // Left for another conversation mid-flight: do not flash goal on/off there.
+  if (sessionID.value === target) notify(t(next ? "toast.goalOn" : "toast.goalOff"))
 }
 
 /* MiMo's skill chip: a picked skill waits above the text and goes with the next message. */
