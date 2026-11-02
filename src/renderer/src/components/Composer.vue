@@ -1765,12 +1765,28 @@ function stopAtTimer() {
  */
 watch(
   () => [atSpan.value?.query, atSub.value, projectRoot.value] as const,
-  ([query]) => {
+  ([query, , root], previous) => {
     stopAtTimer()
+    const rootChanged = previous !== undefined && previous[2] !== root
+    if (rootChanged) {
+      // New project: drop the old listing/hits and drill-in before re-listing.
+      atAsk += 1
+      atEntries.value = []
+      atHits.value = []
+      atTruncated.value = false
+      // Keep the menu open while the new root loads; empty rows + ready would close it.
+      if (query !== undefined) atStatus.value = "loading"
+      if (atSub.value !== "") {
+        // Re-entry will continue with the reset subfolder.
+        atSub.value = ""
+        return
+      }
+    }
     if (query === undefined) {
       // Closed: the next @ starts from the project root again.
       atAsk += 1
       atSub.value = ""
+      atEntries.value = []
       atHits.value = []
       atTruncated.value = false
       atStatus.value = "idle"
