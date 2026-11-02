@@ -801,6 +801,8 @@ const projectRoot = computed(() =>
 )
 
 function addDroppedMentions(paths: { rel: string; file: boolean }[]) {
+  // The nextTick focus/selection must not land on a draft that replaced this one.
+  const originKey = draftKey.value
   const unique = [...new Map(paths.map((entry) => [entry.rel, entry])).values()]
   const next = appendMentions(
     text.value,
@@ -810,6 +812,7 @@ function addDroppedMentions(paths: { rel: string; file: boolean }[]) {
   for (const entry of unique) rememberMention(entry.rel)
   text.value = next
   void nextTick(() => {
+    if (!composerMounted || draftKey.value !== originKey) return
     resize()
     input.value?.focus()
     input.value?.setSelectionRange(next.length, next.length)
@@ -1864,6 +1867,8 @@ function folderUp() {
  * which is all MiMo sends for one.
  */
 async function insertMention(path: string, file: boolean) {
+  // The nextTick focus/selection must not land on a draft that replaced this one.
+  const originKey = draftKey.value
   const span = atSpan.value
   if (!span) return
   const next = withMention(text.value, span, path)
@@ -1872,6 +1877,7 @@ async function insertMention(path: string, file: boolean) {
   text.value = next.text
   atIndex.value = 0
   await nextTick()
+  if (!composerMounted || draftKey.value !== originKey) return
   resize()
   input.value?.focus()
   input.value?.setSelectionRange(next.cursor, next.cursor)
@@ -1891,10 +1897,13 @@ function referenceFolder(rel: string) {
  * rather than raising a flag the text would then contradict.
  */
 function openContext() {
+  // The nextTick focus/selection must not land on a draft that replaced this one.
+  const originKey = draftKey.value
   const draft = text.value
   const opened = draft && !/\s$/.test(draft) ? `${draft} @` : `${draft}@`
   text.value = opened
   void nextTick(() => {
+    if (!composerMounted || draftKey.value !== originKey) return
     resize()
     input.value?.focus()
     input.value?.setSelectionRange(opened.length, opened.length)
@@ -1904,6 +1913,8 @@ function openContext() {
 
 /** A file chosen somewhere else in the app, written into the draft as a mention. */
 function mention(path: string) {
+  // The nextTick focus/selection must not land on a draft that replaced this one.
+  const originKey = draftKey.value
   const draft = text.value
   const opened = draft && !/\s$/.test(draft) ? `${draft} @` : `${draft}@`
   const span = mentionSpan(opened, opened.length)
@@ -1913,6 +1924,7 @@ function mention(path: string) {
   rememberMention(path)
   text.value = next.text
   void nextTick(() => {
+    if (!composerMounted || draftKey.value !== originKey) return
     resize()
     input.value?.focus()
     input.value?.setSelectionRange(next.cursor, next.cursor)
@@ -3347,10 +3359,13 @@ function reset() {
 
 /** Drops a fragment into the draft, so what was found elsewhere becomes prompt. */
 function insert(fragment: string) {
+  // The nextTick focus/selection must not land on a draft that replaced this one.
+  const originKey = draftKey.value
   const draft = text.value
   const next = draft && !draft.endsWith(" ") ? `${draft} ${fragment}` : `${draft}${fragment}`
   text.value = next
   void nextTick(() => {
+    if (!composerMounted || draftKey.value !== originKey) return
     resize()
     input.value?.focus()
     /*
