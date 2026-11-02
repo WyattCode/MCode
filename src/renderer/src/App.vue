@@ -488,6 +488,9 @@ function revealAction(target: string) {
 }
 
 async function exportLog() {
+  // Hold the toast to the place the person started from; leaving mid-await
+  // must not flash the log export toast onto another chat.
+  const id = app.currentID
   const header = [
     `MCode log`,
     `exported ${new Date().toISOString()}`,
@@ -499,9 +502,11 @@ async function exportLog() {
   const body = logLines.length ? logLines : [t("log.empty")]
   try {
     const saved = await saveText("mcode-log.txt", [...header, ...body].join("\n"))
-    if (saved) notify(t("log.saved"), { action: revealAction(saved) })
+    if (saved && app.currentID === id) {
+      notify(t("log.saved"), { action: revealAction(saved) })
+    }
   } catch (failure) {
-    reportSaveFailure(t("toast.exportFailed"), failure)
+    if (app.currentID === id) reportSaveFailure(t("toast.exportFailed"), failure)
   }
 }
 
