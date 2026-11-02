@@ -613,9 +613,15 @@ async function sendNote() {
   }
   const note = buildNote(pick, comment)
   const region = storedRegion()
-  const result = await sendAnnotationNow(note, props.path, `【PPT 第${pick.slideIndex + 1}页】${comment}`, { origin: props.origin })
+  const path = props.path
+  const name = props.name
+  const result = await sendAnnotationNow(note, path, `【PPT 第${pick.slideIndex + 1}页】${comment}`, { origin: props.origin })
   if (!result.ok) {
     if (result.reason) notifyFailure(result.reason)
+    return
+  }
+  if (props.path !== path) {
+    if (region) batch.setBatch([{ id: note.id, num: 0, kind: note.kind, path, name }])
     return
   }
   localNote = `【第${pick.slideIndex + 1}页·${pick.regionNote ? "框选范围" : "选中模块"}】${comment}`
@@ -623,7 +629,7 @@ async function sendNote() {
   localPending = true
   if (region) {
     regions.set(note.id, region)
-    batch.setBatch([{ id: note.id, num: 0, kind: note.kind, path: props.path, name: props.name }])
+    batch.setBatch([{ id: note.id, num: 0, kind: note.kind, path, name }])
   }
   noteText.value = ""
   closeNote()

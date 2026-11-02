@@ -708,16 +708,22 @@ async function sendNote() {
     mode.value = "hidden"
     return
   }
-  const result = await sendAnnotationNow(built.note, props.path, built.prompt, { origin: props.origin })
+  const path = props.path
+  const name = props.name
+  const result = await sendAnnotationNow(built.note, path, built.prompt, { origin: props.origin })
   if (!result.ok) {
     if (result.reason) notifyFailure(result.reason)
+    return
+  }
+  if (props.path !== path) {
+    batch.setBatch([{ id: built.note.id, num: 0, kind: built.note.kind, path, name }])
     return
   }
   localNote = built.prompt
   localConvo = result.convoId ?? null
   localPending = true
   anchors.set(built.note.id, built.anchor)
-  batch.setBatch([{ id: built.note.id, num: 0, kind: built.note.kind, path: props.path, name: props.name }])
+  batch.setBatch([{ id: built.note.id, num: 0, kind: built.note.kind, path, name }])
   noteText.value = ""
   closeNote()
 }

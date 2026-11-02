@@ -712,15 +712,21 @@ async function sendNote() {
     return
   }
   const note = buildNote(comment)
-  const result = await sendAnnotationNow(note, props.path, `【Word 文档】${comment}`, { origin: props.origin })
+  const path = props.path
+  const name = props.name
+  const result = await sendAnnotationNow(note, path, `【Word 文档】${comment}`, { origin: props.origin })
   if (!result.ok) {
     if (result.reason) notifyFailure(result.reason)
+    return
+  }
+  if (props.path !== path) {
+    batch.setBatch([{ id: note.id, num: 0, kind: note.kind, path, name }])
     return
   }
   localNote = `【选中文本】${comment}`
   localConvo = result.convoId ?? null
   if (range.startContainer.isConnected) kept.set(note.id, paragraphRecord(range, text, note.occ ?? 1))
-  batch.setBatch([{ id: note.id, num: 0, kind: note.kind, path: props.path, name: props.name }])
+  batch.setBatch([{ id: note.id, num: 0, kind: note.kind, path, name }])
   hideNote()
 }
 
