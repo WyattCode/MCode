@@ -717,6 +717,11 @@ body.resizing .right-panel {
   border-color: var(--border-weak);
 }
 
+.rp-tab:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: -2px;
+}
+
 /* MiMo gives the tab glyph no colour of its own: it follows the label, muted until the tab is the active one. */
 .rpt-ic {
   flex: none;
