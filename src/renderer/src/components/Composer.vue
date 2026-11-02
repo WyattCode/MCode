@@ -1460,11 +1460,18 @@ async function prepareSend(delivery?: "queue") {
         } else {
           const created = await app.create(props.startDirectory, { scratch: props.startScratch, activate: stillHere })
           target = created.id
-          // MiMo's newChat says so whenever the first send makes a new task.
-          notify(t("toast.newConvoCreated"))
         }
         createdHere = true
         expectedModel = JSON.stringify((props.side ? app.sideSessionOf(target) : app.sessions.find((entry) => entry.id === target))?.model)
+        if (!props.side) {
+          // A first send can finish creating after the user has already left its composer.
+          if (!stillHere()) {
+            restoreOrigin()
+            return
+          }
+          // MiMo's newChat says so whenever the first send makes a new task.
+          notify(t("toast.newConvoCreated"))
+        }
       } catch (err) {
         restoreOrigin()
         await nextTick(resize)
