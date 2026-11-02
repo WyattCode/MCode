@@ -2914,7 +2914,9 @@ async function chooseModelEffort(provider: string, model: string, level: Effort)
     notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
     return
   }
-  app.announceModel(before, { provider, model })
+  // Held to the same conversation: a reader who left mid-await is not told
+  // about a model they no longer see.
+  if (sessionID.value === target) app.announceModel(before, { provider, model })
 }
 
 /*
@@ -3276,7 +3278,9 @@ async function chooseModel(provider: string, model: string) {
     notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
     return
   }
-  app.announceModel(before, { provider, model })
+  // Held to the same conversation: a reader who left mid-await is not told
+  // about a model they no longer see.
+  if (sessionID.value === target) app.announceModel(before, { provider, model })
 }
 
 /* Smart: the model is picked from the conversation's first message. */
@@ -3294,7 +3298,9 @@ async function chooseSmart() {
     notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
     return
   }
-  app.announceModel(before, "smart")
+  // Held to the same conversation: a reader who left mid-await is not told
+  // about a Smart switch they no longer see.
+  if (sessionID.value === target) app.announceModel(before, "smart")
 }
 
 function onPointerDown(event: MouseEvent) {

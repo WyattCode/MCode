@@ -3819,7 +3819,8 @@ async function cycleAgent(by: 1 | -1) {
   }
   // Announced only once the write landed: a failed switch has no new mode to
   // announce, and announcing the old one would read as if nothing was tried.
-  app.announceMode(before, target)
+  // Held to the same conversation: a reader who left mid-await is not told.
+  if (app.currentID === target) app.announceMode(before, target)
 }
 
 /**
