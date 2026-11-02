@@ -156,6 +156,7 @@ watch(
       :key="pin.key"
       class="annot-pin"
       data-annotation-pin
+      aria-hidden="true"
       :style="{ left: `${pin.left}px`, top: `${pin.top}px` }"
     >
       {{ pin.n }}
