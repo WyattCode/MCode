@@ -53,7 +53,19 @@ async function refresh() {
   }
 }
 
-watch(() => props.directory, refresh, { immediate: true })
+watch(
+  () => props.directory,
+  () => {
+    /* Left for another project while the dirty confirm was up: do not force-switch that branch under this folder. */
+    pending.value = undefined
+    open.value = false
+    creating.value = false
+    draft.value = ""
+    query.value = ""
+    refresh()
+  },
+  { immediate: true },
+)
 /* A branch changed from the info card, or by this chip, is shown at once. */
 watch(() => app.branchNonce, refresh)
 
