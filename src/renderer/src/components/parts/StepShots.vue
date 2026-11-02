@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from "vue"
+import { onBeforeUnmount, onMounted, ref, watch } from "vue"
 import type { Attachment } from "@shared/protocol"
 import { openImagePreview } from "../../lib/image-preview"
 import { t } from "../../lib/i18n"
@@ -28,8 +28,10 @@ const shots = ref<Shot[]>([])
 
 /* A served address per file, kept across rows so a list redrawn does not ask again. */
 const served = new Map<string, string>()
+let generation = 0
 
 async function load() {
+  const mine = ++generation
   const out: Shot[] = []
   for (const [index, item] of stepImages(props.attachments).entries()) {
     const name = item.path.split(/[\\/]/).pop() || item.path
@@ -40,17 +42,23 @@ async function load() {
     let url = served.get(item.path)
     if (!url) {
       const answer = await window.mcode.officeServe(item.path).catch(() => null)
+      if (mine !== generation) return
       if (!answer?.ok) continue
       url = answer.url
       served.set(item.path, url)
     }
     out.push({ key: `${index}`, url, name, path: item.path })
   }
+  if (mine !== generation) return
   shots.value = out
 }
 
 onMounted(load)
 watch(() => props.attachments, load)
+
+onBeforeUnmount(() => {
+  generation += 1
+})
 
 function show(shot: Shot, event: MouseEvent) {
   openImagePreview(shot.url, {
