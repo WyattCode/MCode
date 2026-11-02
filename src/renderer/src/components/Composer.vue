@@ -891,7 +891,10 @@ const resumable = computed(
 )
 
 async function resumeTurn() {
-  if (!(await app.resume(sessionID.value))) notifyFailure(t("composer.resumeUnavailable"))
+  const held = sessionID.value
+  const ok = await app.resume(held)
+  // Switching mid-resume must not flash the failure toast on the conversation now on screen.
+  if (!ok && sessionID.value === held) notifyFailure(t("composer.resumeUnavailable"))
 }
 
 function setMode(next: "normal" | "shell") {
