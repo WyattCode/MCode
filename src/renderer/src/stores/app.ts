@@ -2117,6 +2117,7 @@ export const useApp = defineStore("app", () => {
    * that say their own failure.
    */
   async function patchConfig(patch: Partial<AppConfig>, options: { quiet?: boolean } = {}) {
+    const held = currentID.value
     let failure: unknown
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
@@ -2128,7 +2129,8 @@ export const useApp = defineStore("app", () => {
     }
     // A failure the backend named (a config file that no longer parses says where) is said under the title.
     const named = failure instanceof Error && "code" in failure ? failure.message : undefined
-    if (!options.quiet) notifyFailure(t("toast.prefSaveFailed", { key: Object.keys(patch).join(", ") }), named)
+    // Hold the toast to the place the person started from; leaving mid-await must not flash the save failure onto another chat.
+    if (!options.quiet && currentID.value === held) notifyFailure(t("toast.prefSaveFailed", { key: Object.keys(patch).join(", ") }), named)
     throw failure
   }
 
