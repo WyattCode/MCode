@@ -1000,9 +1000,13 @@ async function backToSource(sourceID: string) {
   }
   try {
     await app.open(sourceID)
-    notify(t("stream.backToSource"))
+    // Left for another conversation while open was in flight: do not toast "back to source" here.
+    if (app.currentID === sourceID) notify(t("stream.backToSource"))
   } catch (err) {
-    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    // Left for another conversation while open was in flight: do not toast the failure here.
+    if (app.currentID === sourceID) {
+      notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    }
   }
 }
 
