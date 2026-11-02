@@ -246,6 +246,40 @@ onBeforeUnmount(() => {
   document.body.classList.remove("resizing", "resizing-v")
 })
 
+/** Remembers the drawer height after a drag or a keyboard nudge. */
+function rememberHeight() {
+  try {
+    localStorage.setItem(HEIGHT_KEY, String(height.value))
+  } catch {
+    /* Storage refused; the height still holds until the drawer is closed. */
+  }
+}
+
+/**
+ * Arrow keys nudge the drawer for readers who cannot drag the separator.
+ * Shift takes a larger step.
+ */
+function onResizeKey(event: KeyboardEvent) {
+  const step = event.shiftKey ? 40 : 12
+  if (event.key === "ArrowUp") {
+    event.preventDefault()
+    height.value = clampPanelHeight(height.value + step)
+    rememberHeight()
+  } else if (event.key === "ArrowDown") {
+    event.preventDefault()
+    height.value = clampPanelHeight(height.value - step)
+    rememberHeight()
+  } else if (event.key === "Home") {
+    event.preventDefault()
+    height.value = clampPanelHeight(Number.POSITIVE_INFINITY)
+    rememberHeight()
+  } else if (event.key === "End") {
+    event.preventDefault()
+    height.value = clampPanelHeight(0)
+    rememberHeight()
+  }
+}
+
 /**
  * Drags the drawer taller or shorter.
  *
@@ -269,11 +303,7 @@ function startResize(event: PointerEvent) {
     target.removeEventListener("pointerup", stop)
     target.removeEventListener("pointercancel", stop)
     document.body.classList.remove("resizing", "resizing-v")
-    try {
-      localStorage.setItem(HEIGHT_KEY, String(height.value))
-    } catch {
-      /* Storage refused; the height still holds until the drawer is closed. */
-    }
+    rememberHeight()
   }
   target.addEventListener("pointermove", move)
   target.addEventListener("pointerup", stop)
@@ -289,7 +319,17 @@ function startResize(event: PointerEvent) {
     refitted - and the shell not resized - on every frame of the animation.
   -->
   <div ref="root" class="drawer" data-terminal-drawer :style="{ height: `${height}px` }">
-    <div class="resize" :title="t('term.resizeTitle')" @pointerdown.prevent="startResize" />
+    <div
+      class="resize"
+      role="separator"
+      aria-orientation="horizontal"
+      tabindex="0"
+      :aria-label="t('term.resizeTitle')"
+      :title="t('term.resizeTitle')"
+      data-term-resize
+      @pointerdown.prevent="startResize"
+      @keydown="onResizeKey"
+    />
 
     <div class="drawer-body" :style="{ height: `${height}px` }">
       <div class="head" role="tablist">
@@ -405,6 +445,11 @@ function startResize(event: PointerEvent) {
   cursor: row-resize;
   z-index: 30;
 }
+.resize:focus-visible {
+  outline: 2px solid var(--text-strong);
+  outline-offset: 1px;
+}
+
 
 :global(body.resizing-v) {
   cursor: row-resize;

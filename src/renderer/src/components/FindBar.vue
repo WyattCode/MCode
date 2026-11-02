@@ -88,7 +88,7 @@ watch(input, (element) => props.find.setInput(element))
 </script>
 
 <template>
-  <div v-if="find.open.value" class="find" data-find-bar :style="style" @pointerdown.stop>
+  <div v-if="find.open.value" class="find" data-find-bar role="search" :aria-label="t('stream.find.placeholder')" :style="style" @pointerdown.stop>
     <svg class="glass" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2" />
       <path d="m20 20-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
@@ -97,7 +97,9 @@ watch(input, (element) => props.find.setInput(element))
     <input
       ref="input"
       class="needle"
+      type="search"
       :placeholder="t('stream.find.placeholder')"
+      :aria-label="t('stream.find.placeholder')"
       :value="find.query.value"
       @input="find.setQuery(($event.target as HTMLInputElement).value)"
       @keydown="find.onInputKeydown($event)"

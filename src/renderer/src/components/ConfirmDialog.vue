@@ -32,12 +32,19 @@ onMounted(() => {
 
 <template>
   <div class="scrim" @mousedown.self="emit('close')">
-    <div v-modal class="dialog" data-confirm-dialog role="alertdialog" aria-labelledby="confirm-title">
+    <div
+      v-modal
+      class="dialog"
+      data-confirm-dialog
+      role="alertdialog"
+      aria-labelledby="confirm-title"
+      aria-describedby="confirm-body"
+    >
       <h2 id="confirm-title">{{ title }}</h2>
-      <p class="body">{{ body }}</p>
+      <p id="confirm-body" class="body">{{ body }}</p>
       <footer>
-        <button class="ghost" @click="emit('close')">{{ t("common.cancel") }}</button>
-        <button ref="confirmButton" class="confirm" :class="{ danger }" data-confirm @click="emit('confirm')">{{ confirmLabel }}</button>
+        <button type="button" class="ghost" @click="emit('close')">{{ t("common.cancel") }}</button>
+        <button ref="confirmButton" type="button" class="confirm" :class="{ danger }" data-confirm @click="emit('confirm')">{{ confirmLabel }}</button>
       </footer>
     </div>
   </div>

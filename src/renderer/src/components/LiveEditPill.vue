@@ -25,6 +25,12 @@ const latest = computed(() => latestTurnParts(app.visible, !app.busy))
 
 const changes = computed(() => editedFiles(latest.value, app.current?.directory))
 
+/** Screen readers need the purpose (review), not only the count on the face. */
+const pillLabel = computed(() => {
+  const count = t("composer.filesChanged", { n: changes.value.files.length })
+  return `${t("stream.reviewFiles")}: ${count} (+${changes.value.add} −${changes.value.del})`
+})
+
 function toggle() {
   const diffs: string[] = []
   for (const part of latest.value) {
@@ -38,7 +44,15 @@ function toggle() {
 
 <template>
   <div v-if="changes.files.length > 0" class="live-edit-pill-wrap">
-    <button type="button" class="live-edit-pill" data-live-edit-pill :aria-expanded="expanded" @click="toggle">
+    <button
+      type="button"
+      class="live-edit-pill"
+      data-live-edit-pill
+      :aria-label="pillLabel"
+      :title="pillLabel"
+      :aria-expanded="expanded"
+      @click="toggle"
+    >
       <span class="live-edit-pill-text">{{ t("composer.filesChanged", { n: changes.files.length }) }}</span>
       <span class="live-edit-pill-stats">
         <span class="live-edit-add">+{{ changes.add }}</span>
