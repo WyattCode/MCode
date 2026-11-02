@@ -206,7 +206,7 @@ const Actions: FunctionalComponent = () => {
       </template>
       <span class="q-right">
         <span v-if="queueTotal > 1" class="q-queue" data-confirm-queue :title="t('perm.queueTitle', { total: queueTotal })">
-          1/{{ queueTotal }}
+          {{ t("perm.queueChip", { at: 1, total: queueTotal }) }}
         </span>
         <span v-if="total > 1 && !collapsed" class="q-pager" data-confirm-pager>
           <button

@@ -111,8 +111,13 @@ function onReasonKey(event: KeyboardEvent) {
       <span id="confirm-dock-title" data-perm-title>{{ t("perm.request", { verb }) }}</span>
       <span v-if="chip" id="confirm-dock-chip" class="chip" data-perm-chip>{{ chip }}</span>
       <span class="queue-slot">
-        <span v-if="queueTotal > 1" class="queue" data-confirm-queue :title="t('perm.queueTitle', { total: queueTotal })">
-          1/{{ queueTotal }}
+        <span
+          v-if="queueTotal > 1"
+          class="queue"
+          data-confirm-queue
+          :title="t('perm.queueTitle', { total: queueTotal })"
+        >
+          {{ t("perm.queueChip", { at: 1, total: queueTotal }) }}
         </span>
       </span>
     </div>
@@ -170,6 +175,8 @@ function onReasonKey(event: KeyboardEvent) {
         data-cnav
         data-perm-always
         :disabled="busy"
+        :title="t('perm.alwaysHint')"
+        v-tip="t('perm.alwaysHint')"
         @click="answer('always')"
       >
         {{ t("perm.alwaysShort") }}
@@ -181,11 +188,10 @@ function onReasonKey(event: KeyboardEvent) {
         data-cnav-primary
         data-perm-once
         :disabled="busy"
-        :title="t('perm.once') + ' · ' + t('perm.onceEnter')"
+        :title="t('perm.onceHint')"
         @click="answer('once')"
       >
-        <span>{{ t("perm.once") }}</span>
-        <kbd class="chord">{{ t("perm.onceEnter") }}</kbd>
+        {{ t("perm.once") }}
       </button>
     </div>
 
@@ -401,17 +407,5 @@ function onReasonKey(event: KeyboardEvent) {
 
 .reason-input:focus {
   border-color: var(--interactive);
-}
-
-.chord {
-  margin-inline-start: 6px;
-  padding: 1px 5px;
-  color: inherit;
-  font: inherit;
-  font-size: 0.85em;
-  line-height: 1.2;
-  opacity: 0.65;
-  border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
-  border-radius: 4px;
 }
 </style>

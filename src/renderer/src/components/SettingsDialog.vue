@@ -591,6 +591,32 @@ async function setMcpCodeMode(name: string, on: boolean) {
   }
 }
 
+const mcpReconnecting = ref<string>()
+
+/** Retry a failed (or auth-waiting) server without flipping its enabled switch. */
+async function reconnectMcp(name: string) {
+  if (mcpReconnecting.value) return
+  mcpReconnecting.value = name
+  try {
+    const result = await app.client?.request({ type: "mcp.register", name })
+    if (!result) {
+      notifyFailure(t("set.mcp.reconnectFailed") + t("common.requestFailed"))
+      return
+    }
+    app.mcpServers = result.servers
+    const row = result.servers.find((server) => server.name === name)
+    if (row?.status === "connected") notify(t("set.mcp.reconnected", { name }), { level: "success" })
+    else if (row?.status === "needs_auth" || row?.status === "needs_client_registration") notify(t("set.mcp.reconnectNeedsAuth", { name }))
+    else notifyFailure(t("set.mcp.reconnectFailed") + (row?.error ? row.error : t(`set.mcp.status.${row?.status ?? "failed"}`)))
+  } catch (err) {
+    notifyFailure(t("set.mcp.reconnectFailed") + (err instanceof Error ? err.message : String(err)))
+  } finally {
+    mcpReconnecting.value = undefined
+    delete mcpTools.value[name]
+    void refreshMcp()
+  }
+}
+
 /* MiMo's 授权 on a remote server that answered 401: the browser sign-in, then the row reconnects. */
 async function authorizeMcp(name: string) {
   if (mcpAuthorizing.value) return
@@ -2769,6 +2795,16 @@ onBeforeUnmount(() => {
                     @click="setMcpEnabled(row.name, !row.enabled)"
                   >
                     <span class="knob" />
+                  </button>
+                  <button
+                    v-if="row.enabled && row.status === 'failed'"
+                    class="ctl-btn"
+                    :data-mcp-reconnect="row.name"
+                    :disabled="mcpReconnecting === row.name"
+                    :title="row.error || t('set.mcp.reconnect')"
+                    @click="reconnectMcp(row.name)"
+                  >
+                    {{ mcpReconnecting === row.name ? t("set.mcp.reconnecting") : t("set.mcp.reconnect") }}
                   </button>
                   <button
                     v-if="row.enabled && mcpNeedsSignIn(row.status)"

@@ -556,6 +556,10 @@ const zhCN: Table = {
   "perm.onceEnter": "Enter",
 
   "perm.alwaysShort": "总是允许",
+
+  "perm.alwaysHint": "记住此类请求，本项目里相似操作不再询问",
+  "perm.onceHint": "只批准这一次，下次同类请求仍会询问",
+  "perm.queueChip": "{at}/{total}",
   "perm.request": "请求{verb}",
   "perm.verb.bash": "执行命令",
   "perm.verb.bashDelete": "执行删除命令",
@@ -1285,6 +1289,12 @@ const zhCN: Table = {
   "set.mcp.editFailed": "读取该 MCP 配置失败",
   "set.mcp.remove": "移除",
   "set.mcp.authorize": "授权",
+
+  "set.mcp.reconnect": "重新连接",
+  "set.mcp.reconnecting": "正在重连…",
+  "set.mcp.reconnected": "已重新连接：{name}",
+  "set.mcp.reconnectFailed": "重新连接失败：",
+  "set.mcp.reconnectNeedsAuth": "{name} 仍需授权后才能连接",
   "set.mcp.authorizing": "授权中…",
   "set.mcp.authorized": "授权成功",
   "set.mcp.authorizeFailed": "授权失败：",
@@ -2966,6 +2976,10 @@ const zhTW: Table = {
   "perm.onceEnter": "Enter",
 
   "perm.alwaysShort": "總是允許",
+
+  "perm.alwaysHint": "記住此類請求，本專案中相似操作不再詢問",
+  "perm.onceHint": "只批准這一次，下次同類請求仍會詢問",
+  "perm.queueChip": "{at}/{total}",
   "perm.request": "請求{verb}",
   "perm.verb.bash": "執行命令",
   "perm.verb.bashDelete": "執行刪除命令",
@@ -3685,6 +3699,12 @@ const zhTW: Table = {
   "set.mcp.editFailed": "讀取此 MCP 設定失敗",
   "set.mcp.remove": "移除",
   "set.mcp.authorize": "授權",
+
+  "set.mcp.reconnect": "重新連線",
+  "set.mcp.reconnecting": "正在重連…",
+  "set.mcp.reconnected": "已重新連線：{name}",
+  "set.mcp.reconnectFailed": "重新連線失敗：",
+  "set.mcp.reconnectNeedsAuth": "{name} 仍需授權後才能連線",
   "set.mcp.authorizing": "授權中…",
   "set.mcp.authorized": "授權成功",
   "set.mcp.authorizeFailed": "授權失敗：",
@@ -5365,6 +5385,10 @@ const en: Table = {
   "perm.onceEnter": "Enter",
 
   "perm.alwaysShort": "Allow always",
+
+  "perm.alwaysHint": "Remember this pattern for similar requests in this project",
+  "perm.onceHint": "Allow only this time; similar requests will ask again",
+  "perm.queueChip": "{at}/{total}",
   "perm.request": "Wants to {verb}",
   "perm.verb.bash": "run a command",
   "perm.verb.bashDelete": "run a delete command",
@@ -6084,6 +6108,12 @@ const en: Table = {
   "set.mcp.editFailed": "Failed to read this MCP config",
   "set.mcp.remove": "Remove",
   "set.mcp.authorize": "Authorize",
+
+  "set.mcp.reconnect": "Reconnect",
+  "set.mcp.reconnecting": "Reconnecting…",
+  "set.mcp.reconnected": "Reconnected: {name}",
+  "set.mcp.reconnectFailed": "Reconnect failed: ",
+  "set.mcp.reconnectNeedsAuth": "{name} still needs authorization",
   "set.mcp.authorizing": "Authorizing…",
   "set.mcp.authorized": "Authorized",
   "set.mcp.authorizeFailed": "Authorization failed: ",

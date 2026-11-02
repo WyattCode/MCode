@@ -2374,7 +2374,7 @@ async function stepUnread(by: 1 | -1) {
   const at = app.currentID ? chats.indexOf(app.currentID) : -1
   for (let step = 1; step <= chats.length; step += 1) {
     const candidate = chats[(at + by * step + chats.length * step) % chats.length]
-    if (candidate && app.unread(candidate)) {
+    if (candidate && (app.unread(candidate) || confirmDock.needsConfirm(candidate))) {
       await app.open(candidate)
       return
     }
