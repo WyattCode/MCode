@@ -33,6 +33,8 @@ const phase = ref<"gen" | "commit" | "push" | null>(null)
 const error = ref("")
 const done = ref("")
 const pickerOpen = ref(false)
+// Closed / remounted mid-flight: in-flight commit/push must not paint this instance.
+let alive = true
 
 const busy = computed(() => action.value !== null)
 
@@ -138,8 +140,11 @@ function pushError(result: PushResult): string {
 async function runPush(which: Action): Promise<void> {
   action.value = which
   phase.value = "push"
+  const directory = props.directory
   try {
-    const result = await app.client?.request({ type: "git.push", directory: props.directory })
+    const result = await app.client?.request({ type: "git.push", directory })
+    // Mid-flight project switch must not push/paint another repo.
+    if (!alive || props.directory !== directory) return
     if (!result) {
       error.value = t("info.pushError.generic")
       return
@@ -147,6 +152,7 @@ async function runPush(which: Action): Promise<void> {
     if (result.ok) done.value = t("info.pushDone")
     else error.value = pushError(result)
   } catch (err) {
+    if (!alive || props.directory !== directory) return
     error.value = `${t("info.pushError.generic")}: ${err instanceof Error ? err.message : String(err)}`
   }
 }
@@ -157,6 +163,10 @@ async function commit(andPush: boolean) {
   error.value = ""
   done.value = ""
   action.value = which
+  const directory = props.directory
+  const sessionID = props.sessionId
+  const paths = state.value.changedPaths
+  const unstaged = includeUnstaged.value
   try {
     let text = message.value.trim()
     if (!text) {
@@ -164,9 +174,9 @@ async function commit(andPush: boolean) {
       try {
         const generated = await app.client?.request({
           type: "git.commitMessage",
-          directory: props.directory,
-          ...(props.sessionId ? { sessionID: props.sessionId } : {}),
-          paths: state.value.changedPaths,
+          directory,
+          ...(sessionID ? { sessionID } : {}),
+          paths,
         })
         text = generated?.message ?? ""
       } catch {
@@ -174,7 +184,7 @@ async function commit(andPush: boolean) {
       }
       // Gen failed or never arrived: refuse a silent "update" commit; surface the miss.
       if (!text) {
-        error.value = t("common.requestFailed")
+        if (alive && props.directory === directory) error.value = t("common.requestFailed")
         return
       }
     }
@@ -183,13 +193,15 @@ async function commit(andPush: boolean) {
     try {
       result = await app.client?.request({
         type: "git.commit",
-        directory: props.directory,
+        directory,
         message: text,
-        includeUnstaged: includeUnstaged.value,
+        includeUnstaged: unstaged,
       })
     } catch (err) {
       result = { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
+    // Mid-flight project switch must not commit/paint another repo.
+    if (!alive || props.directory !== directory) return
     if (!result) {
       error.value = t("info.commitError.generic")
       return
@@ -214,11 +226,12 @@ async function commit(andPush: boolean) {
 
 async function push() {
   if (!canPush.value) return
+  const directory = props.directory
   error.value = ""
   done.value = ""
   try {
     await runPush("push")
-    emit("mutated")
+    if (alive && props.directory === directory) emit("mutated")
   } finally {
     action.value = null
     phase.value = null
@@ -294,6 +307,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  alive = false
   observer?.disconnect()
   window.removeEventListener("mousedown", onPointerDown, true)
   window.removeEventListener("keydown", onKeydown, true)
