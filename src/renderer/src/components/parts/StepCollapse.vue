@@ -9,7 +9,7 @@ import { onBeforeUnmount, ref, watch } from "vue"
  * animates once the reader has toggled it; a body that starts open (or a group
  * that folds itself when the answer arrives) simply appears or goes.
  */
-const props = defineProps<{ show: boolean; animate?: boolean }>()
+const props = defineProps<{ show: boolean; animate?: boolean; id?: string }>()
 
 const mounted = ref(props.show)
 const opened = ref(props.show)
@@ -49,7 +49,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-if="mounted" class="hs-collapse" :class="{ open: opened, still: !animate }" data-step-collapse>
+  <div v-if="mounted" :id="id" class="hs-collapse" :class="{ open: opened, still: !animate }" data-step-collapse>
     <div class="hs-collapse-inner"><slot /></div>
   </div>
 </template>
