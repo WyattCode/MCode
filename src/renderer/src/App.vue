@@ -2254,7 +2254,7 @@ async function compactSession() {
   if (!id) return
   try {
     await app.compact(id)
-    notify(t("toast.compacted"))
+    if (app.currentID === id) notify(t("toast.compacted"))
   } catch (failure) {
     notifyFailure(t("toast.compactFailed"), reasonOf(failure))
   }
