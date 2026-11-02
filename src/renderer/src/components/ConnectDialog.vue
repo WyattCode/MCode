@@ -774,6 +774,11 @@ useEscapeLayer(dismiss)
   background: var(--surface-layer);
 }
 
+.field:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
 /* MiMo's key field: 40 tall at 14px with room at the end for the eye. */
 .secret {
   position: relative;

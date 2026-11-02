@@ -226,6 +226,11 @@ onMounted(() => {
   border-color: #151c1366;
 }
 
+.field:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
 .source {
   display: flex;
   flex-direction: column;
