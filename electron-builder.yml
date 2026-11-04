@@ -134,6 +134,7 @@ dmg:
   icon: build/icon.icns
 
 linux:
+  maintainer: WyattCode <WyattCode@users.noreply.github.com>
   target:
     - AppImage
   # electron-builder picks the size set out of this directory.
