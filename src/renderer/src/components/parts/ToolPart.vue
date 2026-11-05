@@ -217,7 +217,7 @@ const avatarSeed = computed(() => {
           <span
             v-else-if="showTitle"
             class="hs-title"
-            :class="{ 'hs-err': state === 'error', 'hs-struck': state === 'skipped' }"
+            :class="{ 'hs-struck': state === 'skipped' }"
             data-step-title
           ><code :class="{ openable }" dir="auto" :title="codeTip" @click="onTitleClick">{{ shortTitle }}</code></span>
           <!-- MiMo's hs-diffstat: what the step added and took away, zeroes left out. -->

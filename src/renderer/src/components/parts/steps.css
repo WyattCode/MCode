@@ -93,24 +93,22 @@
   align-items: center;
 }
 
+/*
+ * The title, not its code, cuts a long one, and the dots take the title's
+ * colour: so the colour is set here and the code inherits it. Set on the code
+ * alone, a failed step's red title drew red dots after a grey path.
+ */
 .hs-title {
-  display: flex;
   min-width: 0;
   overflow: hidden;
+  color: #3a3a38;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/*
- * A title is inline code, as every code span in MiMo's thread is drawn. A long
- * one is cut inside its own box, so the dots are the code's colour and sit in
- * the pill; cut by the title instead, they took the title's red on a failed step.
- */
+/* A title is inline code, as every code span in MiMo's thread is drawn. */
 .hs-title code {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
   padding: 1.5px 5px;
-  color: #3a3a38;
   font-family: var(--font-mono);
   font-size: calc(14px * var(--code-font-scale, 1));
   background: #f0f0f2;
@@ -677,7 +675,7 @@ html[data-motion="on"] .hs-collapse {
   user-select: text;
 }
 
-:root[data-theme="dark"] :is(.hs-cell, .hs-full-cmd, .hs-perm-cmd, .tc-out, .hs-title code) {
+:root[data-theme="dark"] :is(.hs-cell, .hs-full-cmd, .hs-perm-cmd, .tc-out, .hs-title) {
   color: #e6e6e6;
 }
 
@@ -694,7 +692,7 @@ html[data-motion="on"] .hs-collapse {
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) :is(.hs-cell, .hs-full-cmd, .hs-perm-cmd, .tc-out, .hs-title code) {
+  :root:not([data-theme="light"]) :is(.hs-cell, .hs-full-cmd, .hs-perm-cmd, .tc-out, .hs-title) {
     color: #e6e6e6;
   }
 
