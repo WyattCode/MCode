@@ -94,14 +94,21 @@
 }
 
 .hs-title {
+  display: flex;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* A title is inline code, as every code span in MiMo's thread is drawn. */
+/*
+ * A title is inline code, as every code span in MiMo's thread is drawn. A long
+ * one is cut inside its own box, so the dots are the code's colour and sit in
+ * the pill; cut by the title instead, they took the title's red on a failed step.
+ */
 .hs-title code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   padding: 1.5px 5px;
   color: #3a3a38;
   font-family: var(--font-mono);
