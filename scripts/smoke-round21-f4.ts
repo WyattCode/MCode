@@ -132,6 +132,8 @@ export async function roundTwentyOneLaneFourChecks(check: Check, section: (name:
     check("a failed search is MiMo's --color-del in both schemes", /\.sr-artifact-error \{[^}]*color: #e5484d/.test(overlay.style) && !/#d92e3c/.test(overlay.style) && !/\.sr-artifact-error \{\s*\n\s*color: #f17471/.test(overlay.style))
     // Item 22: MiMo's page ground under the card, and its exact scrim.
     check("the card is MiMo's --color-bg rather than the raised surface", /\.search-card \{[^}]*background: #fffefd/.test(overlay.style) && /:root\[data-theme="dark"\] \.search-card[\s\S]{0,80}background: #181818/.test(overlay.style))
+    // A text field matches :focus-visible whenever it has focus, and this one is focused as the card opens: a ring drew a blue box in it (the polish of 1.0.4, in a focused window only).
+    check("the search field carries no focus ring of its own", !/\.search-bar input:focus/.test(overlay.style) && /\.search-bar input \{[^}]*outline: none/.test(overlay.style))
     check("and the scrim is its own #00000057", /background: #00000057/.test(overlay.style))
     // Item 21: MiMo closes on the click.
     check("the overlay closes on the click, as MiMo's does, not on the press", /@click\.self="close"/.test(overlay.template) && !/@mousedown\.self/.test(overlay.template))
