@@ -50,7 +50,12 @@ async function edit(item: QueuedPrompt) {
 
 /** Clear every waiting message at once, when more than one is queued and nothing runs. */
 async function clearAll() {
-  for (const item of [...queued.value]) await app.removeQueued(props.sessionID, item.id)
+  const held = props.sessionID
+  for (const item of [...queued.value]) {
+    // Leaving mid-clear must not aim the rest of this conversation's ids at another one.
+    if (!alive || props.sessionID !== held) return
+    if (!(await app.removeQueued(held, item.id))) return
+  }
 }
 </script>
 
@@ -191,7 +196,7 @@ async function clearAll() {
   flex: none;
   margin-inline-start: auto;
   padding: 0 6px;
-  height: 20px;
+  min-height: calc(20px * var(--ui-font-scale, 1));
   color: var(--text-weak);
   background: transparent;
   border: 0;

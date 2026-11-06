@@ -312,8 +312,37 @@ function onTickActivate(index: number) {
   jump(index)
 }
 
+/*
+ * One Tab stop for the whole rail, not one per turn: the tick that was last
+ * focused, else the first one on screen, else the newest. The arrow keys move
+ * between ticks from there, so a long conversation never costs a keyboard
+ * reader hundreds of Tabs on the way to the composer.
+ */
+const ticksEl = ref<HTMLElement>()
+const lastFocused = ref(-1)
+const entryTick = computed(() => {
+  const last = stops.value.length - 1
+  if (lastFocused.value >= 0 && lastFocused.value <= last) return lastFocused.value
+  return active.value.size ? Math.min(...active.value) : last
+})
+
+function onTickKey(index: number, event: KeyboardEvent) {
+  const last = stops.value.length - 1
+  const to =
+    event.key === "ArrowUp" || event.key === "ArrowLeft" ? index - 1
+    : event.key === "ArrowDown" || event.key === "ArrowRight" ? index + 1
+    : event.key === "Home" ? 0
+    : event.key === "End" ? last
+    : undefined
+  if (to === undefined) return
+  event.preventDefault()
+  const next = Math.min(last, Math.max(0, to))
+  ticksEl.value?.querySelectorAll<HTMLElement>(".spine-tick")[next]?.focus()
+}
+
 /** Keyboard focus previews the turn the way the pointer does. */
 function onTickFocus(index: number, event: FocusEvent) {
+  lastFocused.value = index
   hovered.value = index
   const rect = (event.currentTarget as HTMLElement | null)?.getBoundingClientRect()
   if (rect) placeCard(rect.top + rect.height / 2)
@@ -325,6 +354,7 @@ function onTickBlur(event: FocusEvent) {
   const toTick = Boolean(next && typeof next.closest === "function" && next.closest(".spine-tick"))
   const toCard = Boolean(next && card.value?.contains(next))
   if (toTick || toCard) return
+  lastFocused.value = -1
   clear()
 }
 
@@ -370,7 +400,7 @@ onBeforeUnmount(() => {
       @pointerleave="onLeave"
       @click="onClick"
     >
-      <div class="spine-ticks" :style="panning ? { transform: `translateY(${-offset}px)` } : undefined">
+      <div ref="ticksEl" class="spine-ticks" :style="panning ? { transform: `translateY(${-offset}px)` } : undefined">
         <button
           v-for="(stop, index) in stops"
           :key="stop.id"
@@ -379,6 +409,8 @@ onBeforeUnmount(() => {
           :class="{ active: active.has(index), clicked: clicked === index }"
           :aria-label="tickLabel(index, stop)"
           :aria-current="active.has(index) ? 'true' : undefined"
+          :tabindex="index === entryTick ? 0 : -1"
+          @keydown="onTickKey(index, $event)"
           @click.stop="onTickActivate(index)"
           @focus="onTickFocus(index, $event)"
           @blur="onTickBlur"

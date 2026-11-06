@@ -29,7 +29,7 @@ import { knownFolder, listedProjects, projectsByRecency } from "@shared/projects
 import type { GroupContext } from "@shared/session-group"
 import { availableModels, fallbackModel, modelAvailable } from "@shared/model-fallback"
 import type { AutomationTask, ChatLink, CustomProvider } from "@shared/protocol"
-import { notice, notify, notifyFailure } from "../lib/toast"
+import { notice, notify, notifyFailure, setToastScope, noticesHere } from "../lib/toast"
 import { permissionTarget } from "../lib/confirm-queue"
 import { findModel } from "../lib/model"
 import { forgetRunEnded, noteRunEnded, noteToolWrites } from "../lib/ai-touch"
@@ -74,6 +74,8 @@ export const useApp = defineStore("app", () => {
 
   const sessions = ref<SessionInfo[]>([])
   const currentID = ref<string>()
+  // Notices raised by an action that outlives the screen it started on are held to that screen.
+  setToastScope(() => currentID.value)
   const messages = ref<Message[]>([])
   /** The conversation switched to whose messages have not arrived; MiMo shows 正在加载对话… meanwhile. */
   const loadingID = ref<string>()
@@ -380,12 +382,10 @@ export const useApp = defineStore("app", () => {
     const was = next.has(sessionID)
     if (was) next.delete(sessionID)
     else next.add(sessionID)
-    // Hold the toast to the place the person started from; leaving mid-await
-    // must not flash the pin outcome onto another chat.
-    const held = currentID.value
+    const say = noticesHere()
     try {
       await patchConfig({ pinnedTabs: [...next] })
-      if (currentID.value === held) notify(t(was ? "side.unpinnedToast" : "side.pinnedToast"))
+      say.notify(t(was ? "side.unpinnedToast" : "side.pinnedToast"))
     } catch {
       // patchConfig already toasts prefSaveFailed; leave pin state for retry.
       return
@@ -2117,7 +2117,7 @@ export const useApp = defineStore("app", () => {
    * that say their own failure.
    */
   async function patchConfig(patch: Partial<AppConfig>, options: { quiet?: boolean } = {}) {
-    const held = currentID.value
+    const say = noticesHere()
     let failure: unknown
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
@@ -2129,8 +2129,7 @@ export const useApp = defineStore("app", () => {
     }
     // A failure the backend named (a config file that no longer parses says where) is said under the title.
     const named = failure instanceof Error && "code" in failure ? failure.message : undefined
-    // Hold the toast to the place the person started from; leaving mid-await must not flash the save failure onto another chat.
-    if (!options.quiet && currentID.value === held) notifyFailure(t("toast.prefSaveFailed", { key: Object.keys(patch).join(", ") }), named)
+    if (!options.quiet) say.notifyFailure(t("toast.prefSaveFailed", { key: Object.keys(patch).join(", ") }), named)
     throw failure
   }
 
@@ -2184,27 +2183,22 @@ export const useApp = defineStore("app", () => {
    * it" is true here. `silent` says nothing at all.
    */
   async function addProject(directory: string, options: { used?: boolean; switched?: boolean; silent?: boolean } = {}) {
-    // Hold the toast to the place the person started from; leaving mid-await
-    // must not flash the add outcome onto another chat.
-    const held = currentID.value
+    const say = noticesHere()
     const result = await api().request({ type: "project.add", directory, ...(options.used ? { used: true } : {}) })
     config.value = result.config
     if (options.silent || (result.existed && !options.switched)) return
     const name = projectName(directory, result.config.projectNames)
     // MiMo: added is a success; already there goes through its danger notice.
-    if (currentID.value !== held) return
-    if (result.existed) notifyFailure(t("side.projectExists", { name }))
-    else notify(t("side.projectAdded", { name }), { level: "success" })
+    if (result.existed) say.notifyFailure(t("side.projectExists", { name }))
+    else say.notify(t("side.projectAdded", { name }), { level: "success" })
   }
 
   /** MiMo's remove: off the list, conversations kept. */
   async function removeProjects(directories: string[]) {
     if (!directories.length) return
-    // Hold the toast to the place the person started from; leaving mid-await
-    // must not flash the remove outcome onto another chat.
-    const held = currentID.value
+    const say = noticesHere()
     config.value = (await api().request({ type: "project.remove", directories })).config
-    if (currentID.value === held) notify(directories.length > 1 ? t("side.projectsRemoved", { count: directories.length }) : t("side.projectRemoved"), { level: "success" })
+    say.notify(directories.length > 1 ? t("side.projectsRemoved", { count: directories.length }) : t("side.projectRemoved"), { level: "success" })
   }
 
   /**

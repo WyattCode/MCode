@@ -1020,11 +1020,18 @@ async function backToSource(sourceID: string) {
   }
 }
 
-/** True while an edit or retry is deleting and resending, so a second press cannot race the first. */
-const resending = ref(false)
-/* Which conversation owns that in-flight resend, so another one is not shown as busy. */
-const resendingID = ref<string>()
-const resendingHere = computed(() => resending.value && resendingID.value === shownID.value)
+/*
+ * The conversations with an edit or retry deleting and resending, so a second press
+ * cannot race the first - and one conversation's resend never shows another as busy.
+ */
+const resendingIDs = ref<ReadonlySet<string>>(new Set())
+const resendingHere = computed(() => Boolean(shownID.value) && resendingIDs.value.has(shownID.value!))
+function markResending(id: string, on: boolean) {
+  const next = new Set(resendingIDs.value)
+  if (on) next.add(id)
+  else next.delete(id)
+  resendingIDs.value = next
+}
 
 /* Where a resend that was not accepted leaves its words: back in the composer. */
 const restoreDraft = useRestoreDraft()
@@ -1385,8 +1392,7 @@ async function sendEdit(turn: Turn) {
     notifyFailure(t("stream.editBusy"))
     return
   }
-  resending.value = true
-  resendingID.value = sessionID
+  markResending(sessionID, true)
   app.markReplacing(sessionID, true)
   try {
     await app.truncate(sessionID, turn.id)
@@ -1402,10 +1408,7 @@ async function sendEdit(turn: Turn) {
       notifyFailure(t("common.requestFailed"), failure instanceof Error ? failure.message : String(failure))
     }
   } finally {
-    if (resendingID.value === sessionID) {
-      resending.value = false
-      resendingID.value = undefined
-    }
+    markResending(sessionID, false)
     app.markReplacing(sessionID, false)
   }
 }
@@ -1521,8 +1524,7 @@ async function retry(turn: Turn) {
     notifyFailure(t("stream.retryUnavailable"))
     return
   }
-  resending.value = true
-  resendingID.value = sessionID
+  markResending(sessionID, true)
   app.markReplacing(sessionID, true)
   try {
     await app.truncate(sessionID, turn.id)
@@ -1535,10 +1537,7 @@ async function retry(turn: Turn) {
       notifyFailure(t("common.requestFailed"), failure instanceof Error ? failure.message : String(failure))
     }
   } finally {
-    if (resendingID.value === sessionID) {
-      resending.value = false
-      resendingID.value = undefined
-    }
+    markResending(sessionID, false)
     app.markReplacing(sessionID, false)
   }
 }

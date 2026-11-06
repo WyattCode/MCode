@@ -203,6 +203,31 @@ export function notifyFailure(title: string, body?: string | ToastOptions, actio
   return show(options.level ?? "danger", title, options)
 }
 
+/*
+ * Whose notice it is.
+ *
+ * A request started in one conversation can finish after the reader has gone to
+ * another, and its "copied" or "could not open" must not appear over a screen
+ * that had nothing to do with it. The app store says which conversation is on
+ * show; an action takes `noticesHere()` before its first await and speaks
+ * through it after, and a notice raised from somewhere else is dropped.
+ */
+let scope: () => string | undefined = () => undefined
+
+export function setToastScope(read: () => string | undefined): void {
+  scope = read
+}
+
+export function noticesHere() {
+  const held = scope()
+  const here = () => scope() === held
+  return {
+    here,
+    notify: (...args: Parameters<typeof notify>) => (here() ? notify(...args) : undefined),
+    notifyFailure: (...args: Parameters<typeof notifyFailure>) => (here() ? notifyFailure(...args) : undefined),
+  }
+}
+
 /** The id MiMo's zoom notice replaces itself under. */
 export const ZOOM_TOAST = "app-zoom"
 

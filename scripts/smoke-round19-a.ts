@@ -133,13 +133,13 @@ export async function roundNineteenLaneAChecks(check: Check, section: (name: str
       ["a batch restored", success(settings, 'if (restored) notify(t("toast.convosRestored", { n: restored })')],
       ["models refreshed", success(models, 'notify(t("set.models.refreshed")') && success(models, 'notify(t("provider.refreshed", { n: found })')],
       ["provider saved", /if \(editing\) notice\.success\(t\("model\.changesSaved"\)\)/.test(form)],
-      ["project added", success(store, 'else notify(t("side.projectAdded", { name })')],
+      ["project added", success(store, 'else say.notify(t("side.projectAdded", { name })')],
       ["projects removed", success(store, 'notify(directories.length > 1 ? t("side.projectsRemoved", { count: directories.length }) : t("side.projectRemoved")')],
       ["update ready", /notify\(t\("update\.readyToast"\), \{ (id: checking, )?level: "success" \}\)/.test(app)],
     ]
     for (const [name, ok] of sites) check(`success: ${name}`, ok)
     check("a batch of one is counted too, as MiMo's unarchiveMany", !/ids\.length === 1\) notify\(t\("toast\.convoRestored"\)/.test(settings))
-    check("danger: the project is already there", /if \(result\.existed\) notifyFailure\(t\("side\.projectExists", \{ name \}\)\)/.test(store))
+    check("danger: the project is already there", /if \(result\.existed\) say\.notifyFailure\(t\("side\.projectExists", \{ name \}\)\)/.test(store))
     check("danger: the project name is taken", /notifyFailure\(t\("toast\.projectNameTaken", \{ name \}\)\)/.test(app) && !/projectNameTaken", \{ name \}\), \{ level: "warning" \}/.test(app))
   }
 

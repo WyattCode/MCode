@@ -2803,13 +2803,21 @@ async function chooseAccess(next: Access) {
   await applyAccess(next)
 }
 
+const applyingFull = ref(false)
+
 async function confirmFull() {
+  if (applyingFull.value) return
+  applyingFull.value = true
   const held = pendingFullFor.value
   // One apply to the conversation that opened the sheet; close only on success (r130).
   // Clearing pendingFullFor only after success keeps retry on the same held id.
-  if (await applyAccess("full", held)) {
-    pendingFullFor.value = undefined
-    confirmingFull.value = false
+  try {
+    if (await applyAccess("full", held)) {
+      pendingFullFor.value = undefined
+      confirmingFull.value = false
+    }
+  } finally {
+    applyingFull.value = false
   }
 }
 
@@ -4246,7 +4254,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 
     <Teleport to="body">
       <!-- DL19: MiMo's own full-access confirm. -->
-      <FullAccessDialog v-if="confirmingFull" @confirm="confirmFull" @close="pendingFullFor = undefined; confirmingFull = false" />
+      <FullAccessDialog v-if="confirmingFull" :busy="applyingFull" @confirm="confirmFull" @close="pendingFullFor = undefined; confirmingFull = false" />
     </Teleport>
   </div>
 </template>
