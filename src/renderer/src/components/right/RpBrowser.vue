@@ -551,11 +551,6 @@ defineExpose({
   background: #f1f0ec;
 }
 
-.rb-url:focus-visible {
-  outline: 2px solid var(--interactive);
-  outline-offset: 2px;
-}
-
 /* MiMo's more menu: 42 below the bar's top, at its end, at least 230 wide. */
 .rb-menu {
   position: absolute;
