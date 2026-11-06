@@ -48,6 +48,15 @@ export async function roundTwentyVisualOneChecks(check: Check, section: (name: s
     check("V1-2: no row keeps the old 24 / 12 breaks", !/margin-top: 24px;/.test(stream) && !/\.part \+ \.part\.step/.test(stream))
     check("V1-3: a step row's line is 22.4", /line-height: calc\(22\.4px/.test(rule(steps, ".hstep")) && /line-height: calc\(22\.4px/.test(rule(steps, ".hs-h")))
     check("V1-4: a group's open body sits 2 under its summary", /margin-top: 2px;/.test(rule(steps, ".hs-group > .hs-collapse")))
+    // A long title is cut inside its code, so the pill keeps its corners; the colour is the title's and the code inherits it, so the dots match.
+    const title = rule(steps, ".hs-title")
+    const code = rule(steps, ".hs-title code")
+    const toolPart = await read("src/renderer/src/components/parts/ToolPart.vue")
+    check("V1-4b: the title is a flex row holding the colour, and does not cut the text itself", /display: flex;/.test(title) && /color: #3a3a38;/.test(title) && !/text-overflow/.test(title), title)
+    check("V1-4b: the code shrinks, keeps its padding, and sets no colour of its own", /display: flex;/.test(code) && /min-width: 0;/.test(code) && /padding: 1\.5px 5px;/.test(code) && !/\bcolor:/.test(code), code)
+    check("V1-4b: its line leaves the pill the height it had inline, so no row grows", /line-height: 1\.25;/.test(code), code)
+    check("V1-4b: the head is cut with a dot, the tail keeps the file name", /text-overflow: ellipsis;/.test(rule(steps, ".hs-head")) && /flex: none;/.test(rule(steps, ".hs-tail")))
+    check("V1-4b: a failed step reddens its verb, not its title", /'hs-err': state === 'error'[^}]*\}" data-step-verb/.test(toolPart) && !/class="hs-title"\s*:class="\{[^}]*hs-err/.test(toolPart))
   }
 
   section("Round 20 V1: the working indicator")

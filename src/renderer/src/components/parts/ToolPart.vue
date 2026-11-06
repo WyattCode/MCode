@@ -20,10 +20,13 @@ import {
   ROW_TITLE_MAX,
   bashOf,
   cleanOutput,
+  cutTitle,
   isUnifiedDiff,
   noOutput,
   opensPath,
+  pathTitleParts,
   reducedTitle,
+  showsPath,
   stepImages,
   stepState,
   stepTitle,
@@ -88,11 +91,15 @@ const title = computed(() => stepTitle(shown.value))
 const webLike = computed(() => props.part.name === "webfetch" || props.part.name === "websearch")
 const runs = computed(() => props.part.name === "bash" || props.part.name === "exec_command")
 
-/** The row's own title: a JSON title reduced to its subject, a command to its first line. */
-const shortTitle = computed(() => {
+/**
+ * The row's own title: a JSON title reduced to its subject, a command to its
+ * first line. A path is in two parts, so that a row too narrow for it cuts the
+ * folders and keeps the file name.
+ */
+const titleParts = computed(() => {
   const reduced = reducedTitle(title.value)
   const line = runs.value ? (reduced.split("\n", 1)[0] ?? "") : reduced
-  return line.slice(0, props.titleMax)
+  return showsPath(props.part.name) ? pathTitleParts(line, props.titleMax) : { head: cutTitle(line, props.titleMax), tail: "" }
 })
 const showTitle = computed(() => Boolean(title.value) && props.part.name !== "exec_command" && !webLike.value)
 
@@ -223,7 +230,7 @@ const avatarSeed = computed(() => {
             class="hs-title"
             :class="{ 'hs-struck': state === 'skipped' }"
             data-step-title
-          ><code :class="{ openable }" dir="auto" :title="codeTip" @click="onTitleClick">{{ shortTitle }}</code></span>
+          ><code :class="{ openable }" :dir="titleParts.tail ? 'ltr' : 'auto'" :title="codeTip" @click="onTitleClick"><span class="hs-head">{{ titleParts.head }}</span><span v-if="titleParts.tail" class="hs-tail">{{ titleParts.tail }}</span></code></span>
           <!-- MiMo's hs-diffstat: what the step added and took away, zeroes left out. -->
           <span
             v-if="diffstat.add || diffstat.del"

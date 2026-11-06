@@ -10,7 +10,7 @@ import type { AssistantPart, Message, ToolPart, UserMessage } from "../src/share
 import { cleanLiveReply, cleanReply, isDotsOnly, saysSomething } from "../src/shared/reply-clean"
 import { opensTurn, turnOpeners } from "../src/shared/steer"
 import { buildRows, stagesOf } from "../src/renderer/src/lib/step-rows"
-import { noOutput, stepImages, toolIcon } from "../src/renderer/src/lib/tool-meta"
+import { cutTitle, noOutput, pathTitleParts, showsPath, stepImages, toolIcon } from "../src/renderer/src/lib/tool-meta"
 import { language, tn } from "../src/renderer/src/lib/i18n"
 import { redactText, redactValue, validCardNumber, validChineseID } from "../src/shared/display-redact"
 
@@ -147,5 +147,24 @@ export async function roundTenStepsChecks(check: Check, section: (name: string) 
     check("none is its own form", zero === "لم تتم قراءة أي ملف", zero)
     check("three keeps the plural", three === "تمت قراءة 3 ملفات", three)
     check("other languages keep their plural", english.includes("2"), english)
+  }
+
+  section("Round 10 (K10-16): a long path keeps its file name")
+  {
+    const deep = "C:\\Users\\Wyatt\\AppData\\Roaming\\mcode\\memory\\sessions\\ses_01a1abf424420000\\notes.md"
+    check("the folders are the head and the separator with the file name the tail", JSON.stringify(pathTitleParts(deep, 120)) === JSON.stringify({ head: "C:\\Users\\Wyatt\\AppData\\Roaming\\mcode\\memory\\sessions\\ses_01a1abf424420000", tail: "\\notes.md" }), pathTitleParts(deep, 120))
+    const posix = pathTitleParts("/home/w/src/app/main.ts", 120)
+    check("a slash path splits the same way", posix.head === "/home/w/src/app" && posix.tail === "/main.ts", posix)
+    const cut = pathTitleParts(deep, 60)
+    check("past the cap only the folders are cut, with a dot where", cut.tail === "\\notes.md" && cut.head.endsWith("…") && cut.head.length + cut.tail.length === 60, cut)
+    check("a bare file name is all head", JSON.stringify(pathTitleParts("main.ts", 90)) === JSON.stringify({ head: "main.ts", tail: "" }))
+    check("a name at the root has nothing to cut", pathTitleParts("/main.ts", 90).tail === "")
+    const long = pathTitleParts(`C:\\x\\${"n".repeat(100)}.md`, 90)
+    check("a file name that fills the row alone is cut at its end", long.tail === "" && long.head.length === 90 && long.head.endsWith("…"), long)
+    const pair = "😀".repeat(50)
+    const sliced = cutTitle(pair, 11)
+    check("a cut never splits a surrogate pair", sliced === `${"😀".repeat(5)}…` && !/[\ud800-\udbff](?![\udc00-\udfff])/.test(sliced), sliced)
+    check("a title within the cap is untouched", cutTitle("abc", 3) === "abc")
+    check("only path tools are drawn as paths", showsPath("read") && showsPath("edit") && showsPath("write") && showsPath("list") && !showsPath("grep") && !showsPath("bash"))
   }
 }
