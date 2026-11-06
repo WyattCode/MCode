@@ -402,7 +402,7 @@ defineExpose({ close })
   overflow: hidden;
   background: #fffefd;
   border: 1px solid var(--border-weak);
-  border-radius: 14px;
+  border-radius: 19px;
   box-shadow: 0 18px 52px rgb(0 0 0 / 0.2);
   animation: search-card-in 0.18s cubic-bezier(0.2, 0.7, 0.2, 1);
 }
