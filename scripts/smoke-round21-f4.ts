@@ -65,6 +65,8 @@ export async function roundTwentyOneLaneFourChecks(check: Check, section: (name:
     check("nothing is drawn behind the mark - no SVG, no image, no painted background (user decision 2026-09-24)", !/<svg/.test(hero.template) && !/<img/.test(hero.template) && !/\bdeco\b/.test(hero.style) && !/background(-image)?:/.test(rule(hero.style, ".hero")), hero.template.slice(0, 400))
     // The home screen carries no "press Ctrl+K" line (the user asked for it gone, 2026-11-07): the greeting, the box and the project strip are all of it.
     check("the home screen has no Ctrl+K line, in the markup, the sheet or the tables", !/shortcut-hint|shortcutHint/.test(hero.template + hero.style) && !/"home\.shortcutHint"/.test(await read("src/renderer/src/lib/i18n.ts")))
+    // The window can be 720 wide with the side column open (WINDOW_MIN): a grid column left to size itself took the block's 527px and pushed the tray, send button and all, out of the window.
+    check("the home grid's one column may be narrower than the hero block", /grid-template-columns:\s*minmax\(0,\s*1fr\)/.test(rule(hero.style, ".home-hero")), rule(hero.style, ".home-hero"))
     // Item 9: the tray is an opaque plate, not a wash of the sunken surface.
     const tray = rule(hero.style, ".tray")
     check("the tray takes MiMo's --color-composer-tray-bg (#f8f7f5) rather than a 50% wash", /background:\s*#f8f7f5/.test(tray) && !/color-mix/.test(tray), tray)

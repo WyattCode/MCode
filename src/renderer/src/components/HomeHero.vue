@@ -370,6 +370,13 @@ defineExpose({ focus: () => box.value?.focus() })
   position: relative;
   display: grid;
   flex: 1;
+  /*
+   * One column that can be narrower than its content. Left to size itself, the
+   * column took the hero block's 527px, so in a window at its 720px minimum with
+   * the side column open the tray ran 90px past the right edge and the send
+   * button stood outside the window.
+   */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr) auto minmax(0, 1fr);
   justify-items: center;
   min-height: 0;
