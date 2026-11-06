@@ -440,9 +440,9 @@ defineExpose({ focus: () => box.value?.focus() })
   -webkit-app-region: no-drag;
 }
 
-/* A quiet hint under the greeting: the chord that opens search from here. */
 /*
- * Under the tray, in the flow. It was placed at 78% of the hero block, whose
+ * A quiet hint: the chord that opens search from here. It stands under the
+ * tray, in the flow. It was placed at 78% of the hero block, whose
  * last 48px lie under the tray, so the line was cut by the box's top edge, and
  * more of it the larger the text; nothing in a fixed-height block can follow
  * the font size, a line after the tray does.
