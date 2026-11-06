@@ -4129,7 +4129,6 @@ onBeforeUnmount(() => {
           @connect="connectOpen = true"
           @shell="runShellCommand"
           @terminal="terminalOpen = true"
-          @search="searchOpen = true"
         />
 
         <template v-else>

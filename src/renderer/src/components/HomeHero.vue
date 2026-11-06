@@ -5,7 +5,6 @@ import { t } from "../lib/i18n"
 import { pickProjectFolder } from "../lib/native-pick"
 import { notify, notifyFailure } from "../lib/toast"
 import { reducedMotion } from "../lib/modal"
-import { shownChord } from "../lib/keys"
 import ProjectPicker from "./ProjectPicker.vue"
 import type { PickerProject } from "./ProjectPicker.vue"
 import NewProjectDialog from "./NewProjectDialog.vue"
@@ -41,7 +40,6 @@ const emit = defineEmits<{
   shell: [command: string]
   /** The project folder picked here, or nothing for a task without one. */
   directory: [directory?: string]
-  search: []
 }>()
 
 const app = useApp()
@@ -356,8 +354,6 @@ defineExpose({ focus: () => box.value?.focus() })
         </div>
       </div>
 
-      <button type="button" class="shortcut-hint" data-home-search @click="emit('search')">{{ t("home.shortcutHint", { chord: shownChord("Ctrl+K") }) }}</button>
-
       <NewProjectDialog v-if="naming" :value="t('home.blankDefault')" @close="naming = false" @submit="createBlank" />
     </div>
   </div>
@@ -438,28 +434,6 @@ defineExpose({ focus: () => box.value?.focus() })
   cursor: pointer;
   transform-origin: 50% 100%;
   -webkit-app-region: no-drag;
-}
-
-/*
- * A quiet hint: the chord that opens search from here. It stands under the
- * tray, in the flow. It was placed at 78% of the hero block, whose
- * last 48px lie under the tray, so the line was cut by the box's top edge, and
- * more of it the larger the text; nothing in a fixed-height block can follow
- * the font size, a line after the tray does.
- */
-.shortcut-hint {
-  flex: none;
-  margin-top: 12px;
-  padding: 2px 6px;
-  color: var(--text-weak);
-  background: transparent;
-  border: 0;
-  cursor: pointer;
-  font-size: calc(12px * var(--ui-font-scale, 1));
-}
-
-.shortcut-hint:hover {
-  color: var(--text-strong);
 }
 
 /* 18/600 at 0.4px on MiMo's greeting, absolutely placed at 65.5% - 195.8px down the block. */
