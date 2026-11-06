@@ -713,11 +713,6 @@ const Actions: FunctionalComponent = () => {
   resize: none;
 }
 
-.q-field:focus-visible {
-  outline: 2px solid var(--interactive);
-  outline-offset: 2px;
-}
-
 .q-field::placeholder {
   color: #919191;
 }

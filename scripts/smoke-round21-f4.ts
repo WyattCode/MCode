@@ -134,6 +134,18 @@ export async function roundTwentyOneLaneFourChecks(check: Check, section: (name:
     check("the card is MiMo's --color-bg rather than the raised surface", /\.search-card \{[^}]*background: #fffefd/.test(overlay.style) && /:root\[data-theme="dark"\] \.search-card[\s\S]{0,80}background: #181818/.test(overlay.style))
     // A text field matches :focus-visible whenever it has focus, and this one is focused as the card opens: a ring drew a blue box in it (the polish of 1.0.4, in a focused window only).
     check("the search field carries no focus ring of its own", !/\.search-bar input:focus/.test(overlay.style) && /\.search-bar input \{[^}]*outline: none/.test(overlay.style))
+    // The same holds for every other text field: a click into one drew a blue box. The keyboard's ring is base.css's, gated on a Tab press.
+    const components = path.join(root, "src/renderer/src/components")
+    const sheets = (await fs.readdir(components, { recursive: true })).filter((name) => name.endsWith(".vue"))
+    const ringed: string[] = []
+    for (const name of sheets) {
+      const text = await fs.readFile(path.join(components, name), "utf8")
+      for (const rule of text.matchAll(/([^{}]+?):focus-visible\s*\{([^}]*)\}/g)) {
+        const field = /(^|[\s,>])(input|textarea)\b|(^|\s)\.(field|needle|q-field|fv-editor|goal-edit|search-in|ann-edit-input|reason-input|field-in|fv-find-input|keys-search-input|mcp-input|env-input|nav-search|ci-input|lang-search-input)\b/.test(rule[1].split(",").pop() ?? "")
+        if (field && /outline:\s*[^n;]/.test(rule[2])) ringed.push(`${name}: ${rule[1].trim()}`)
+      }
+    }
+    check("no text field draws its own :focus-visible ring, a click into it would show a box", ringed.length === 0, ringed.join("\n"))
     check("and the scrim is its own #00000057", /background: #00000057/.test(overlay.style))
     // Item 21: MiMo closes on the click.
     check("the overlay closes on the click, as MiMo's does, not on the press", /@click\.self="close"/.test(overlay.template) && !/@mousedown\.self/.test(overlay.template))

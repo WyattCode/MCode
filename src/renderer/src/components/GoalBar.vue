@@ -364,11 +364,6 @@ async function leave() {
   border-color: var(--interactive);
 }
 
-.goal-edit:focus-visible {
-  outline: 2px solid var(--interactive);
-  outline-offset: 2px;
-}
-
 .goal-act {
   display: grid;
   flex: none;

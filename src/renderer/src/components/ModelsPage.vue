@@ -890,9 +890,4 @@ h2 {
   outline: 2px solid var(--interactive);
   outline-offset: 1px;
 }
-
-.field-in:focus-visible {
-  outline: 2px solid var(--interactive);
-  outline-offset: 1px;
-}
 </style>

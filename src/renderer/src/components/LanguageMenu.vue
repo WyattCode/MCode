@@ -312,11 +312,6 @@ onBeforeUnmount(() => {
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
-.lang-pop .lang-search-input:focus-visible {
-  outline: 2px solid var(--interactive);
-  outline-offset: 2px;
-}
-
 .lang-pop .lang-list {
   display: flex;
   flex: 1;
