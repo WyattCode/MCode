@@ -191,7 +191,7 @@ async function clearAll() {
   flex: none;
   margin-inline-start: auto;
   padding: 0 6px;
-  height: 20px;
+  height: calc(20px * var(--ui-font-scale, 1));
   color: var(--text-weak);
   background: transparent;
   border: 0;

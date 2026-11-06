@@ -5957,7 +5957,6 @@ h3 {
 .usage-link:focus-visible {
   outline: 2px solid var(--interactive);
   outline-offset: 2px;
-  border-radius: 2px;
 }
 
 /* MiMo's text-blue, shared by 用法详情 and 了解更多. */
@@ -6152,7 +6151,7 @@ h3 {
   display: block;
   margin: -6px 0 10px;
   padding-inline-start: 2px;
-  color: var(--state-fg-warning, var(--text-weak));
+  color: var(--text-weak);
   font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 1.3;
 }

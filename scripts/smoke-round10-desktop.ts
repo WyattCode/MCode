@@ -174,12 +174,13 @@ export async function roundTenDesktopChecks(check: Check, section: (name: string
       delivered.noteDeliveryUpdate(assistant("hidden", "a-h", [locate("l1", "running")]))
       delivered.noteDeliveryUpdate(assistant("hidden", "a-h", [locate("l1", "completed")]))
       await settle()
-      check("a PDF locate in a conversation not on show marks the passage at once", pdfLocate.value?.snippet === "the passage" && pdfLocate.value.page === 4, pdfLocate.value)
-      check("but holds the PDF until the conversation is shown", !rp.tabs.some((tab) => tab.name === "paper.pdf"), tabs())
+      // 6b81dd96: the locate is global and every viewer of that path matches it, so one for a conversation off screen could pulse another's open copy.
+      check("a PDF locate in a conversation not on show marks nothing yet", !pdfLocate.value, pdfLocate.value)
+      check("and holds the PDF until the conversation is shown", !rp.tabs.some((tab) => tab.name === "paper.pdf"), tabs())
       shown.add("hidden")
       delivered.deliveryShown("hidden")
       await settle()
-      check("and opens it then", rp.tabs.some((tab) => tab.name === "paper.pdf"), tabs())
+      check("then opens it, with the passage and page that were held", rp.tabs.some((tab) => tab.name === "paper.pdf") && pdfLocate.value?.snippet === "the passage" && pdfLocate.value.page === 4, pdfLocate.value)
       check("what opens is decided by kind: a picture or a sound nothing, an address outside, the rest in the panel", [
         delivered.autoOpenKind({ kind: "file", path: "a.PNG", name: "a.PNG", size: 1 }),
         delivered.autoOpenKind({ kind: "file", path: "a.mp3", name: "a.mp3", size: 1 }),

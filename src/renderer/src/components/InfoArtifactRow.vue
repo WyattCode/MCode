@@ -60,7 +60,6 @@ const emit = defineEmits<{ open: [artifact: SessionArtifact] }>()
 .artifact:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: 7px;
 }
 
 .kind {

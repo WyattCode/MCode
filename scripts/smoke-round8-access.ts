@@ -66,7 +66,7 @@ export async function roundEightAccessChecks(check: Check, section: (name: strin
     }
     check("every clipboard write in the window catches a refusal", unguarded.length === 0, unguarded)
     const stream = read("components/MessageStream.vue")
-    check("a reply's copy says 复制失败 when the clipboard refuses", /async function copyToClipboard[\s\S]{0,200}catch \{\s*notifyFailure\(t\("code\.copyFailed"\)\)/.test(stream))
+    check("a reply's copy says 复制失败 when the clipboard refuses", /async function copyToClipboard[\s\S]{0,400}catch \{\s*(?:if \(app\.currentID !== held\) return\s*)?notifyFailure\(t\("code\.copyFailed"\)\)/.test(stream))
   }
 
   section("round 8 access: a keyboard focus ring (A1)")
@@ -97,9 +97,9 @@ export async function roundEightAccessChecks(check: Check, section: (name: strin
   section("round 8 access: the review and the right panel from the keyboard (A4, A5)")
   {
     const diff = read("components/parts/DiffBody.vue")
-    check("a file in the review's list is a Tab stop that Enter and Space open", /class="db-list-line"\s+role="button"\s+tabindex="0"[\s\S]{0,80}@keydown\.enter\.space\.self\.prevent="reveal\(index, true\)"/.test(diff))
+    check("a file in the review's list is a Tab stop that Enter and Space open", /class="db-list-line"\s+role="button"\s+tabindex="0"[\s\S]{0,220}@keydown\.enter\.space\.self\.prevent="reveal\(index, true\)"/.test(diff))
     check("Enter on a diff row inside a permission card does not also answer the card", /function onDockKey\(event: KeyboardEvent\) \{\s+\/\/[^\n]*\n\s+if \(event\.defaultPrevented\) return/.test(read("components/QuestionDock.vue")))
-    check("a file header is a Tab stop that folds, and says whether it is open", /class="db-head"\s+role="button"\s+tabindex="0"\s+:aria-expanded="!collapsed\.has\(file\.name\)"[\s\S]{0,80}@keydown\.enter\.space\.self\.prevent="toggle/.test(diff))
+    check("a file header is a Tab stop that folds, and says whether it is open", /class="db-head"\s+role="button"\s+tabindex="0"\s+:aria-expanded="!collapsed\.has\(file\.name\)"[\s\S]{0,260}@keydown\.enter\.space\.self\.prevent="toggle/.test(diff))
     const panel = read("components/RightPanel.vue")
     check("the shown right-panel tab is the strip's Tab stop", /:tabindex="tab\.id === rp\.active \? 0 : -1"/.test(panel))
     const drawer = read("components/TerminalDrawer.vue")
@@ -156,7 +156,7 @@ export async function roundEightAccessChecks(check: Check, section: (name: strin
     check("each turn has a heading that is never drawn, found or selected (A13)", /<h2 v-if="!latest" class="a11y-only" data-turn-heading data-find-skip data-selectable="none">\{\{ t\("a11y\.turnHeading"/.test(read("components/MessageStream.vue")))
     const toasts = read("components/Toasts.vue")
     // R21-F4-47: the ones past the third are kept but hidden, so the class and the Tab stop are bound rather than written out.
-    check("each notice is an alert and a Tab stop, as MiMo's are (A14)", /class="notice"[\s\S]*?role="alert"\s+:tabindex="at >= LIMIT \? -1 : 0"\s+@mousedown="keepFocus"/.test(toasts))
+    check("each notice is an alert and a Tab stop, as MiMo's are (A14)", /class="notice"[\s\S]*?role="alert"\s+:tabindex="shownIds\.has\(toast\.id\) \? 0 : -1"\s+@mousedown="keepFocus"/.test(toasts))
     check("the column of notices stays a polite status region (A14)", /class="toasts"\s+role="status"\s+aria-live="polite"/.test(toasts))
     check("high contrast outlines the open conversation and the send button, and rings in Highlight (A12)",
       /@media \(forced-colors: active\) \{\s+\.row\.on \{\s+outline: 2px solid Highlight/.test(read("components/Sidebar.vue")) &&

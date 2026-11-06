@@ -98,7 +98,6 @@ function toggle() {
 .live-edit-pill:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: 12px;
 }
 
 .live-edit-pill-text {

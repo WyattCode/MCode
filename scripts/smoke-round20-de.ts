@@ -99,7 +99,8 @@ export async function roundTwentyDeChecks(check: Check, section: (name: string) 
       check("D-9: a shell call or a failed call adds nothing", !patch.includes("x.sh") && !patch.includes("bad.ipynb"), patch)
     }
     const card = await read("src/renderer/src/components/EditedFilesCard.vue")
-    check("D-9: the card uses it, with no list of its own", /patch = recordedPatch\(props\.parts\)/.test(card) && !/\["edit", "write"\]/.test(card))
+    // 94a85923 hands it the parts the card held when the review began (heldParts), not props.parts, which a switched conversation replaces mid-await.
+    check("D-9: the card uses it, with no list of its own", /patch = recordedPatch\(heldParts\)/.test(card) && !/recordedPatch\(props\.parts\)/.test(card) && !/\["edit", "write"\]/.test(card))
   }
 
   section("Round 20: D-3 the folded column's preview stays while a menu or card opened from it is up")

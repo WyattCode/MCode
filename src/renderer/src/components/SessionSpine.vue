@@ -472,7 +472,6 @@ onBeforeUnmount(() => {
 .spine-tick:focus-visible {
   outline: 2px solid var(--interactive);
   outline-offset: 2px;
-  border-radius: 4px;
 }
 
 .spine-tick i {

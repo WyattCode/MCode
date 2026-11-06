@@ -203,6 +203,5 @@ onBeforeUnmount(() => document.removeEventListener("pointerdown", outside, true)
 .ca-stash:focus-visible {
   outline: 2px solid var(--interactive);
   outline-offset: 1px;
-  border-radius: 8px;
 }
 </style>

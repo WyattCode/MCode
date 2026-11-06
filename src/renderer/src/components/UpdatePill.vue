@@ -287,7 +287,7 @@ onBeforeUnmount(() => {
 }
 
 .update-pill:focus-visible {
-  outline: 2px solid var(--focus-ring, #0077fa);
+  outline: 2px solid var(--interactive);
   outline-offset: 2px;
 }
 

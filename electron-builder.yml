@@ -134,7 +134,8 @@ dmg:
   icon: build/icon.icns
 
 linux:
-  maintainer: WyattCode <WyattCode@users.noreply.github.com>
+  # A .deb or .rpm needs one; it is set here and not in package.json's author, which is packed into the app. Nothing here names the repository.
+  maintainer: MCode <noreply@mcode.invalid>
   target:
     - AppImage
   # electron-builder picks the size set out of this directory.

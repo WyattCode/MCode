@@ -739,6 +739,10 @@ export async function roundNineWindowsChecks(check: Check, section: (name: strin
       "the package writes app-update.yml and latest.yml for a placeholder that can never resolve, and never publishes; the private repository is named nowhere",
       /^publish:\n {2}provider: generic\n {2}url: https:\/\/updates\.invalid\/mcode\/$/m.test(builder) && !/provider: github|WyattCode/.test(builder) && /"--publish", "never"/.test(packageScript),
     )
+    // package.json is packed into the app, so what it holds ships; 1.0.6's author email named the repository's owner.
+    const manifest = await fs.readFile(path.join(root, "package.json"), "utf8")
+    check("the manifest packed into the app does not name the private repository either", !/WyattCode/.test(manifest), manifest.slice(0, 400))
+    check("a .deb or .rpm still gets a maintainer, from the builder file and not the manifest", /^linux:\n(?: {2}.*\n)*? {2}maintainer: MCode <[^>\s]+@[^>\s]+>$/m.test(builder), builder.slice(builder.indexOf("\nlinux:"), builder.indexOf("\nlinux:") + 200))
   }
 
   section("Round 9 (Windows): a one-click, per-user installer whose uninstall cleans up after MCode")

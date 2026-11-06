@@ -72,9 +72,10 @@ export async function roundTwentyVisualFiveChecks(check: Check, section: (name: 
   {
     const foot = element(template, '<div class="foot">', "div")
     const script = side.slice(0, side.indexOf("<template>"))
-    check("one row, then the update capsule beside it", (foot.match(/<button\b/g) ?? []).length === 1 && /data-account-menu/.test(foot) && /<\/button>\s*<UpdatePill \/>\s*<\/div>$/.test(foot), foot.length)
+    // #186 added a gear that opens Settings in one click, beside the row (the review found settings buried behind "this device"): two buttons, then the capsule.
+    check("one row and the settings gear, then the update capsule beside them", (foot.match(/<button\b/g) ?? []).length === 2 && /data-account-menu/.test(foot) && /data-settings-open/.test(foot) && /<\/button>\s*(?:<!--[\s\S]*?-->\s*)?<UpdatePill \/>\s*<\/div>$/.test(foot), foot.length)
     check("the row is a 46px cell with a 28px avatar, then the label", /<span class="account-cell">\s*<span class="avatar" aria-hidden="true">\s*<svg width="15" height="15"/.test(foot) && /<span class="account-label">\{\{ t\("side\.thisDevice"\) \}\}<\/span>/.test(foot))
-    check("the row itself opens the menu, as a menu", /class="account"\s*data-account-menu\s*:aria-expanded="Boolean\(footMenu\)"\s*aria-haspopup="menu"\s*@click="openFootMenu"/.test(foot))
+    check("the row itself opens the menu, as a menu", /class="account"\s*data-account-menu\s*:aria-expanded="Boolean\(footMenu\)"\s*aria-haspopup="menu"\s*(?:v-tip="[^"\n]*"\s*)?@click="openFootMenu"/.test(foot))
     check("the 深色 / theme-cycle row and its code are gone", !/cycleTheme|themeLabel|SCHEMES|class="row theme"/.test(side))
     check("the menu keeps what MCode can honour: 设置 with its shortcut, MiMo's 248 wide at most (round 41: never past the column)", /key: "settings",[\s\S]{0,80}hint: "Ctrl\+,"/.test(script) && /FOOT_MENU_WIDTH = 248/.test(script) && /:items="footMenuItems"\s*above\s*:end="footMenu\.end"\s*:min-width="footMenu\.width"/.test(template))
     const menu = code(await read("src/renderer/src/components/ContextMenu.vue"))
@@ -107,9 +108,10 @@ export async function roundTwentyVisualFiveChecks(check: Check, section: (name: 
   section("Round 20 (V5-4): 新建任务 is a speech bubble with a plus, as MiMo draws it")
   {
     const bubble = /<path d="M20\.3 15\.4A9 9 0 1 0 16\.5 19\.8L21 21z" \/>\s*<path d="M12 9\.5v5M9\.5 12h5" \/>/
-    const row = element(template, `<button class="row" data-new-task`, "button")
+    // Both buttons carry type="button" since 65362da1.
+    const row = element(template, `<button type="button" class="row" data-new-task`, "button")
     check("the column's row: a 24-grid bubble and plus on a 2 line at 18px", /<svg class="row-ico" width="18" height="18" viewBox="0 0 24 24"[^>]*stroke-width="2"/.test(row) && bubble.test(row), row.length)
-    const folded = element(template, `<button class="ico" data-collapsed-new-task`, "button")
+    const folded = element(template, `<button type="button" class="ico" data-collapsed-new-task`, "button")
     check("the folded control: the same glyph on MiMo's 1.75 line", /stroke-width="1\.75"/.test(folded) && bubble.test(folded), folded.length)
   }
 

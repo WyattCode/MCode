@@ -440,7 +440,6 @@ onBeforeUnmount(() => {
 .text .md-media-failed:focus-visible {
   outline: 2px solid var(--interactive);
   outline-offset: 2px;
-  border-radius: 10px;
 }
 
 .text .md-media-failed svg {
