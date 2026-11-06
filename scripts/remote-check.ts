@@ -456,8 +456,14 @@ let phone: WebSocket
       if (settled) return
       settled = true
       resolve(true)
-      // Answer the handshake, then read nothing more: no pong can follow.
-      setTimeout(() => silent.pause(), 120)
+      /*
+       * Answer the handshake, then say nothing more. This is a bare socket, which
+       * never answers a ping on its own, so no pong can follow. It must keep
+       * reading, though: it used to pause here, and a paused socket does not see
+       * the server's close (the 'close' event waits for the end of the stream to be
+       * read), so the sweep did drop the phone and the check still waited out its
+       * 2.5 seconds and failed.
+       */
     }
     silent.on("data", arrive)
     silent.once("error", () => resolve(false))
