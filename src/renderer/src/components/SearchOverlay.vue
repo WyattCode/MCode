@@ -451,11 +451,12 @@ defineExpose({ close })
   font-size: calc(14px * var(--ui-font-scale, 1));
 }
 
-.search-bar input:focus-visible {
-  outline: 2px solid var(--interactive);
-  outline-offset: 2px;
-}
-
+/*
+ * No ring on the field. A text field takes :focus-visible whenever it has focus,
+ * and this one has it the moment the card opens, so a ring drew a hard blue box
+ * inside the card each time (it only shows in a focused window). The caret and
+ * the card around it already say where the typing goes.
+ */
 .search-bar input::placeholder {
   color: var(--text-weak);
 }
