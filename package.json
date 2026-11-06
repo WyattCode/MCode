@@ -4,10 +4,7 @@
   "desktopName": "mcode.desktop",
   "version": "1.0.7",
   "description": "A keyboard-first, command-palette-driven AI coding agent.",
-  "author": {
-    "name": "MCode",
-    "email": "WyattCode@users.noreply.github.com"
-  },
+  "author": "MCode",
   "main": "./out/main/index.js",
   "type": "module",
   "license": "MIT",

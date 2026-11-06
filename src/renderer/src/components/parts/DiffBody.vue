@@ -374,7 +374,6 @@ defineExpose({ reveal })
 .db-list-line:focus-visible {
   outline: 2px solid var(--interactive);
   outline-offset: 2px;
-  border-radius: 6px;
 }
 
 /* A name in the list is diff2html's link blue in either theme, its folders dimmed. */

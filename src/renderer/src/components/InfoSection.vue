@@ -59,7 +59,6 @@ const emit = defineEmits<{ toggle: [] }>()
 .head:focus-visible {
   outline: 2px solid var(--interactive);
   outline-offset: 1px;
-  border-radius: 4px;
 }
 
 .chev {

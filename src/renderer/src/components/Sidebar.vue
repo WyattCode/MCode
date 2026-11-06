@@ -2721,7 +2721,7 @@ button.section-head:focus-visible {
   place-items: center;
   width: 32px;
   height: 32px;
-  color: var(--text-muted);
+  color: var(--text-base);
   border-radius: 8px;
   transition: background var(--motion-fast, 0.12s), color var(--motion-fast, 0.12s);
 }

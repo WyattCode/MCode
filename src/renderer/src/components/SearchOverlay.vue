@@ -454,7 +454,6 @@ defineExpose({ close })
 .search-bar input:focus-visible {
   outline: 2px solid var(--interactive);
   outline-offset: 2px;
-  border-radius: 4px;
 }
 
 .search-bar input::placeholder {

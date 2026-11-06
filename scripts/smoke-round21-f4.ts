@@ -191,7 +191,7 @@ export async function roundTwentyOneLaneFourChecks(check: Check, section: (name:
     // Item 40: a row clips what does not fit.
     check("a list row clips what does not fit, as MiMo's does", /\.row \{[^}]*overflow: hidden/.test(page.style))
     // Item 41: switching a tab asks with the text in the box.
-    check("switching a tab asks with what is typed now, not the debounced copy", /watch\(kind, \(\) => \{\s*\n\s*if \(searchTimer\) clearTimeout\(searchTimer\)\s*\n\s*needle\.value = query\.value/.test(page.all))
+    check("switching a tab asks with what is typed now, not the debounced copy", /watch\(kind, \(\) => \{\s*\n\s*if \(searchTimer\) clearTimeout\(searchTimer\)\s*\n(?:\s*clearStaleResults\(\)\s*\n)?\s*needle\.value = query\.value/.test(page.all))
     // Item 35: the store says when to read again.
     check("the page reads again when the store says its contents changed", /event\.type !== "artifact\.changed" \|\| event\.revision <= seenRevision/.test(page.all) && /offChanged = app\.client\?\.on\(/.test(page.all))
     const protocolSource = await read("src/shared/protocol.ts")
@@ -223,7 +223,7 @@ export async function roundTwentyOneLaneFourChecks(check: Check, section: (name:
     check("a new notice goes to the front of the column", /toasts\.value = \[entry, \.\.\.toasts\.value\]/.test(store))
     // Item 47: the ones past the third are kept rather than dropped.
     check("nothing past the third is thrown away; it waits its turn", !/const over = next\.length - LIMIT/.test(store) && !/doomed/.test(store) && /export const LIMIT = 3/.test(store))
-    check("and the column hides it rather than unmounting it", /\{ over: at >= LIMIT \}/.test(column.template) && /\.notice\.over \{\s*\n\s*display: none;/.test(column.style))
+    check("and the column hides it rather than unmounting it", /\{ over: !shownIds\.has\(toast\.id\) \}/.test(column.template) && /\.notice\.over \{\s*\n\s*display: none;/.test(column.style))
     // Item 46: MiMo's own travel and duration.
     check("they arrive and leave over .4s, travelling their own height", /transition:\s*\n\s*opacity 0\.4s,\s*\n\s*transform 0\.4s;/.test(column.style) && /transform: translateY\(-100%\);/.test(column.style) && !/translateY\(-8px\)/.test(column.style))
     check("with the reduced-motion fallback kept", /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?transform: none;/.test(column.style))

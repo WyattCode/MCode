@@ -136,7 +136,8 @@ export async function roundTwentyTwoLaneTwoChecks(check: Check, section: (name: 
     check("the conversation's boundary carries no margin", !/margin/.test(rule(errors, ".render-error")), rule(errors, ".render-error"))
     check("the pane boundary carries none either", !/margin/.test(rule(paneBoundary, ".pane-error")), rule(paneBoundary, ".pane-error"))
     check("and both keep MiMo's 8 by 12 on an 8px corner over red-50", /padding: 8px 12px;/.test(rule(errors, ".render-error")) && /padding: 8px 12px;/.test(rule(paneBoundary, ".pane-error")) && /background: #fef2f2;/.test(rule(errors, ".render-error")) && /background: #fef2f2;/.test(rule(paneBoundary, ".pane-error")))
-    check("the retry still holds the strip's end", /margin-inline-start: auto;/.test(rule(errors, ".retry")), rule(errors, ".retry"))
+    // Copy sits before it and takes the free space (02273025), so the two buttons together hold the strip's end.
+    check("the retry still holds the strip's end, behind a copy button that takes the free space", /margin-inline-start: auto;/.test(rule(errors, ".copy")) && /data-error-copy[^\n]*<\/button>\s*<button[^\n]*class="retry"/.test(errors) && !/margin-inline-start/.test(rule(errors, ".retry")), rule(errors, ".copy"))
   }
 }
 

@@ -49,7 +49,8 @@ export async function roundTwelveFailureChecks(check: Check, section: (name: str
     const timer = store.slice(store.indexOf("offlineTimer = setTimeout("), store.indexOf("}, 2500)"))
     check(
       "C12-3: after boot the reconnect notice escalates in place instead",
-      /if \(booted\)/.test(timer) && /notice\.danger\(t\("error\.connectionRecovering"\), \{ id: RECONNECT_TOAST, body: t\("error\.connectionStillDown"\)/.test(timer) && inTables("error.connectionStillDown"),
+      // 2f81cc28 made the escalated notice dismissible, with a Relaunch action, where it was a fixed one.
+      /if \(booted\)/.test(timer) && /notice\.danger\(t\("error\.connectionRecovering"\), \{\s+id: RECONNECT_TOAST,\s+body: t\("error\.connectionStillDown"\)/.test(timer) && inTables("error.connectionStillDown"),
     )
   }
 
@@ -90,8 +91,8 @@ export async function roundTwelveFailureChecks(check: Check, section: (name: str
     check("C12-6: both halves are read side by side, and a failed half is noted", /Promise\.allSettled\(\[app\.client\?\.request\(\{ type: "mcp\.list" \}\), loadSkills\(\)\]\)/.test(page) && /listFailed\.value = failure !== undefined/.test(page))
     check(
       "C12-6: a failed list shows its failure line with Retry, not 'Nothing installed yet'",
-      /<p v-if="loaded && listFailed"[^>]*>\s*<span>\{\{ t\("plugins\.listUnavailable"\) \}\}<\/span>\s*<button class="retry" @click="retryLists">/.test(page) &&
-        /<p v-if="loaded && !listFailed && !shown\.length" class="empty">/.test(page) &&
+      /<p v-if="loaded && listFailed"[^>]*>\s*<span>\{\{ t\("plugins\.listUnavailable"\) \}\}<\/span>\s*<button type="button" class="retry" @click="retryLists">/.test(page) &&
+        /<p v-if="loaded && !listFailed && !shown\.length" class="empty"[^>]*>/.test(page) &&
         page.indexOf("data-plugins-failed") < page.indexOf('class="cards"') &&
         inTables("plugins.listUnavailable"),
     )

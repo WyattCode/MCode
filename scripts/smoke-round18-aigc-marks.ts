@@ -46,7 +46,9 @@ export async function roundEighteenAigcMarkChecks(check: Check, section: (name: 
     const abc = await read("src/renderer/src/components/parts/AbcBlock.vue")
     const template = abc.slice(abc.indexOf("<template>"), abc.lastIndexOf("</template>"))
     const style = abc.slice(abc.indexOf("<style"))
-    const view = template.slice(template.indexOf('<div v-show="showingScore" class="md-abc-view">'), template.indexOf("</template>", template.indexOf("md-abc-view")))
+    // The view is a tabpanel with an id since 6a454ec8, so its opening tag is matched by what it is, not by the whole tag.
+    const opening = /<div v-show="showingScore"[^>]*class="md-abc-view">/.exec(template)
+    const view = opening ? template.slice(opening.index, template.indexOf("</template>", opening.index)) : ""
     const mark = view.indexOf('data-abc-aigc>{{ t("markdown.aiGenerated") }}</div>')
     check("R18-U14: the score view carries the marker", mark > 0, view.slice(0, 200))
     check("R18-U14: under the progress bar and the rendering note, over the score itself", mark > view.indexOf("data-abc-rendering") && mark > view.indexOf("data-abc-progress") && mark < view.indexOf('ref="score"'))

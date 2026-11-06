@@ -1019,7 +1019,6 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
 .fv-filter input:focus-visible {
   outline: 2px solid var(--text-interactive);
   outline-offset: 2px;
-  border-radius: 4px;
 }
 
 .fv-rows {
@@ -1227,7 +1226,6 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
 .fv-find-input:focus-visible {
   outline: 2px solid var(--text-interactive);
   outline-offset: 2px;
-  border-radius: 4px;
 }
 
 .fv-find-input::placeholder {
