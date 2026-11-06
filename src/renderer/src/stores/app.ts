@@ -989,7 +989,7 @@ export const useApp = defineStore("app", () => {
               id: RECONNECT_TOAST,
               body: t("error.connectionStillDown"),
               duration: 0,
-              closable: true,
+              closable: false,
               action: { label: t("error.connectionRelaunch"), run: () => window.mcode.relaunch() },
             })
           }
@@ -1015,7 +1015,7 @@ export const useApp = defineStore("app", () => {
           notice.warning(t("error.connectionRecovering"), {
             id: RECONNECT_TOAST,
             duration: 0,
-            closable: true,
+            closable: false,
             action: { label: t("error.connectionRelaunch"), run: () => window.mcode.relaunch() },
           })
         }, RECONNECT_DELAY)

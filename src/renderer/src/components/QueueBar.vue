@@ -10,10 +10,11 @@
  * MiMo has no queue; the row is drawn as its goal bar is, so it sits in the
  * same place and the same way.
  */
-import { computed, onBeforeUnmount } from "vue"
+import { computed, onBeforeUnmount, ref } from "vue"
 import type { QueuedPrompt, SessionInfo } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
+import ConfirmDialog from "./ConfirmDialog.vue"
 
 const props = defineProps<{ sessionID: string }>()
 const emit = defineEmits<{ edit: [item: QueuedPrompt, sessionID: string] }>()
@@ -48,8 +49,12 @@ async function edit(item: QueuedPrompt) {
   emit("edit", item, held)
 }
 
+/* Clearing is asked first: it cannot be taken back, and sits beside the small remove marks. */
+const confirmingClear = ref(false)
+
 /** Clear every waiting message at once, when more than one is queued and nothing runs. */
 async function clearAll() {
+  confirmingClear.value = false
   const held = props.sessionID
   for (const item of [...queued.value]) {
     // Leaving mid-clear must not aim the rest of this conversation's ids at another one.
@@ -65,7 +70,7 @@ async function clearAll() {
       <svg class="queue-mark" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
       <span class="queue-title" data-queue-count>{{ t("composer.queue.title", { count: queued.length }) }}</span>
       <span class="queue-note">{{ running ? t("composer.queue.afterTurn") : t("composer.queue.parked") }}</span>
-      <button v-if="!running && queued.length > 1" class="queue-clear" type="button" data-queue-clear @click="clearAll">{{ t("composer.queue.clearAll") }}</button>
+      <button v-if="!running && queued.length > 1" class="queue-clear" type="button" data-queue-clear @click="confirmingClear = true">{{ t("composer.queue.clearAll") }}</button>
     </div>
     <div class="queue-scroll">
       <div v-for="item in queued" :key="item.id" class="queue-item" data-queue-item>
@@ -88,6 +93,16 @@ async function clearAll() {
         </button>
       </div>
     </div>
+    <Teleport to="body">
+      <ConfirmDialog
+        v-if="confirmingClear"
+        :title="t('composer.queue.clearTitle')"
+        :body="t('composer.queue.clearBody', { count: queued.length })"
+        :confirm-label="t('composer.queue.clearAll')"
+        @confirm="clearAll"
+        @close="confirmingClear = false"
+      />
+    </Teleport>
   </div>
 </template>
 
@@ -195,8 +210,8 @@ async function clearAll() {
 .queue-clear {
   flex: none;
   margin-inline-start: auto;
-  padding: 0 6px;
-  min-height: calc(20px * var(--ui-font-scale, 1));
+  padding: 0 8px;
+  min-height: calc(24px * var(--ui-font-scale, 1));
   color: var(--text-weak);
   background: transparent;
   border: 0;

@@ -337,7 +337,7 @@ function onTickKey(index: number, event: KeyboardEvent) {
   if (to === undefined) return
   event.preventDefault()
   const next = Math.min(last, Math.max(0, to))
-  ticksEl.value?.querySelectorAll<HTMLElement>(".spine-tick")[next]?.focus()
+  ticksEl.value?.querySelectorAll<HTMLElement>(".spine-tick")[next]?.focus({ preventScroll: true })
 }
 
 /** Keyboard focus previews the turn the way the pointer does. */
