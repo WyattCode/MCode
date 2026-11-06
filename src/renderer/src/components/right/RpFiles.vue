@@ -1016,11 +1016,6 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
-.fv-filter input:focus-visible {
-  outline: 2px solid var(--text-interactive);
-  outline-offset: 2px;
-}
-
 .fv-rows {
   display: flex;
   flex: 1;
@@ -1223,11 +1218,6 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
-.fv-find-input:focus-visible {
-  outline: 2px solid var(--text-interactive);
-  outline-offset: 2px;
-}
-
 .fv-find-input::placeholder {
   color: var(--ft-dim);
 }
@@ -1331,11 +1321,6 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
   font-family: var(--font-mono);
   font-size: calc(12px * var(--code-font-scale, 1));
   line-height: 1.6;
-}
-
-.fv-editor:focus-visible {
-  outline: 2px solid var(--interactive);
-  outline-offset: -2px;
 }
 
 /* Markdown as a document: 18 by 22. */

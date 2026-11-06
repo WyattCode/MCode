@@ -388,11 +388,6 @@ function onReasonKey(event: KeyboardEvent) {
   outline-offset: 1px;
 }
 
-.reason-input:focus-visible {
-  outline: 2px solid var(--interactive);
-  outline-offset: 1px;
-}
-
 .perm-btn:disabled {
   cursor: default;
   opacity: 0.4;
@@ -419,10 +414,5 @@ function onReasonKey(event: KeyboardEvent) {
 
 .reason-input:focus {
   border-color: var(--interactive);
-}
-
-.reason-input:focus-visible {
-  outline: 2px solid var(--interactive);
-  outline-offset: 2px;
 }
 </style>

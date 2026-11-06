@@ -2476,11 +2476,6 @@ defineExpose({ stepMessage, scroller })
   line-height: calc(20px * var(--ui-font-scale, 1));
 }
 
-.asked-edit textarea:focus-visible {
-  outline: 2px solid var(--interactive);
-  outline-offset: 2px;
-}
-
 .asked-edit-actions {
   display: flex;
   align-items: center;

@@ -469,11 +469,6 @@ function onEditKey(event: KeyboardEvent) {
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
-.ann-edit-input:focus-visible {
-  outline: 2px solid var(--interactive);
-  outline-offset: 2px;
-}
-
 /* Dark: MiMo's chip fill and ink, and its --color-bg popup. */
 :root[data-theme="dark"] .cchip {
   background: #ffffff14;

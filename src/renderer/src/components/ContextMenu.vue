@@ -658,11 +658,6 @@ onBeforeUnmount(() => {
   font-weight: 500;
 }
 
-.sub-search input:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
-}
-
 .sub-search input::placeholder {
   color: var(--text-weak);
   font-weight: 400;

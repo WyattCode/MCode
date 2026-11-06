@@ -609,11 +609,6 @@ useEscapeLayer(dismiss)
   outline: none;
 }
 
-.search-in:focus-visible {
-  outline: 2px solid var(--interactive);
-  outline-offset: 2px;
-}
-
 .list {
   margin: 0 -6px;
   overflow-y: auto;
@@ -771,11 +766,6 @@ useEscapeLayer(dismiss)
 
 .field:focus {
   background: var(--surface-layer);
-}
-
-.field:focus-visible {
-  outline: 2px solid var(--interactive);
-  outline-offset: 2px;
 }
 
 /* MiMo's key field: 40 tall at 14px with room at the end for the eye. */

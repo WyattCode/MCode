@@ -4009,15 +4009,6 @@ h3 {
   outline: none;
 }
 
-.keys-search-input:focus-visible,
-.mcp-input:focus-visible,
-.env-input:focus-visible,
-.nav-search:focus-visible,
-.ci-input:focus-visible {
-  outline: 2px solid var(--interactive);
-  outline-offset: 2px;
-}
-
 .keys-search-input::placeholder,
 .keys-search-capture {
   color: var(--text-weak);
