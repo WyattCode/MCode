@@ -1,7 +1,6 @@
 import { openFileInViewer } from "./office-open"
-import { notifyFailure } from "./toast"
+import { noticesHere } from "./toast"
 import { t } from "./i18n"
-import { useApp } from "../stores/app"
 
 /**
  * MiMo's Ctrl/⌘+click on a read, edit or write step's path.
@@ -33,30 +32,27 @@ const normal = (value: string) => value.replace(/\\/g, "/")
 
 const nameOf = (file: string) => file.split(/[\\/]/).pop() ?? ""
 
-function failed(error?: string) {
-  if (!error || /ENOENT|not exist|no such file|cannot find/i.test(error)) notifyFailure(t("harnessRow.pathNotExist"))
-  else notifyFailure(t("harnessRow.revealFailed", { error }))
+function failed(say: ReturnType<typeof noticesHere>, error?: string) {
+  if (!error || /ENOENT|not exist|no such file|cannot find/i.test(error)) say.notifyFailure(t("harnessRow.pathNotExist"))
+  else say.notifyFailure(t("harnessRow.revealFailed", { error }))
 }
 
 export async function openStepPath(file: string, directory?: string): Promise<void> {
   const root = directory ? normal(directory).replace(/\/+$/, "") : ""
   const absolute = /^([a-zA-Z]:)?[\\/]/.test(file) || !root ? normal(file) : `${root}/${normal(file).replace(/^\.\//, "")}`
   const name = nameOf(absolute)
-  // Hold failure toasts to the conversation the open started in; leaving mid-await must not flash them elsewhere.
-  const held = useApp().currentID
+  const say = noticesHere()
 
   if (HTML.test(name)) {
     // Handed to the desktop wherever the page lives, as MiMo hands it over - a page outside the project too.
     if (root && absolute.toLowerCase().startsWith(`${root.toLowerCase()}/`)) {
       // A non-empty answer is the backend's reason for refusing.
       const refused = await window.mcode.openFile(root, absolute.slice(root.length + 1)).catch((error: unknown) => String(error))
-      if (useApp().currentID !== held) return
-      if (refused) failed(refused)
+      if (refused) failed(say, refused)
       return
     }
     const opened = await window.mcode.openNativePath(absolute).catch((error: unknown) => ({ ok: false as const, error: String(error) }))
-    if (useApp().currentID !== held) return
-    if (!opened.ok) failed(opened.error)
+    if (!opened.ok) failed(say, opened.error)
     return
   }
 
@@ -66,6 +62,5 @@ export async function openStepPath(file: string, directory?: string): Promise<vo
   }
 
   const result = await window.mcode.revealPath(absolute).catch((error: unknown) => ({ ok: false, error: String(error) }))
-  if (useApp().currentID !== held) return
-  if (!result.ok) failed(result.error)
+  if (!result.ok) failed(say, result.error)
 }

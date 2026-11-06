@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { computed, onBeforeUnmount, onMounted, ref, useId, watch } from "vue"
 import ContextMenu from "../ContextMenu.vue"
 import type { MenuItem } from "../../lib/menu"
 import { t } from "../../lib/i18n"
@@ -38,7 +38,7 @@ const ZOOM_MAX = 3
 const ZOOM_STEP = 0.25
 
 /** Ties this block's tabs to its panels; two diagrams in one reply must not share ids. */
-const uid = Math.random().toString(36).slice(2, 9)
+const uid = useId()
 
 const tab = ref<"diagram" | "code">("diagram")
 const dark = ref(isDarkTheme())

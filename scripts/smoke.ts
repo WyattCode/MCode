@@ -31,6 +31,7 @@ import { idleWorkers, runFallback } from "../src/server/tool/search-run"
 import { rankMatches, runFallbackJob } from "../src/server/tool/search-fallback"
 import { alreadyAsked, buildStamp, sendQuery } from "../src/main/local-network-core"
 import { ToolError } from "../src/server/tool/types"
+import { dismiss, noticesHere, setToastScope, toasts } from "../src/renderer/src/lib/toast"
 import { normalizeChord, retireKeybinds, RETIRED_DEFAULTS } from "../src/shared/chord"
 
 let failures = 0
@@ -308,6 +309,45 @@ section("A second look at #18: none that thinks, a marker that outlived its answ
   } finally {
     await fs.rm(dir, { recursive: true, force: true })
   }
+}
+
+section("A second look at 1.0.6: notices keep to their conversation, and the pieces that forgot to")
+{
+  let shown: string | undefined = "a"
+  setToastScope(() => shown)
+  const asked = noticesHere()
+  shown = "b"
+  asked.notify("late reveal")
+  asked.notifyFailure("late failure")
+  check("a notice from a conversation that was left is dropped", toasts.value.length === 0, toasts.value.map((toast) => toast.title))
+  const again = noticesHere()
+  again.notify("copied")
+  check("one raised where the action started is shown", toasts.value.some((toast) => toast.title === "copied"))
+  for (const toast of [...toasts.value]) dismiss(toast.id)
+
+  const queue = await read("src/renderer/src/components/QueueBar.vue")
+  check("clearing the queue holds its conversation across every removal", /async function clearAll\(\) \{\s*confirmingClear\.value = false\s*const held = props\.sessionID/.test(queue) && /removeQueued\(held, item\.id\)/.test(queue))
+  const stream = await read("src/renderer/src/components/MessageStream.vue")
+  check("a resend is tracked per conversation, not in one slot", stream.includes("resendingIDs") && !stream.includes("resendingID.value"))
+  const side = await read("src/renderer/src/components/Sidebar.vue")
+  check("a branch answer that is thrown away gives its folder back", /branchAsked\.delete\(directory\)/.test(side))
+  const spine = await read("src/renderer/src/components/SessionSpine.vue")
+  check("the spine is one Tab stop, moved by the arrow keys", spine.includes(':tabindex="index === entryTick ? 0 : -1"') && spine.includes("onTickKey"))
+  const composer = await read("src/renderer/src/components/Composer.vue")
+  const edited = await read("src/renderer/src/components/EditedFilesCard.vue")
+  check("a side conversation's review is compared with the screen, not with the side key", edited.includes("app.currentID === heldScreen") && !edited.includes("app.currentID === heldSessionId"))
+  const appStore = await read("src/renderer/src/stores/app.ts")
+  check("the offline notice cannot be closed while it is true", !/duration: 0,\s*closable: true,\s*action: \{ label: t\("error\.connectionRelaunch"\)/.test(appStore))
+  check("a first send abandoned mid-create removes the empty conversation it made", /void app\.remove\(target\)[\s\S]{0,120}restoreOrigin\(\)/.test(composer))
+  const browser = await read("src/renderer/src/components/right/RpBrowser.vue")
+  check("a closed browser tab gives the shared page back", /reclaim && surfaceReclaim === reclaim/.test(browser))
+  check("clearing the queue is asked first", queue.includes("ConfirmDialog") && queue.includes('@click="confirmingClear = true"'))
+  const drawer = await read("src/renderer/src/components/TerminalDrawer.vue")
+  check("the drawer's resize handle says its height", drawer.includes(':aria-valuenow="height"') && drawer.includes(":aria-valuemax"))
+  const diagram = await read("src/renderer/src/components/parts/DiagramBlock.vue")
+  check("panels take their ids from useId", diagram.includes("useId()") && !diagram.includes("Math.random"))
+  check("the spine moves focus without scrolling the clipped rail", spine.includes("focus({ preventScroll: true })"))
+  check("full access cannot be confirmed twice at once", composer.includes("applyingFull") && composer.includes(':busy="applyingFull"'))
 }
 
 section("This suite stays reviewable")

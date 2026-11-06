@@ -207,7 +207,11 @@ async function readBranches(force = false) {
     branchAsked.set(directory, now)
     const info = await app.workspaceInfo(directory).catch(() => undefined)
     /* A newer readBranches started while this one was waiting; drop the slower pass. */
-    if (mine !== branchSeq) return
+    if (mine !== branchSeq) {
+      // The answer is thrown away, so the folder has not really been asked: let the newer pass ask it.
+      branchAsked.delete(directory)
+      return
+    }
     const branch = info?.branch ?? ""
     if ((branches.value[directory] ?? "") !== branch) branches.value = { ...branches.value, [directory]: branch }
   }

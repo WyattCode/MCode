@@ -146,11 +146,14 @@ async function review() {
   const heldKey = heldMessageIds.join("\n")
   const heldParts = props.parts
   const heldPaths = files.value.map((file) => file.path)
+  // The conversation on show when the review started. A side conversation's card carries
+  // the side's own key as its session, so the screen is what is compared, not that key.
+  const heldScreen = app.currentID
   const same = () =>
     props.sessionId === heldSessionId &&
     props.directory === heldDirectory &&
     props.messageIds.join("\n") === heldKey &&
-    (heldSessionId === undefined || app.currentID === heldSessionId)
+    app.currentID === heldScreen
   try {
     let patch = ""
     if (heldDirectory) {

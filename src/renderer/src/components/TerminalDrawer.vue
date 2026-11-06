@@ -5,7 +5,7 @@ import ConfirmDialog from "./ConfirmDialog.vue"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
 import { notifyFailure } from "../lib/toast"
-import { clampPanelHeight, nextTerminalNumber, shouldRespawn, showMismatch, storedPanelHeight, terminalLabel } from "../lib/terminal"
+import { PANEL_HEIGHT, clampPanelHeight, nextTerminalNumber, shouldRespawn, showMismatch, storedPanelHeight, terminalLabel } from "../lib/terminal"
 
 const emit = defineEmits<{ close: []; height: [px: number] }>()
 const app = useApp()
@@ -345,6 +345,9 @@ function startResize(event: PointerEvent) {
       class="resize"
       role="separator"
       aria-orientation="horizontal"
+      :aria-valuenow="height"
+      :aria-valuemin="PANEL_HEIGHT.min"
+      :aria-valuemax="PANEL_HEIGHT.max"
       tabindex="0"
       :aria-label="t('term.resizeTitle')"
       :title="t('term.resizeTitle')"
