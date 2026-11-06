@@ -300,6 +300,36 @@ export function opensPath(name: string): boolean {
   return name === "read" || name === "edit" || name === "write" || name === "notebook_edit"
 }
 
+/** A title the row draws as a path, whose file name it keeps when the folders are cut. */
+export function showsPath(name: string): boolean {
+  return opensPath(name) || name === "list"
+}
+
+/**
+ * `text` at most `max` UTF-16 units long, with a "…" where it was cut. The cut
+ * never falls between the halves of a surrogate pair, which would draw as a
+ * replacement glyph.
+ */
+export function cutTitle(text: string, max: number): string {
+  if (text.length <= max) return text
+  let end = Math.max(0, max - 1)
+  const last = text.charCodeAt(end - 1)
+  if (end > 0 && last >= 0xd800 && last <= 0xdbff) end -= 1
+  return `${text.slice(0, end)}…`
+}
+
+/**
+ * A path as the row draws it: the folders, which the row may cut, and the
+ * separator and file name after them, which it keeps. A path that has no folder
+ * to cut, or whose file name alone fills the row, is all head.
+ */
+export function pathTitleParts(path: string, max: number): { head: string; tail: string } {
+  const found = /^([\s\S]+)([\\/][^\\/]+)$/.exec(path)
+  const tail = found?.[2] ?? ""
+  if (!found || tail.length >= max - 1) return { head: cutTitle(path, max), tail: "" }
+  return { head: cutTitle(found[1]!, max - tail.length), tail }
+}
+
 export type Bucket = "read" | "edit" | "run" | "search" | "other"
 
 /** Which count a step adds to in a group's summary. */

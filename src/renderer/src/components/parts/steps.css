@@ -101,25 +101,48 @@
 }
 
 /*
- * The title, not its code, cuts a long one, and the dots take the title's
- * colour: so the colour is set here and the code inherits it. Set on the code
- * alone, a failed step's red title drew red dots after a grey path.
+ * A title too long for the row is cut inside its code, which is the box that
+ * shrinks, so the pill keeps its corners and its padding. A path is two spans:
+ * the head (the folders) is cut first, the tail (the separator and file name)
+ * stays. The colour is set on the title and inherited, so the dots take it and a
+ * failed step, which colours only its verb, does not redden the path.
  */
 .hs-title {
+  display: flex;
   min-width: 0;
   overflow: hidden;
   color: #3a3a38;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* A title is inline code, as every code span in MiMo's thread is drawn. */
+/*
+ * A title is inline code, as every code span in MiMo's thread is drawn. As a
+ * flex item its padding counts in the row, which a code span's does not, so the
+ * line is set to leave the pill the 20px it had inline.
+ */
 .hs-title code {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
   padding: 1.5px 5px;
   font-family: var(--font-mono);
   font-size: calc(14px * var(--code-font-scale, 1));
+  line-height: 1.25;
   background: #f0f0f2;
   border-radius: 5px;
+}
+
+.hs-head {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hs-tail {
+  flex: none;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .hs-title code.openable {
