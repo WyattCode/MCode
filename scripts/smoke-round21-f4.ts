@@ -140,9 +140,20 @@ export async function roundTwentyOneLaneFourChecks(check: Check, section: (name:
     const ringed: string[] = []
     for (const name of sheets) {
       const text = await fs.readFile(path.join(components, name), "utf8")
-      for (const rule of text.matchAll(/([^{}]+?):focus-visible\s*\{([^}]*)\}/g)) {
-        const field = /(^|[\s,>])(input|textarea)\b|(^|\s)\.(field|needle|q-field|fv-editor|goal-edit|search-in|ann-edit-input|reason-input|field-in|fv-find-input|keys-search-input|mcp-input|env-input|nav-search|ci-input|lang-search-input)\b/.test(rule[1].split(",").pop() ?? "")
-        if (field && /outline:\s*[^n;]/.test(rule[2])) ringed.push(`${name}: ${rule[1].trim()}`)
+      // The classes the template puts on its own text fields (not a checkbox, radio, range or colour input), so a field added later is caught too.
+      const classes = new Set<string>()
+      for (const tag of text.matchAll(/<(?:input|textarea)\b(?:[^>"']|"[^"]*"|'[^']*')*>/g)) {
+        if (/\btype="(?:checkbox|radio|range|color|file|button|submit)"/.test(tag[0])) continue
+        for (const cls of /\bclass="([^"]*)"/.exec(tag[0])?.[1].split(/\s+/) ?? []) if (cls) classes.add(cls)
+      }
+      const style = text.slice(text.indexOf("<style"))
+      for (const rule of style.matchAll(/([^{}]+?):focus-visible\s*\{([^}]*)\}/g)) {
+        if (!/outline:\s*[^n;]/.test(rule[2])) continue
+        for (const selector of rule[1].split(",")) {
+          const last = selector.trim().split(/\s+/).pop() ?? ""
+          const field = /^(input|textarea)\b/.test(last) || [...classes].some((cls) => new RegExp(`\\.${cls.replace(/[-]/g, "\\-")}(?![\\w-])`).test(last))
+          if (field) ringed.push(`${name}: ${selector.trim()}`)
+        }
       }
     }
     check("no text field draws its own :focus-visible ring, a click into it would show a box", ringed.length === 0, ringed.join("\n"))
