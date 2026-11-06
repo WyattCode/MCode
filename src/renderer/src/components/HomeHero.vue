@@ -327,7 +327,6 @@ defineExpose({ focus: () => box.value?.focus() })
           />
         </div>
         <p class="slogan">{{ t("home.slogan") }}</p>
-        <button type="button" class="shortcut-hint" data-home-search @click="emit('search')">{{ t("home.shortcutHint", { chord: shownChord("Ctrl+K") }) }}</button>
       </div>
 
       <!-- MiMo's tray: the box, and fastened under it a 40px strip holding the project chip. -->
@@ -356,6 +355,8 @@ defineExpose({ focus: () => box.value?.focus() })
           <BranchPicker :directory="scratch ? undefined : chosen" @worktree="useWorktree" />
         </div>
       </div>
+
+      <button type="button" class="shortcut-hint" data-home-search @click="emit('search')">{{ t("home.shortcutHint", { chord: shownChord("Ctrl+K") }) }}</button>
 
       <NewProjectDialog v-if="naming" :value="t('home.blankDefault')" @close="naming = false" @submit="createBlank" />
     </div>
@@ -440,17 +441,21 @@ defineExpose({ focus: () => box.value?.focus() })
 }
 
 /* A quiet hint under the greeting: the chord that opens search from here. */
+/*
+ * Under the tray, in the flow. It was placed at 78% of the hero block, whose
+ * last 48px lie under the tray, so the line was cut by the box's top edge, and
+ * more of it the larger the text; nothing in a fixed-height block can follow
+ * the font size, a line after the tray does.
+ */
 .shortcut-hint {
-  position: absolute;
-  top: 78%;
-  left: 50%;
+  flex: none;
+  margin-top: 12px;
   padding: 2px 6px;
   color: var(--text-weak);
   background: transparent;
   border: 0;
   cursor: pointer;
   font-size: calc(12px * var(--ui-font-scale, 1));
-  transform: translateX(-50%);
 }
 
 .shortcut-hint:hover {
