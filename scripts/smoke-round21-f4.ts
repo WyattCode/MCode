@@ -63,9 +63,8 @@ export async function roundTwentyOneLaneFourChecks(check: Check, section: (name:
     check("the mark is centred on 49.95% of the block's height, off the animated element", /top:\s*49\.95%/.test(slot) && /translate\(-50%, -50%\)/.test(slot), slot)
     // The user saw MCode's own blueprint drawing on 2026-09-24 and asked for a bare block, so MiMo's background drawing has no counterpart here.
     check("nothing is drawn behind the mark - no SVG, no image, no painted background (user decision 2026-09-24)", !/<svg/.test(hero.template) && !/<img/.test(hero.template) && !/\bdeco\b/.test(hero.style) && !/background(-image)?:/.test(rule(hero.style, ".hero")), hero.template.slice(0, 400))
-    // The block's last 48px lie under the tray, so a line placed by percentage inside it is cut by the box (the 1.0.8 home screen), at any text size.
-    const hint = rule(hero.style, ".shortcut-hint")
-    check("the Ctrl+K line stands after the tray, in the flow, not placed inside the hero block", hero.template.indexOf('class="shortcut-hint"') > hero.template.indexOf('class="tray"') && !/position:\s*absolute/.test(hint) && !/(^|[;{\s])top:/.test(hint) && /margin-top:/.test(hint), hint)
+    // The home screen carries no "press Ctrl+K" line (the user asked for it gone, 2026-11-07): the greeting, the box and the project strip are all of it.
+    check("the home screen has no Ctrl+K line, in the markup, the sheet or the tables", !/shortcut-hint|shortcutHint/.test(hero.template + hero.style) && !/"home\.shortcutHint"/.test(await read("src/renderer/src/lib/i18n.ts")))
     // Item 9: the tray is an opaque plate, not a wash of the sunken surface.
     const tray = rule(hero.style, ".tray")
     check("the tray takes MiMo's --color-composer-tray-bg (#f8f7f5) rather than a 50% wash", /background:\s*#f8f7f5/.test(tray) && !/color-mix/.test(tray), tray)
