@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onErrorCaptured, ref, watch } from "vue"
+import { onBeforeUnmount, onErrorCaptured, ref, watch } from "vue"
 import { t } from "../lib/i18n"
 import { writeText } from "../lib/clipboard"
 
@@ -19,16 +19,23 @@ const props = defineProps<{ resetKey?: string }>()
 
 const failure = ref<string>()
 const copied = ref(false)
+let copiedTimer: ReturnType<typeof setTimeout> | undefined
+
+onBeforeUnmount(() => clearTimeout(copiedTimer))
 
 async function copyDetail() {
+  clearTimeout(copiedTimer)
   try {
     await writeText(failure.value || "")
     copied.value = true
-    setTimeout(() => (copied.value = false), 1500)
+    copiedTimer = setTimeout(() => (copied.value = false), 1500)
   } catch {
     copied.value = false
   }
 }
+
+/* A long message is shown once, whole, under the strip; a short one stays on the strip. */
+const LONG = 80
 
 /* Vue names the source in development and gives a runtime code in production: 0 setup, 1 render. */
 const RENDER = /render|setup|hook|#runtime-[01]$/
@@ -52,11 +59,11 @@ watch(
   <div v-if="failure !== undefined" class="render-error" role="alert" data-render-error>
     <div class="strip">
       <span class="label">{{ t("errorBoundary.inlineError") }}</span>
-      <span v-if="failure" class="detail" :title="failure">{{ failure }}</span>
+      <span v-if="failure && failure.length <= LONG" class="detail" :title="failure">{{ failure }}</span>
       <button type="button" class="copy" data-error-copy @click="copyDetail">{{ copied ? t("code.copied") : t("code.copy") }}</button>
       <button type="button" class="retry" data-error-retry @click="failure = undefined">{{ t("common.retry") }}</button>
     </div>
-    <pre v-if="failure && failure.length > 80" class="detail-full">{{ failure }}</pre>
+    <pre v-if="failure && failure.length > LONG" class="detail-full" data-error-detail>{{ failure }}</pre>
   </div>
   <slot v-else />
 </template>

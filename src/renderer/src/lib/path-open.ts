@@ -1,5 +1,5 @@
 import { openFileInViewer } from "./office-open"
-import { notify, notifyFailure } from "./toast"
+import { noticesHere, notify, notifyFailure } from "./toast"
 import { t } from "./i18n"
 import { useApp } from "../stores/app"
 import type { MenuItem } from "./menu"
@@ -64,23 +64,19 @@ export function fileManagerName(platform: string): string {
 }
 
 export async function openNative(file: string): Promise<boolean> {
-  // Hold the failure toast to the conversation the open started in; leaving mid-await must not flash it elsewhere.
-  const held = useApp().currentID
+  const say = noticesHere()
   const result = await window.mcode.openNativePath(file).catch((error: unknown) => ({ ok: false as const, code: "failed", error: String(error) }))
   if (result.ok) return true
-  if (useApp().currentID !== held) return false
-  notifyFailure(result.code === "missing" ? t("harnessRow.pathNotExist") : result.code === "invalid" ? t("markdown.openFailed") : result.error || t("markdown.openFailed"))
+  say.notifyFailure(result.code === "missing" ? t("harnessRow.pathNotExist") : result.code === "invalid" ? t("markdown.openFailed") : result.error || t("markdown.openFailed"))
   return false
 }
 
 export async function revealPath(file: string, platform: string): Promise<void> {
-  const held = useApp().currentID
+  const say = noticesHere()
   const result = await window.mcode.revealNativePath(file).catch((error: unknown) => ({ ok: false as const, error: String(error) }))
   const manager = fileManagerName(platform)
-  // Hold the toast to the place the person started from; leaving mid-await must not flash the reveal outcome onto another conversation.
-  if (useApp().currentID !== held) return
-  if (result.ok) notify(t("menu.revealedIn", { manager }))
-  else notifyFailure(t("officeCard.revealFailed", { error: result.error }))
+  if (result.ok) say.notify(t("menu.revealedIn", { manager }))
+  else say.notifyFailure(t("officeCard.revealFailed", { error: result.error }))
 }
 
 /** A press on a path chip. */
@@ -150,36 +146,28 @@ export async function copyImageFile(file: string): Promise<void> {
 
 export async function runPathMenu(key: string, target: PathTarget, platform: string): Promise<void> {
   if (key === "open") {
-    // hold the toast to the conversation the open started in; leaving mid-await must not flash it elsewhere
-    const held = useApp().currentID
+    const say = noticesHere()
     const result = await window.mcode.openNativePath(target.path).catch((error: unknown) => ({ ok: false as const, code: "failed", error: String(error) }))
-    if (useApp().currentID !== held) return
-    if (!result.ok) notifyFailure(t("officeCard.openFailed", { error: result.code === "missing" ? t("harnessRow.pathNotExist") : result.error }))
+    if (!result.ok) say.notifyFailure(t("officeCard.openFailed", { error: result.code === "missing" ? t("harnessRow.pathNotExist") : result.error }))
     return
   }
   if (key === "copyImage") {
-    // Hold the toast to the conversation the copy started in; leaving mid-await must not flash it elsewhere.
-    const held = useApp().currentID
+    const say = noticesHere()
     try {
       await copyImageFile(target.path)
-      if (useApp().currentID !== held) return
-      notify(t("officeCard.copiedImage"))
+      say.notify(t("officeCard.copiedImage"))
     } catch {
-      if (useApp().currentID !== held) return
-      notifyFailure(t("officeCard.copyImageFailed"))
+      say.notifyFailure(t("officeCard.copyImageFailed"))
     }
     return
   }
   if (key === "copyPath") {
-    // Hold the toast to the conversation the copy started in; leaving mid-await must not flash it elsewhere.
-    const held = useApp().currentID
+    const say = noticesHere()
     try {
       await writeText(target.path)
-      if (useApp().currentID !== held) return
-      notify(t("officeCard.copied"))
+      say.notify(t("officeCard.copied"))
     } catch {
-      if (useApp().currentID !== held) return
-      notifyFailure(t("officeCard.copyFailed"))
+      say.notifyFailure(t("officeCard.copyFailed"))
     }
     return
   }

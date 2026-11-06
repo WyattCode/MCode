@@ -169,17 +169,28 @@ onMounted(() => {
   if (root.value) observer.observe(root.value)
   if (bar.value) observer.observe(bar.value)
   window.addEventListener("resize", remeasure)
-  if (props.active) {
-    const epoch = ++surfaceEpoch
-    surfaceReclaim = () => {
-      if (props.active && epoch === surfaceEpoch) void claim()
-    }
-  }
+  if (props.active) takeSurface()
   void claim()
   void scan()
 })
 
+/* This tab is now the one the shared page belongs to; a late claim by another asks it to claim again. */
+let reclaim: (() => void) | undefined
+
+function takeSurface() {
+  const epoch = ++surfaceEpoch
+  reclaim = () => {
+    if (props.active && epoch === surfaceEpoch) void claim()
+  }
+  surfaceReclaim = reclaim
+}
+
 onBeforeUnmount(() => {
+  // A closed tab must not stay the owner: its callback would claim a page for a tab that is gone.
+  if (reclaim && surfaceReclaim === reclaim) {
+    surfaceReclaim = undefined
+    surfaceEpoch += 1
+  }
   stopState?.()
   observer.disconnect()
   window.removeEventListener("resize", remeasure)
@@ -188,10 +199,7 @@ onBeforeUnmount(() => {
 
 watch(() => props.active, (active) => {
   if (active) {
-    const epoch = ++surfaceEpoch
-    surfaceReclaim = () => {
-      if (props.active && epoch === surfaceEpoch) void claim()
-    }
+    takeSurface()
     void claim()
   }
 })

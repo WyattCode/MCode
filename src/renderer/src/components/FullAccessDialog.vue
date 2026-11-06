@@ -11,6 +11,7 @@ import { useEscapeLayer } from "../lib/escape-layer"
  * focused when it opens, so Enter cannot turn full access on by accident.
  * The body is MiMo's sentence with MCode's name in it, which is true of MCode.
  */
+defineProps<{ /** The request is on its way: the confirm waits, so a second press cannot send it again. */ busy?: boolean }>()
 const emit = defineEmits<{ close: []; confirm: [] }>()
 
 useEscapeLayer(() => emit("close"))
@@ -30,7 +31,7 @@ useEscapeLayer(() => emit("close"))
       <p id="full-access-desc" class="desc">{{ t("composer.access.confirmBody") }}</p>
       <footer>
         <button class="ghost" type="button" data-full-access-cancel @click="emit('close')">{{ t("common.cancel") }}</button>
-        <button class="confirm" type="button" data-full-access-ok @click="emit('confirm')">
+        <button class="confirm" type="button" data-full-access-ok :disabled="busy" :aria-busy="busy || undefined" @click="emit('confirm')">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
             <path d="M12 9v4M12 17h.01" />
@@ -128,6 +129,11 @@ footer {
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 400;
   cursor: pointer;
+}
+
+.confirm:disabled {
+  cursor: default;
+  opacity: 0.6;
 }
 
 .ghost {

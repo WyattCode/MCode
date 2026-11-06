@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue"
+import { computed, onBeforeUnmount, ref, useId, watch } from "vue"
 import ContextMenu from "../ContextMenu.vue"
 import type { MenuItem } from "../../lib/menu"
 import { t } from "../../lib/i18n"
@@ -25,7 +25,7 @@ const props = defineProps<{ text: string; url: string; file: string; name: strin
 const emit = defineEmits<{ loaded: []; missing: [] }>()
 
 /** Ties this card's tabs to its panels; two cards in one reply must not share ids. */
-const uid = Math.random().toString(36).slice(2, 9)
+const uid = useId()
 
 const tab = ref<"diagram" | "code">("diagram")
 const image = ref<"loading" | "ok" | "error">("loading")
