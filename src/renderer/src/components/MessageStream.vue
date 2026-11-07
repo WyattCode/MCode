@@ -11,7 +11,7 @@ import MessageSourceRow from "./parts/MessageSource.vue"
 import type { MessageSource } from "@shared/protocol"
 import SubagentActivity from "./parts/SubagentActivity.vue"
 import type { Annotation, Attachment, AssistantMessage, AssistantPart, SubagentNotice } from "@shared/protocol"
-import { buildRows, editsOnly, retryReason, stagesOf, type InlineError, type StepItem, type StepRow } from "../lib/step-rows"
+import { buildRows, retryReason, stagesOf, type InlineError, type StepItem, type StepRow } from "../lib/step-rows"
 import { cleanReply, saysSomething } from "@shared/reply-clean"
 import { turnOpeners } from "@shared/steer"
 import { redactText } from "@shared/display-redact"
@@ -147,12 +147,10 @@ interface Steer {
 /*
  * A turn as MiMo's step list lays it out (see lib/step-rows): consecutive tool
  * calls under one summary line until the model says something, questions on
- * their own rows, and news of subagents where it landed. A group carries whether it is
- * the one the live turn is working in, which is the group that starts open.
+ * their own rows, and news of subagents where it landed.
  */
 type Row =
-  | Exclude<StepRow, { kind: "group" }>
-  | { kind: "group"; id: string; items: StepItem[]; open: boolean; actor?: boolean }
+  | StepRow
   | { kind: "steer"; id: string; steer: Steer }
   /** MiMo's 正在重新连接 N, while the provider request is being tried again. */
   | { kind: "retry"; id: string; attempt: number; reason?: string; next?: number }
@@ -164,7 +162,7 @@ function rows(turn: Turn, start: number, end: number, live: boolean): Row[] {
     .filter((error) => error.at <= end && (start === 0 ? error.at >= 0 : error.at > start))
     .map((error) => ({ ...error, at: error.at - start }))
   const parts = turn.parts.slice(start, end).map((part) => stepPart(part, live))
-  return buildRows(parts, errors).map((row) => (row.kind === "group" ? { ...row, open: false } : row))
+  return buildRows(parts, errors)
 }
 
 interface Turn {
@@ -548,12 +546,15 @@ function endedNaturally(turn: Turn, at: number): boolean {
 /**
  * A turn's rows, and where its fold ends (0 when the head folds nothing).
  *
- * While the turn runs, everything, with the group it is working in open. Once
- * it is done, MiMo folds everything before the last stage's words - earlier
- * remarks and questions included - but only for a turn that ended naturally on
- * words or a question. Any other turn (stopped, failed, ended on a call or on
- * subagents) is laid out in full under a plain head, and a last stage that
- * said nothing has its groups open, so the reader sees where it stopped.
+ * While the turn runs, everything. Once it is done, MiMo folds everything
+ * before the last stage's words - earlier remarks and questions included - but
+ * only for a turn that ended naturally on words or a question. Any other turn
+ * (stopped, failed, ended on a call or on subagents) is laid out in full under
+ * a plain head.
+ *
+ * No step group opens by itself, running or finished: the summary line says
+ * what is being done (its words sweep while a step runs, and it carries the
+ * mark of a failed one), and the reader opens the steps they want.
  */
 function layout(turn: Turn, at: number): { rows: Row[]; foldAt: number } {
   const live = liveTurn(at)
@@ -568,17 +569,6 @@ function layout(turn: Turn, at: number): { rows: Row[]; foldAt: number } {
   if (live) {
     const retry = turn.last?.retry
     if (retry) all.push({ kind: "retry", id: `retry:${turn.last?.id}`, attempt: retry.attempt, reason: retryReason(retry.message, retry.kind), next: retry.next })
-    /*
-     * The stage being worked in - everything after the last thing said, where
-     * an answered question and subagent news count as said, as they end a
-     * stage in MiMo - has every one of its groups open, bar one that holds only
-     * edits: those rows are detail, and stay folded until the reader opens them.
-     */
-    for (let index = all.length - 1; index >= 0; index--) {
-      const row = all[index]!
-      if (speaks(row)) break
-      if (row.kind === "group" && !editsOnly(row.items)) row.open = true
-    }
     return { rows: all, foldAt: 0 }
   }
 
@@ -587,9 +577,6 @@ function layout(turn: Turn, at: number): { rows: Row[]; foldAt: number } {
   const tail = all[last.end - 1]
   if (endedNaturally(turn, at) && last.progressEnd < last.end && (tail?.kind === "part" || tail?.kind === "question")) {
     return { rows: all, foldAt: last.progressEnd }
-  }
-  if (last.progressEnd === last.end) {
-    for (const row of all.slice(last.start, last.end)) if (row.kind === "group" && !row.actor && !editsOnly(row.items)) row.open = true
   }
   return { rows: all, foldAt: 0 }
 }
@@ -1920,7 +1907,7 @@ defineExpose({ stepMessage, scroller })
           <div v-for="row in shown(turn, at)" :key="row.id" class="part" :class="{ words: row.kind === 'part' && row.part.type === 'text' }">
             <!-- subagents: news of background subagents that reached the turn while it ran. -->
             <SubagentActivity v-if="row.kind === 'steer'" :notices="row.steer.notices" />
-            <ToolGroup v-else-if="row.kind === 'group'" :items="row.items" :default-open="row.open" :actor="row.actor" />
+            <ToolGroup v-else-if="row.kind === 'group'" :items="row.items" :actor="row.actor" />
             <QuestionCard v-else-if="row.kind === 'question'" :part="row.part" />
             <ErrorStep v-else-if="row.kind === 'error'" :error="row.error" />
             <RetryRow v-else-if="row.kind === 'retry'" :attempt="row.attempt" :reason="row.reason" :next="row.next" @stop="app.abort(shownID)" />

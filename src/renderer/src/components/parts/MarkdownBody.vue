@@ -841,7 +841,25 @@ function onError(event: Event) {
   color: #3a3a38;
   background: #f0f0f2;
   border-radius: 5px;
+  /* A chip that wraps is two whole chips, each with its own corners, not one cut open at the break. */
+  box-decoration-break: clone;
   font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+/*
+ * Chinese and Japanese prose runs flush down both edges. Left alone, every line
+ * ends where its last character or chip happens to fall, and a reply full of
+ * inline code (a chip cannot be split like a word) leaves the right edge
+ * ragged by up to a hundred pixels. The expansion is between characters, which
+ * is how these scripts are set; the last line of each paragraph stays where it
+ * ends. Other languages keep their words as they are: stretching the gaps
+ * between words is worse than a ragged edge, in a narrow column above all.
+ */
+:lang(zh) .text .md-p,
+:lang(zh) .text .md-list li,
+:lang(ja) .text .md-p,
+:lang(ja) .text .md-list li {
+  text-align: justify;
 }
 
 :root[data-theme="dark"] .text code {
