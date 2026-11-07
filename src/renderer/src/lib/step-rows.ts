@@ -207,7 +207,7 @@ export function groupSummary(items: StepItem[]): { bucket: Bucket; count: number
   for (const part of tools) {
     const bucket = bucketOf(part.name)
     if (!order.includes(bucket)) order.push(bucket)
-    const title = bucket === "read" || bucket === "edit" ? stepTitle(part) : ""
+    const title = bucket === "read" || bucket === "edit" ? fileKey(part) : ""
     if (title) {
       const seen = paths.get(bucket) ?? new Set<string>()
       seen.add(title)
@@ -217,6 +217,25 @@ export function groupSummary(items: StepItem[]): { bucket: Bucket; count: number
     }
   }
   return order.map((bucket) => ({ bucket, count: (paths.get(bucket)?.size ?? 0) + (calls.get(bucket) ?? 0) }))
+}
+
+/**
+ * Which file a read or an edit touched, for counting files in a summary.
+ *
+ * The row's title is not it: the server writes a title (the path from the
+ * project) only for a call that went through, so a failed edit of a file shows
+ * the path as the model wrote it and the retry that worked shows the other
+ * spelling - one file counted as two. The path the call was given is the same
+ * on both, with its slashes made alike. A call with no path of its own (a
+ * patch) is told apart by its title.
+ */
+function fileKey(part: ToolPart): string {
+  const input = part.input ?? {}
+  for (const name of ["path", "filePath", "file_path", "notebook_path"]) {
+    const value = input[name]
+    if (typeof value === "string" && value.trim()) return value.trim().replace(/[\\/]+/g, "/")
+  }
+  return stepTitle(part)
 }
 
 /**
