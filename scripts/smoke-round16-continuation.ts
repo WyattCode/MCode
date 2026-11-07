@@ -203,7 +203,7 @@ async function continuationChecks(check: Check, section: Section, root: string):
       const html = render(parts[0] ?? "")
         .map((block) => (block.kind === "html" ? block.html : ""))
         .join("")
-      check("and it renders as one paragraph", (html.match(/<p class="md-p">/g) ?? []).length === 1, html)
+      check("and it renders as one paragraph", (html.match(/<p class="md-p(?: md-cjk)?">/g) ?? []).length === 1, html)
       check("with the word the cut fell inside whole", html.includes("射程最远"))
     } finally {
       await app.close()

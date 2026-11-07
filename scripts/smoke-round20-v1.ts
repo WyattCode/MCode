@@ -95,8 +95,9 @@ export async function roundTwentyVisualOneChecks(check: Check, section: (name: s
     check("R-2: line numbers are muted at .6", /color: var\(--text-base\);[\s\S]*opacity: 0\.6;/.test(rule(body, ".text .md-code.md-lined .line::before")))
     check("R-3: code in a block keeps 1.5px 5px", /padding: 1\.5px 5px;/.test(rule(body, ".text .md-code code")))
     // A reply of Chinese prose and inline code ended every line wherever its last chip fell: flush both edges, for the scripts set that way only.
-    check("R-3b: Chinese and Japanese prose and list items are justified, as a rule of its own", /:lang\(zh\) \.text \.md-p,\s*:lang\(zh\) \.text \.md-list li,\s*:lang\(ja\) \.text \.md-p,\s*:lang\(ja\) \.text \.md-list li \{\s*text-align: justify;\s*\}/.test(body))
-    check("R-3b: no other language, heading, table cell or code block is justified", (body.match(/text-align: justify/g) ?? []).length === 1)
+    check("R-3b: a paragraph or item marked md-cjk is justified, as a rule of its own", /\.text \.md-p\.md-cjk,\s*\.text \.md-list li\.md-cjk \{\s*text-align: justify;\s*\}/.test(body))
+    check("R-3b: nothing else is justified, nor does the interface's language decide it (English in a narrow column was stretched)", (body.match(/text-align: justify/g) ?? []).length === 1 && !/:lang\(/.test(body.slice(body.indexOf("md-cjk") - 400, body.indexOf("md-cjk") + 400)))
+    check("R-3b: an item not marked takes no alignment from the one around it", /\.text \.md-list li:not\(\.md-cjk\) \{\s*text-align: start;\s*\}/.test(body))
     check("R-3b: a wrapped chip keeps both its ends rounded", /box-decoration-break: clone;/.test(rule(body, ".text code")))
     const chip = body.slice(body.lastIndexOf("\n.text code {"))
     check("R-4: the chip is #f0f0f2 / #3a3a38 in light, 13px on the text scale, at the weight around it", /color: #3a3a38;\s*background: #f0f0f2;[\s\S]*?font-size: calc\(13px \* var\(--ui-font-scale, 1\)\);\s*\}/.test(chip) && !/font-weight/.test(rule(body, ".text code")))

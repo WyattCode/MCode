@@ -665,14 +665,19 @@ function listHtml(lines: string[], ctx: Context): string {
       content = [content[0].slice(task[0].length), ...content.slice(1)]
     }
     const blocks = parseBlocks(content, ctx, false)
-    // A tight item is its words, not a paragraph inside a list item.
+    // A tight item is its words, not a paragraph inside a list item; it takes the paragraph's way of being set.
+    let flush = false
     const inner = blocks
       .map((block) => {
         const html = blockHtml(block, ctx.options)
-        return !entry.loose && html.startsWith('<p class="md-p">') && html.endsWith("</p>") ? html.slice('<p class="md-p">'.length, -"</p>".length) : html
+        const paragraph = /^<p class="md-p( md-cjk)?">/.exec(html)
+        if (entry.loose || !paragraph || !html.endsWith("</p>")) return html
+        if (paragraph[1]) flush = true
+        return html.slice(paragraph[0].length, -"</p>".length)
       })
       .join("")
-    return `<li${box ? ' class="md-task"' : ""}>${box}${inner}</li>`
+    const classes = [box ? "md-task" : "", flush ? "md-cjk" : ""].filter(Boolean).join(" ")
+    return `<li${classes ? ` class="${classes}"` : ""}>${box}${inner}</li>`
   })
   return `${open}${body.join("")}${ordered ? "</ol>" : "</ul>"}`
 }
@@ -721,6 +726,50 @@ function tableBlock(lines: string[], at: number, alignment: ("left" | "center" |
  */
 const QUOTE_DEPTH = 64
 
+const HAN_OR_KANA = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/gu
+const LETTER = /\p{L}/gu
+
+/**
+ * Whether a paragraph's words are Chinese or Japanese: the scripts that are set
+ * flush down both edges, by spreading the line between its characters. The
+ * same spreading between the words of an English line leaves gaps of fifty
+ * pixels in a narrow column, so this is read off the paragraph itself, not the
+ * language of the interface. Code spans and link addresses are not prose, and
+ * are left out of the count; a paragraph is Chinese or Japanese when at least
+ * half its letters are.
+ *
+ * One pass, each character read once. The tidier pair of regular expressions
+ * for the two exclusions (a closing mark searched for from every opening one)
+ * is quadratic when the closing mark never comes, which is what a long reply
+ * of unfinished links is: half a megabyte of them took twenty-six seconds.
+ */
+function setsFlush(markdown: string): boolean {
+  const lastParen = markdown.lastIndexOf(")")
+  const kept: string[] = []
+  let from = 0
+  for (let at = 0; at < markdown.length; at += 1) {
+    const char = markdown.charCodeAt(at)
+    let end = -1
+    if (char === 96) {
+      // A code span closes at the next backtick; an unpaired one is only itself.
+      end = markdown.indexOf("`", at + 1)
+    } else if (char === 93 && markdown.charCodeAt(at + 1) === 40 && at < lastParen) {
+      // A link's address, from `](` to the first `)`, which is known to exist (`at < lastParen`).
+      end = markdown.indexOf(")", at + 2)
+    }
+    if (end < 0) continue
+    kept.push(markdown.slice(from, at))
+    from = end + 1
+    at = end
+  }
+  kept.push(markdown.slice(from))
+  const prose = kept.join(" ")
+  const han = prose.match(HAN_OR_KANA)?.length ?? 0
+  if (!han) return false
+  const letters = prose.match(LETTER)?.length ?? han
+  return han * 2 >= letters
+}
+
 function parseBlocks(lines: string[], ctx: Context, top: boolean, depth = 0): ReplyBlock[] {
   const { options } = ctx
   const blocks: ReplyBlock[] = []
@@ -729,7 +778,7 @@ function parseBlocks(lines: string[], ctx: Context, top: boolean, depth = 0): Re
   let paragraph: string[] = []
   const flush = () => {
     if (!paragraph.length) return
-    push(`<p class="md-p">${paragraph.map((line) => inline(line, ctx)).join("<br>")}</p>`)
+    push(`<p class="${setsFlush(paragraph.join(" ")) ? "md-p md-cjk" : "md-p"}">${paragraph.map((line) => inline(line, ctx)).join("<br>")}</p>`)
     paragraph = []
   }
 

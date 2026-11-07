@@ -241,6 +241,17 @@ const shape: [string, string, RegExp, MarkdownOptions?][] = [
   ["an ordered list's start", "3. x\n4. y", /<ol class="md-list" start="3"><li>x<\/li><li>y<\/li><\/ol>/],
   ["a task list", "- [x] done\n- [ ] todo", /<li class="md-task"><input type="checkbox" class="md-task-box" disabled checked \/>done<\/li><li class="md-task"><input type="checkbox" class="md-task-box" disabled \/>todo<\/li>/],
   ["lines joined in one paragraph", "one\ntwo", /^<p class="md-p">one<br>two<\/p>$/],
+  // Chinese and Japanese prose is marked to run flush down both edges; English never is, whatever language the interface speaks.
+  ["a Chinese paragraph is marked to run flush", "交接文档是这样写的，要点如下。", /^<p class="md-p md-cjk">交接文档是这样写的，要点如下。<\/p>$/],
+  ["a Japanese paragraph too", "これは日本語の段落です。", /^<p class="md-p md-cjk">/],
+  ["Chinese full of Latin names and code is still Chinese", "私有仓库 `WyattCode/XScreen`，对比度 `0x12` 仅读，Adaptive Sync 继续禁用，不轮询、不自动重试。", /^<p class="md-p md-cjk">/],
+  ["an English paragraph with a Chinese word is English", "The word 中文 stands for Chinese in this English paragraph and the rest is English.", /^<p class="md-p">/],
+  ["an English paragraph stays as it was", "This is plain English text.", /^<p class="md-p">This is plain English text\.<\/p>$/],
+  ["a link's address does not make it English", "[文档](https://example.com/a/very/long/english/looking/path/to/the/page)", /^<p class="md-p md-cjk">/],
+  ["a Chinese list item is marked, an English one is not", "- 第一项说明\n- second item", /<li class="md-cjk">第一项说明<\/li><li>second item<\/li>/],
+  ["a Chinese task item carries both", "- [x] 已经完成", /<li class="md-task md-cjk"><input type="checkbox" class="md-task-box" disabled checked \/>已经完成<\/li>/],
+  ["an English item nested in a Chinese one is its own", "- 父项的中文说明\n  - nested english", /<li class="md-cjk">父项的中文说明<ul class="md-list"><li>nested english<\/li><\/ul><\/li>/],
+  ["a quoted Chinese paragraph is marked", "> 引用里的一段中文说明", /<blockquote[^>]*><p class="md-p md-cjk">/],
   ["a link's text and url, off the reply", "[text](https://example.com)", /text.*example\.com/],
   // Tables. A reply containing a table once arrived as three lines of raw pipes while every check passed.
   ["a table's head", TABLE, /<table class="md-table">[\s\S]*<th>a<\/th>/],

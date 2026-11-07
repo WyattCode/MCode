@@ -852,14 +852,19 @@ function onError(event: Event) {
  * inline code (a chip cannot be split like a word) leaves the right edge
  * ragged by up to a hundred pixels. The expansion is between characters, which
  * is how these scripts are set; the last line of each paragraph stays where it
- * ends. Other languages keep their words as they are: stretching the gaps
- * between words is worse than a ragged edge, in a narrow column above all.
+ * ends. The renderer marks a paragraph or item `md-cjk` when its own words are
+ * mostly Chinese or Japanese (lib/markdown.ts): English is left alone, because
+ * stretching the gaps between words is worse than a ragged edge, in a narrow
+ * column above all, and the interface's language says nothing of the reply's.
  */
-:lang(zh) .text .md-p,
-:lang(zh) .text .md-list li,
-:lang(ja) .text .md-p,
-:lang(ja) .text .md-list li {
+.text .md-p.md-cjk,
+.text .md-list li.md-cjk {
   text-align: justify;
+}
+
+/* An item of another script inside a justified one does not take its alignment with the inheritance. */
+.text .md-list li:not(.md-cjk) {
+  text-align: start;
 }
 
 :root[data-theme="dark"] .text code {
