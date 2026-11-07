@@ -11,7 +11,7 @@ import MessageSourceRow from "./parts/MessageSource.vue"
 import type { MessageSource } from "@shared/protocol"
 import SubagentActivity from "./parts/SubagentActivity.vue"
 import type { Annotation, Attachment, AssistantMessage, AssistantPart, SubagentNotice } from "@shared/protocol"
-import { buildRows, retryReason, stagesOf, type InlineError, type StepItem, type StepRow } from "../lib/step-rows"
+import { buildRows, editsOnly, retryReason, stagesOf, type InlineError, type StepItem, type StepRow } from "../lib/step-rows"
 import { cleanReply, saysSomething } from "@shared/reply-clean"
 import { turnOpeners } from "@shared/steer"
 import { redactText } from "@shared/display-redact"
@@ -571,12 +571,13 @@ function layout(turn: Turn, at: number): { rows: Row[]; foldAt: number } {
     /*
      * The stage being worked in - everything after the last thing said, where
      * an answered question and subagent news count as said, as they end a
-     * stage in MiMo - has every one of its groups open.
+     * stage in MiMo - has every one of its groups open, bar one that holds only
+     * edits: those rows are detail, and stay folded until the reader opens them.
      */
     for (let index = all.length - 1; index >= 0; index--) {
       const row = all[index]!
       if (speaks(row)) break
-      if (row.kind === "group") row.open = true
+      if (row.kind === "group" && !editsOnly(row.items)) row.open = true
     }
     return { rows: all, foldAt: 0 }
   }
@@ -588,7 +589,7 @@ function layout(turn: Turn, at: number): { rows: Row[]; foldAt: number } {
     return { rows: all, foldAt: last.progressEnd }
   }
   if (last.progressEnd === last.end) {
-    for (const row of all.slice(last.start, last.end)) if (row.kind === "group" && !row.actor) row.open = true
+    for (const row of all.slice(last.start, last.end)) if (row.kind === "group" && !row.actor && !editsOnly(row.items)) row.open = true
   }
   return { rows: all, foldAt: 0 }
 }

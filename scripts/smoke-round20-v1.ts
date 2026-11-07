@@ -83,7 +83,8 @@ export async function roundTwentyVisualOneChecks(check: Check, section: (name: s
     check("V1-9c: a group head hovers to MiMo's txt", /color: var\(--text-body\);/.test(rule(steps, '.hs-summary:not([aria-disabled="true"]):hover')))
     // The dark half is --text-body's own, so no rule restates it any more.
     const live = /if \(live\) \{([\s\S]*?)return \{ rows: all, foldAt: 0 \}/.exec(stream)?.[1] ?? ""
-    check("V1-9d: while running every group of the unfinished stage opens; anything said ends the stage", /if \(speaks\(row\)\) break\s*if \(row\.kind === "group"\) row\.open = true/.test(live), live)
+    check("V1-9d: while running every group of the unfinished stage opens, bar one of edits only; anything said ends the stage", /if \(speaks\(row\)\) break\s*if \(row\.kind === "group" && !editsOnly\(row\.items\)\) row\.open = true/.test(live), live)
+    check("V1-9d: a finished turn's last stage that said nothing opens its groups the same way", /row\.kind === "group" && !row\.actor && !editsOnly\(row\.items\)\) row\.open = true/.test(stream))
   }
 
   section("Round 20 V1: the reply's type")
