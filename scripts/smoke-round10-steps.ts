@@ -9,7 +9,7 @@ import type { Check } from "./smoke-round5"
 import type { AssistantPart, Message, ToolPart, UserMessage } from "../src/shared/protocol"
 import { cleanLiveReply, cleanReply, isDotsOnly, saysSomething } from "../src/shared/reply-clean"
 import { opensTurn, turnOpeners } from "../src/shared/steer"
-import { buildRows, editsOnly, stagesOf } from "../src/renderer/src/lib/step-rows"
+import { buildRows, editsOnly, groupSummary, stagesOf } from "../src/renderer/src/lib/step-rows"
 import { cutTitle, noOutput, pathTitleParts, showsPath, stepImages, toolIcon } from "../src/renderer/src/lib/tool-meta"
 import { language, tn } from "../src/renderer/src/lib/i18n"
 import { redactText, redactValue, validCardNumber, validChineseID } from "../src/shared/display-redact"
@@ -65,6 +65,26 @@ export async function roundTenStepsChecks(check: Check, section: (name: string) 
     check("a group of edits only is edits-only, whatever the kind of edit", editsOnly(groupOf(tool("e1", "edit"), tool("e2", "write"), tool("e3", "apply_patch", "error"))))
     check("a read, a command or any other call in it makes it a plain group", !editsOnly(groupOf(tool("e4", "read"), tool("e5", "edit"))) && !editsOnly(groupOf(tool("e6", "edit"), tool("e7", "bash"))) && !editsOnly(groupOf(tool("e8", "mcp__x__y"))))
     check("and an empty one is not", !editsOnly([]))
+
+    // The summary counts files, not rows. A failed edit has no title from the server, so its row says the path as written and the retry says the project-relative one.
+    const edited = (id: string, file: string, ok: boolean) =>
+      tool(id, "edit", ok ? "completed" : "error", { input: { filePath: file }, ...(ok ? { title: "../../ChatGPT/DShop/src/" + file.split(/[\\/]/).pop() } : {}) })
+    const counts = (...parts: ToolPart[]) => groupSummary(groupOf(...parts))
+    const editCount = (...parts: ToolPart[]) => counts(...parts).find((entry) => entry.bucket === "edit")?.count
+    check(
+      "a failed edit and its retry are one file, whichever way the path was spelled",
+      editCount(
+        edited("f1", "D:\\Documents\\ChatGPT\\DShop\\src\\catalog.mjs", false),
+        edited("f2", "D:/Documents/ChatGPT/DShop/src/catalog.mjs", true),
+        edited("f3", "D:\\Documents\\ChatGPT\\DShop\\src\\quote-validity.mjs", false),
+        edited("f4", "D:\\Documents\\ChatGPT\\DShop\\src\\quote-validity.mjs", true),
+        edited("f5", "D:\\Documents\\ChatGPT\\DShop\\src\\cadence.mjs", true),
+      ) === 3,
+      String(editCount(edited("f1", "D:\\a\\catalog.mjs", false), edited("f2", "D:/a/catalog.mjs", true))),
+    )
+    check("two different files stay two", editCount(edited("f6", "D:/p/a.mjs", true), edited("f7", "D:/p/b.mjs", true)) === 2)
+    check("reading counts the same way", counts(tool("f8", "read", "completed", { input: { filePath: "D:\\p\\a.mjs" } }), tool("f9", "read", "completed", { input: { path: "D:/p/a.mjs" } }))[0]?.count === 1)
+    check("a call with no path of its own is told apart by its title", editCount(tool("g1", "apply_patch", "completed", { title: "one.mjs" }), tool("g2", "apply_patch", "completed", { title: "two.mjs" })) === 2)
   }
 
   section("Round 10 (K10-1): MiMo's stages")
