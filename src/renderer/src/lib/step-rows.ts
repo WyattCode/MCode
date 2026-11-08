@@ -238,17 +238,6 @@ function fileKey(part: ToolPart): string {
   return stepTitle(part)
 }
 
-/**
- * A group made only of edits (and the decisions on them). The edit rows are the
- * model's own detail - one line per change - and the files they touched are
- * already drawn as a card, so such a group stays folded unless the reader opens
- * it, even while the turn is working in it.
- */
-export function editsOnly(items: StepItem[]): boolean {
-  const tools = items.flatMap((item) => (item.kind === "tool" ? [item.part] : []))
-  return tools.length > 0 && tools.every((part) => bucketOf(part.name) === "edit")
-}
-
 /** A failed call or an error inside the group; a skipped or refused call is not a failure. */
 export function groupFailed(items: StepItem[]): boolean {
   return items.some((item) => item.kind === "error" || (item.kind === "tool" && stepState(item.part) === "error"))

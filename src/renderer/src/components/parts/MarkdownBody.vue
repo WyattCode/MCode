@@ -841,7 +841,30 @@ function onError(event: Event) {
   color: #3a3a38;
   background: #f0f0f2;
   border-radius: 5px;
+  /* A chip that wraps is two whole chips, each with its own corners, not one cut open at the break. */
+  box-decoration-break: clone;
   font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+/*
+ * Chinese and Japanese prose runs flush down both edges. Left alone, every line
+ * ends where its last character or chip happens to fall, and a reply full of
+ * inline code (a chip cannot be split like a word) leaves the right edge
+ * ragged by up to a hundred pixels. The expansion is between characters, which
+ * is how these scripts are set; the last line of each paragraph stays where it
+ * ends. The renderer marks a paragraph or item `md-cjk` when its own words are
+ * mostly Chinese or Japanese (lib/markdown.ts): English is left alone, because
+ * stretching the gaps between words is worse than a ragged edge, in a narrow
+ * column above all, and the interface's language says nothing of the reply's.
+ */
+.text .md-p.md-cjk,
+.text .md-list li.md-cjk {
+  text-align: justify;
+}
+
+/* An item of another script inside a justified one does not take its alignment with the inheritance. */
+.text .md-list li:not(.md-cjk) {
+  text-align: start;
 }
 
 :root[data-theme="dark"] .text code {

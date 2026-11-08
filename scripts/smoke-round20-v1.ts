@@ -82,9 +82,11 @@ export async function roundTwentyVisualOneChecks(check: Check, section: (name: s
     check("V1-8: a row's words are the thread's muted colour in both themes", /color: var\(--text-base\);/.test(rule(steps, ".hs-h")) && !/:is\(\.hs-h,/.test(steps))
     check("V1-9c: a group head hovers to MiMo's txt", /color: var\(--text-body\);/.test(rule(steps, '.hs-summary:not([aria-disabled="true"]):hover')))
     // The dark half is --text-body's own, so no rule restates it any more.
-    const live = /if \(live\) \{([\s\S]*?)return \{ rows: all, foldAt: 0 \}/.exec(stream)?.[1] ?? ""
-    check("V1-9d: while running every group of the unfinished stage opens, bar one of edits only; anything said ends the stage", /if \(speaks\(row\)\) break\s*if \(row\.kind === "group" && !editsOnly\(row\.items\)\) row\.open = true/.test(live), live)
-    check("V1-9d: a finished turn's last stage that said nothing opens its groups the same way", /row\.kind === "group" && !row\.actor && !editsOnly\(row\.items\)\) row\.open = true/.test(stream))
+    // The reader opens the steps they want: no group opens by itself, whether its turn is running, finished, stopped or failed.
+    const toolGroup = await read("src/renderer/src/components/parts/ToolGroup.vue")
+    check("V1-9d: the layout never opens a group", !/\.open = true|open: true|open: boolean/.test(stream.slice(stream.indexOf("function layout("), stream.indexOf("const layouts = computed"))))
+    check("V1-9d: a group is given no default-open, and the component has none", !/default-open|:defaultOpen/.test(template) && !/defaultOpen/.test(toolGroup))
+    check("V1-9d: a group starts folded, bar the steps command's state", /const open = ref\(stepsOpen\.value\)/.test(toolGroup))
   }
 
   section("Round 20 V1: the reply's type")
@@ -92,6 +94,11 @@ export async function roundTwentyVisualOneChecks(check: Check, section: (name: s
     check("R-1: the code block's copy is muted", /color: var\(--text-base\);/.test(rule(body, ".text .md-code-copy")))
     check("R-2: line numbers are muted at .6", /color: var\(--text-base\);[\s\S]*opacity: 0\.6;/.test(rule(body, ".text .md-code.md-lined .line::before")))
     check("R-3: code in a block keeps 1.5px 5px", /padding: 1\.5px 5px;/.test(rule(body, ".text .md-code code")))
+    // A reply of Chinese prose and inline code ended every line wherever its last chip fell: flush both edges, for the scripts set that way only.
+    check("R-3b: a paragraph or item marked md-cjk is justified, as a rule of its own", /\.text \.md-p\.md-cjk,\s*\.text \.md-list li\.md-cjk \{\s*text-align: justify;\s*\}/.test(body))
+    check("R-3b: nothing else is justified, nor does the interface's language decide it (English in a narrow column was stretched)", (body.match(/text-align: justify/g) ?? []).length === 1 && !/:lang\(/.test(body.slice(body.indexOf("md-cjk") - 400, body.indexOf("md-cjk") + 400)))
+    check("R-3b: an item not marked takes no alignment from the one around it", /\.text \.md-list li:not\(\.md-cjk\) \{\s*text-align: start;\s*\}/.test(body))
+    check("R-3b: a wrapped chip keeps both its ends rounded", /box-decoration-break: clone;/.test(rule(body, ".text code")))
     const chip = body.slice(body.lastIndexOf("\n.text code {"))
     check("R-4: the chip is #f0f0f2 / #3a3a38 in light, 13px on the text scale, at the weight around it", /color: #3a3a38;\s*background: #f0f0f2;[\s\S]*?font-size: calc\(13px \* var\(--ui-font-scale, 1\)\);\s*\}/.test(chip) && !/font-weight/.test(rule(body, ".text code")))
     check("R-4: and #2e2e2e / #e6e6e6 in dark", /:root\[data-theme="dark"\] \.text code \{\s*color: #e6e6e6;\s*background: #2e2e2e;/.test(body))

@@ -9,7 +9,7 @@ import type { Check } from "./smoke-round5"
 import type { AssistantPart, Message, ToolPart, UserMessage } from "../src/shared/protocol"
 import { cleanLiveReply, cleanReply, isDotsOnly, saysSomething } from "../src/shared/reply-clean"
 import { opensTurn, turnOpeners } from "../src/shared/steer"
-import { buildRows, editsOnly, groupSummary, stagesOf } from "../src/renderer/src/lib/step-rows"
+import { buildRows, groupSummary, stagesOf } from "../src/renderer/src/lib/step-rows"
 import { cutTitle, noOutput, pathTitleParts, showsPath, stepImages, toolIcon } from "../src/renderer/src/lib/tool-meta"
 import { language, tn } from "../src/renderer/src/lib/i18n"
 import { redactText, redactValue, validCardNumber, validChineseID } from "../src/shared/display-redact"
@@ -57,14 +57,10 @@ export async function roundTenStepsChecks(check: Check, section: (name: string) 
     const answered = buildRows([tool("q2", "question", "completed"), tool("r5", "read")])
     check("an answered question is still its own row", answered.map((row) => row.kind).join() === "question,group")
 
-    // A group of edits is the model's detail: it stays folded by default, where a group with a read or a command in it opens as before.
     const groupOf = (...parts: ToolPart[]) => {
       const row = buildRows(parts).find((entry) => entry.kind === "group")
       return row?.kind === "group" ? row.items : []
     }
-    check("a group of edits only is edits-only, whatever the kind of edit", editsOnly(groupOf(tool("e1", "edit"), tool("e2", "write"), tool("e3", "apply_patch", "error"))))
-    check("a read, a command or any other call in it makes it a plain group", !editsOnly(groupOf(tool("e4", "read"), tool("e5", "edit"))) && !editsOnly(groupOf(tool("e6", "edit"), tool("e7", "bash"))) && !editsOnly(groupOf(tool("e8", "mcp__x__y"))))
-    check("and an empty one is not", !editsOnly([]))
 
     // The summary counts files, not rows. A failed edit has no title from the server, so its row says the path as written and the retry says the project-relative one.
     const edited = (id: string, file: string, ok: boolean) =>

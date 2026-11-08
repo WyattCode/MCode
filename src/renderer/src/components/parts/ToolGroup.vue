@@ -24,16 +24,10 @@ import { groupFailed, groupSummary, singleTool, type StepItem } from "../../lib/
 const props = withDefaults(
   defineProps<{
     items: StepItem[]
-    /**
-     * Open while it is the group the live turn is working in. When the answer
-     * starts arriving this turns false and the group folds itself - unless the
-     * reader has opened or closed it, which sticks.
-     */
-    defaultOpen?: boolean
     /** subagents: a group of subagent calls - one pill row, or its calls flat, never folded behind a summary. */
     actor?: boolean
   }>(),
-  { defaultOpen: false, actor: false },
+  { actor: false },
 )
 
 /* subagents: subagent calls that are all working or done are one pill list, with no summary line, as MiMo merges them. */
@@ -56,26 +50,17 @@ const summary = computed(() =>
 /** Stable id linking the summary disclosure to its StepCollapse panel. */
 const panelId = computed(() => `step-group-${props.items[0]?.id ?? "x"}`)
 
-const touched = ref(false)
-const open = ref(props.defaultOpen || stepsOpen.value)
+/* Folded unless the reader opens it, one at a time or all at once with the steps command. */
+const open = ref(stepsOpen.value)
 /** Only a fold the reader asked for animates. */
 const animate = ref(false)
 
-watch(
-  () => props.defaultOpen,
-  (value) => {
-    if (!touched.value) open.value = value
-  },
-)
-
-/* The steps command sets every group to one state, and counts as a choice made. */
+/* The steps command sets every group to one state. */
 watch(stepsEpoch, () => {
-  touched.value = true
   open.value = stepsOpen.value
 })
 
 function toggle() {
-  touched.value = true
   animate.value = true
   open.value = !open.value
 }
