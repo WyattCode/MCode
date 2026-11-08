@@ -891,12 +891,16 @@ const footMenu = ref<{ x: number; y: number; end: boolean; width: number }>()
 /** MiMo's account menu is 248 wide; MCode's column is narrower, so the menu is never wider than the row's own strip. */
 const FOOT_MENU_WIDTH = 248
 
+/** A gear on the 16 grid: the toothed outline and the hub. Settings used to be eight spokes round a dot, which read as a sun. */
+const GEAR_ICON =
+  "M8.15 1.33h-0.29a1.33 1.33 0 0 0 -1.33 1.33v0.12a1.33 1.33 0 0 1 -0.67 1.15l-0.29 0.17a1.33 1.33 0 0 1 -1.33 0l-0.1 -0.05a1.33 1.33 0 0 0 -1.82 0.49l-0.15 0.25a1.33 1.33 0 0 0 0.49 1.82l0.1 0.07a1.33 1.33 0 0 1 0.67 1.15v0.34a1.33 1.33 0 0 1 -0.67 1.16l-0.1 0.06a1.33 1.33 0 0 0 -0.49 1.82l0.15 0.25a1.33 1.33 0 0 0 1.82 0.49l0.1 -0.05a1.33 1.33 0 0 1 1.33 0l0.29 0.17a1.33 1.33 0 0 1 0.67 1.15V13.33a1.33 1.33 0 0 0 1.33 1.33h0.29a1.33 1.33 0 0 0 1.33 -1.33v-0.12a1.33 1.33 0 0 1 0.67 -1.15l0.29 -0.17a1.33 1.33 0 0 1 1.33 0l0.1 0.05a1.33 1.33 0 0 0 1.82 -0.49l0.15 -0.26a1.33 1.33 0 0 0 -0.49 -1.82l-0.1 -0.05a1.33 1.33 0 0 1 -0.67 -1.16v-0.33a1.33 1.33 0 0 1 0.67 -1.16l0.1 -0.06a1.33 1.33 0 0 0 0.49 -1.82l-0.15 -0.25a1.33 1.33 0 0 0 -1.82 -0.49l-0.1 0.05a1.33 1.33 0 0 1 -1.33 0l-0.29 -0.17a1.33 1.33 0 0 1 -0.67 -1.15V2.67a1.33 1.33 0 0 0 -1.33 -1.33zM8 6a2 2 0 1 1 0 4a2 2 0 1 1 0-4"
+
 const footMenuItems = computed<MenuItem[]>(() => [
   {
     key: "settings",
     label: t("rail.settings"),
     hint: "Ctrl+,",
-    icon: "M8 6a2 2 0 1 1 0 4a2 2 0 1 1 0-4M8 2.5v1.5M8 12v1.5M2.5 8H4M12 8h1.5M4.1 4.1l1.1 1.1M10.8 10.8l1.1 1.1M4.1 11.9l1.1-1.1M10.8 5.2l1.1-1.1",
+    icon: GEAR_ICON,
   },
 ])
 
@@ -1875,7 +1879,7 @@ onBeforeUnmount(() => {
         @click="emit('settings')"
       >
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path d="M8 6a2 2 0 1 1 0 4a2 2 0 1 1 0-4M8 2.5v1.5M8 12v1.5M2.5 8H4M12 8h1.5M4.1 4.1l1.1 1.1M10.8 10.8l1.1 1.1M4.1 11.9l1.1-1.1M10.8 5.2l1.1-1.1" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" />
+          <path :d="GEAR_ICON" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
       </button>
       <!-- MiMo's update capsule, beside the row. -->
