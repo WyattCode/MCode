@@ -186,6 +186,18 @@ export async function roundTwentySixChecks(check: Check, section: (name: string)
     const spent = Date.now() - started
     check("half a megabyte of unclosed links renders in well under a second", spent < 3000, `${spent}ms`)
 
+    /* The paragraph's script is read in one pass; bare addresses, a run of them or spaced ones, are skipped as they are met. */
+    for (const [name, source] of [
+      ["bare addresses run together", "中文 " + "http://".repeat(72 * 1024)],
+      ["spaced bare addresses", "中文 " + "https://a.example/x ".repeat(26 * 1024)],
+      ["a lone h repeated", "中文" + "h".repeat(512 * 1024)],
+    ] as const) {
+      const begun = Date.now()
+      renderReply(source, {})
+      const took = Date.now() - begun
+      check(`${name} classify in well under a second`, took < 3000, `${took}ms`)
+    }
+
     /* Each level of quoting is a frame; five thousand of them overflowed the stack, and 5 KB of text is five thousand. */
     let threw: string | undefined
     try {

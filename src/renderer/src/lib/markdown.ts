@@ -729,14 +729,19 @@ const QUOTE_DEPTH = 64
 const HAN_OR_KANA = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/gu
 const LETTER = /\p{L}/gu
 
+/** Printable ASCII other than the marks that end a bare address: space, quotes, angle and square brackets, a closing parenthesis, a backtick. */
+function isAddressChar(code: number): boolean {
+  return code > 32 && code < 127 && code !== 34 && code !== 39 && code !== 60 && code !== 62 && code !== 93 && code !== 41 && code !== 96
+}
+
 /**
  * Whether a paragraph's words are Chinese or Japanese: the scripts that are set
  * flush down both edges, by spreading the line between its characters. The
  * same spreading between the words of an English line leaves gaps of fifty
  * pixels in a narrow column, so this is read off the paragraph itself, not the
- * language of the interface. Code spans and link addresses are not prose, and
- * are left out of the count; a paragraph is Chinese or Japanese when at least
- * half its letters are.
+ * language of the interface. Code spans, link addresses and bare web addresses
+ * are not prose, and are left out of the count; a paragraph is Chinese or
+ * Japanese when at least half its letters are.
  *
  * One pass, each character read once. The tidier pair of regular expressions
  * for the two exclusions (a closing mark searched for from every opening one)
@@ -756,6 +761,12 @@ function setsFlush(markdown: string): boolean {
     } else if (char === 93 && markdown.charCodeAt(at + 1) === 40 && at < lastParen) {
       // A link's address, from `](` to the first `)`, which is known to exist (`at < lastParen`).
       end = markdown.indexOf(")", at + 2)
+    } else if (char === 104 && (markdown.startsWith("https://", at) || markdown.startsWith("http://", at))) {
+      // A bare address runs to the first character an address cannot hold: a space, a quote or bracket, or any non-ASCII
+      // character, which is where the Chinese after it begins. Each character is passed once.
+      let stop = at
+      while (stop < markdown.length && isAddressChar(markdown.charCodeAt(stop))) stop += 1
+      end = stop - 1
     }
     if (end < 0) continue
     kept.push(markdown.slice(from, at))
