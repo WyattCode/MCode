@@ -142,7 +142,11 @@ export const ActorTool: ToolDefinition = {
             enum: [...SUBAGENT_TYPES],
             description: "run, spawn: explore only reads; general can also edit files and run commands",
           },
-          model: { type: "string", description: "run, spawn: provider/model to use instead of this conversation's model; see the models action" },
+          model: {
+            type: "string",
+            description:
+              "run, spawn: provider/model to use instead of this conversation's model. Never guess the id: call the models tool first and pass one it lists.",
+          },
           task_id: {
             type: "string",
             description:

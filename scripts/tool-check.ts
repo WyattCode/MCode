@@ -13,7 +13,7 @@ import { createRequire } from "node:module"
 import { pathToFileURL } from "node:url"
 import path from "node:path"
 import os from "node:os"
-import { execSync, spawn } from "node:child_process"
+import { execFileSync, execSync, spawn } from "node:child_process"
 import { Storage } from "../src/server/storage"
 import { Bus } from "../src/server/bus"
 import { Config } from "../src/server/config"
@@ -25,6 +25,7 @@ import { guardPlanWrite, planFolders, planWritable } from "../src/server/session
 import { ToolError } from "../src/server/tool/types"
 import type { ServerEvent } from "../src/shared/protocol"
 import { Shells } from "../src/server/shell"
+import { cleanBashOutput, createPipeline } from "../src/server/tool/bash-clean"
 
 const problems: string[] = []
 function check(name: string, ok: boolean, detail = ""): void {
@@ -86,6 +87,44 @@ async function main(): Promise<void> {
       progress: () => undefined,
       snapshot: async (target: string) => {
         recorded.push(target)
+      },
+      models: {
+        providers: () => [
+          { id: "anthropic", name: "Anthropic", kind: "anthropic", configured: true },
+          { id: "local", name: "Local", kind: "openai-compatible", configured: false },
+        ],
+        models: (provider: string) =>
+          provider === "anthropic"
+            ? [
+                {
+                  id: "claude-sonnet-4-5",
+                  name: "Claude Sonnet 4.5",
+                  contextWindow: 200000,
+                  input: 3,
+                  output: 15,
+                  reasoning: true,
+                  inputs: { text: true, image: true, pdf: true },
+                  efforts: ["low", "medium", "high", "max"],
+                },
+                {
+                  id: "tiny-chat",
+                  name: "Tiny Chat",
+                  contextWindow: 32000,
+                  input: 0,
+                  output: 0,
+                  inputs: { text: true },
+                },
+              ]
+            : [
+                {
+                  id: "local-model",
+                  name: "Local Model",
+                  contextWindow: 8000,
+                  input: 0,
+                  output: 0,
+                  inputs: { text: true },
+                },
+              ],
       },
     }) as never
 
@@ -161,6 +200,28 @@ async function main(): Promise<void> {
       .execute({ file_path: target, old_string: "beta", new_string: "delta" }, context(controller.signal))
       .catch(() => undefined)
     check("an edit matching once lands", (await fs.readFile(target, "utf8")).includes("delta"))
+  }
+
+  console.log("an edit whose replacement is already in the file")
+  {
+    const read = findTool("read")
+    if (!read) throw new Error("the registry is missing the read tool")
+    const target = path.join(project, "applied.txt")
+    const applied = 'const greeting = "hello, world"'
+    await fs.writeFile(target, `first line\n${applied}\nlast line\n`, "utf8")
+    const controller = new AbortController()
+    await read.execute({ file_path: target }, context(controller.signal, "call-applied-read"))
+    const missed = await edit
+      .execute(
+        { file_path: target, old_string: 'const greeting = "goodbye"', new_string: applied },
+        context(controller.signal, "call-applied-edit"),
+      )
+      .then(
+        () => "(no error)",
+        (failure: Error) => failure.message,
+      )
+    check("the failure says the edit may already be applied", /may already be applied/i.test(missed), missed)
+    check("and names the line its new text is on", missed.includes("line 2"), missed)
   }
 
   /*
@@ -429,6 +490,163 @@ async function main(): Promise<void> {
 
     check("the model is never offered the invalid tool", !build.includes("invalid"))
     check("though a call can still be routed to it", findTool("invalid") !== undefined)
+  }
+
+  console.log("the models tool")
+  {
+    const models = findTool("models")
+    check("the models tool is offered to the model", models !== undefined)
+    check(
+      "and stays with the last few, since every earlier tool prefix is cached",
+      TOOLS.map((tool) => tool.name).slice(-6).includes("models"),
+      TOOLS.map((tool) => tool.name).slice(-6).join(","),
+    )
+    if (models) {
+      const controller = new AbortController()
+      const listed = await models.execute({ provider: "anthropic" }, context(controller.signal, "call-models"))
+      check("it names each model as provider/model", listed.output.includes("anthropic/claude-sonnet-4-5"), listed.output)
+      check("with its price per million tokens", listed.output.includes("$3/$15"), listed.output)
+      check("with its context window", listed.output.includes("200000 context"), listed.output)
+      check("with the input types it accepts", listed.output.includes("inputs: text, image, pdf"), listed.output)
+      check("and with its variants", listed.output.includes("variants: low, medium, high, max"), listed.output)
+      check("it leaves out a provider that is not connected", !listed.output.includes("local/local-model"), listed.output)
+      const vision = await models.execute({ provider: "anthropic", vision: true }, context(controller.signal, "call-models-vision"))
+      check("vision: true keeps the model that reads images", vision.output.includes("anthropic/claude-sonnet-4-5"), vision.output)
+      check("and drops the one that does not", !vision.output.includes("anthropic/tiny-chat"), vision.output)
+    }
+  }
+
+  console.log("the worktree tools")
+  {
+    const create = findTool("worktree_create")
+    const list = findTool("worktree_list")
+    const remove = findTool("worktree_remove")
+    check("the three worktree tools are registered", Boolean(create && list && remove))
+    check(
+      "and they sit last, so every earlier tool prefix stays cached",
+      TOOLS.slice(-3).map((tool) => tool.name).join(",") === "worktree_create,worktree_list,worktree_remove",
+      TOOLS.slice(-3).map((tool) => tool.name).join(","),
+    )
+    if (create && list && remove) {
+      const repo = path.join(root, "worktree-repo")
+      await fs.mkdir(repo, { recursive: true })
+      execFileSync("git", ["init", "-q"], { cwd: repo })
+      await fs.writeFile(path.join(repo, "README.md"), "# repo\n", "utf8")
+      execFileSync("git", ["add", "."], { cwd: repo })
+      execFileSync("git", ["-c", "user.email=mcode@example.test", "-c", "user.name=MCode", "commit", "-qm", "init"], { cwd: repo })
+      const repoContext = (signal: AbortSignal, callID: string) => ({ ...context(signal, callID), directory: repo })
+      const controller = new AbortController()
+      const target = path.join(repo, ".worktrees", "feature")
+      const made = await create.execute({ name: "feature", path: target }, repoContext(controller.signal, "call-wt-create"))
+      check("a worktree is created where the call asked", made.output.includes(target), made.output)
+      check("and the folder exists", (await fs.stat(target).catch(() => undefined))?.isDirectory() === true)
+      const listed = await list.execute({}, repoContext(controller.signal, "call-wt-list"))
+      check("the list names the new worktree", listed.output.includes(target), listed.output)
+      const removed = await remove.execute({ directory: target }, repoContext(controller.signal, "call-wt-remove"))
+      check("remove takes it back out", /removed/i.test(`${removed.title ?? ""} ${removed.output}`), removed.output)
+      check("and the folder is gone", (await fs.stat(target).catch(() => undefined)) === undefined)
+
+      /*
+       * The sandbox half: a worktree lives outside the project as often as not,
+       * and the tool must put that to the user through the same path gate every
+       * other tool uses rather than reaching the disk on the model's word.
+       */
+      const gateBus = new Bus()
+      const gateStorage = new Storage(path.join(root, "gate-storage"))
+      const gateConfig = new Config(gateStorage, gateBus, path.join(root, "gate-credentials.json"))
+      await gateStorage.write("config", {})
+      await gateConfig.load()
+      const gatePermissions = new Permissions(gateBus, gateConfig)
+      let gateAsked = 0
+      gateBus.subscribe((event) => {
+        if (event.type !== "permission.requested") return
+        gateAsked += 1
+        const request = (event as { request: { id: string } }).request
+        setTimeout(() => gatePermissions.respond(request.id, "reject"), 0)
+      })
+      const gateContext = { ...context(controller.signal, "call-wt-sandbox"), directory: repo, permissions: gatePermissions }
+      const outsider = path.join(root, "outside-worktree")
+      const refused = await remove
+        .execute({ directory: outsider }, gateContext)
+        .then(() => "(no error)", (failure: Error) => failure.message)
+      check("a worktree path outside the project is put to the user", gateAsked > 0, String(gateAsked))
+      check("and a refusal stops the call", /denied|refus/i.test(refused), refused)
+    }
+  }
+
+  console.log("cleaning bash output")
+  {
+    const controller = new AbortController()
+    const ansi = cleanBashOutput("\u001b[31mred\u001b[0m plain")
+    check("ANSI colour codes are stripped", !ansi.text.includes("\u001b") && ansi.text === "red plain", JSON.stringify(ansi.text))
+
+    const progress = cleanBashOutput("downloading 10%\rdownloading 60%\rdownloading 100%\n")
+    check("only the last frame of a carriage-return progress line survives", progress.text === "downloading 100%\n", JSON.stringify(progress.text))
+
+    const redacted = cleanBashOutput("Authorization: Bearer abcdefghijklmnop123456\naws AKIAABCDEFGHIJKLMNOP\n")
+    check("a bearer token is redacted", !redacted.text.includes("abcdefghijklmnop123456"), redacted.text)
+    check("and so is an AWS access key", !redacted.text.includes("AKIAABCDEFGHIJKLMNOP"), redacted.text)
+
+    const long = cleanBashOutput("y".repeat(900))
+    check("a line past the ceiling keeps its head and says what was elided", long.text.includes("<elided") && long.text.length < 900, long.text.slice(0, 60))
+
+    const grown = createPipeline([{ name: "grow", apply: (text) => text + "plus" }]).run("short")
+    check("the never-worse guard returns the original when cleaning grows it", grown.text === "short" && grown.degraded, JSON.stringify(grown))
+
+    const raw = cleanBashOutput("\u001b[31mred\u001b[0m", { command: "echo hi # raw" })
+    check("# raw skips cleaning", raw.text.includes("\u001b"), JSON.stringify(raw.text))
+    const previous = process.env.MCODE_BASH_RAW
+    process.env.MCODE_BASH_RAW = "1"
+    const envRaw = cleanBashOutput("\u001b[31mred\u001b[0m")
+    if (previous === undefined) delete process.env.MCODE_BASH_RAW
+    else process.env.MCODE_BASH_RAW = previous
+    check("MCODE_BASH_RAW=1 skips cleaning", envRaw.text.includes("\u001b"))
+
+    const script = path.join(project, "noisy.js")
+    await fs.writeFile(script, 'process.stdout.write("\\u001b[31mred\\u001b[0m\\nstep 1\\rstep 2\\n")', "utf8")
+    const noisy = await bash.execute({ command: `node "${script}"`, timeout: 60000 }, context(controller.signal, "call-clean"))
+    check("the bash tool's own output is cleaned", !noisy.output.includes("\u001b") && noisy.output.includes("step 2") && !noisy.output.includes("step 1"), JSON.stringify(noisy.output))
+  }
+
+  console.log("a todowrite-shaped call to the task tool")
+  {
+    const task = findTool("task")
+    if (!task) throw new Error("the registry is missing the task tool")
+    const registry: Record<string, unknown>[] = []
+    const controller = new AbortController()
+    const result = await task.execute(
+      {
+        todos: [
+          { content: "Read the parser", status: "completed" },
+          { content: "Fix the parser", status: "in_progress" },
+          { content: "Run its tests", status: "pending" },
+          { content: "Rewrite the lexer", status: "cancelled" },
+        ],
+      },
+      {
+        ...context(controller.signal, "call-todos"),
+        tasks: {
+          update: async (
+            change: (list: Record<string, unknown>[], who: { owner: string; subagent: boolean }) => {
+              list: Record<string, unknown>[]
+              result: { output: string; title?: string; metadata?: Record<string, unknown> }
+            },
+          ) => {
+            const applied = change(registry, { owner: "s1", subagent: false })
+            registry.splice(0, registry.length, ...applied.list)
+            return applied.result
+          },
+        },
+      } as never,
+    )
+    const expected = [
+      "T1 [done] Read the parser",
+      "T2 [in_progress] Fix the parser",
+      "T3 [open] Run its tests",
+      "T4 [abandoned] Rewrite the lexer",
+    ]
+    check("todos without an operation become a plan, in the order they were sent", result.output === expected.join("\n"), result.output)
+    check("and the receipt keeps the plan's own shape", result.title === "4" && JSON.stringify(result.metadata?.ids) === '["T1","T2","T3","T4"]', JSON.stringify(result.metadata))
   }
 
   console.log("a call that could not be dispatched")

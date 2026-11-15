@@ -5,6 +5,7 @@ import type { ToolOutputs } from "./truncate"
 import type { SkillInfo } from "../skill"
 import type { Attachment, ModelModalities, TaskItem, WebSearchSelection } from "@shared/protocol"
 import type { OperationKind } from "@shared/operation-kind"
+import type { ModelsSource } from "./models"
 
 export interface ToolContext {
   sessionID: string
@@ -61,6 +62,13 @@ export interface ToolContext {
    * by side. Absent inside a subagent, like `subagents`.
    */
   fanout?: FanoutControl
+  /**
+   * models: the connected providers and their catalogs.
+   *
+   * Absent only where no backend config stands behind the call, which is what
+   * the tool reports instead of inventing a list.
+   */
+  models?: ModelsSource
   /** subagents: set when the call comes from a subagent's conversation. */
   subagent?: boolean
   /** session chat: messaging the other conversations. Absent inside a subagent. */

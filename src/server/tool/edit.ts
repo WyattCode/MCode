@@ -216,6 +216,38 @@ function quoteLines(text: string): string[] {
   return lines
 }
 
+/**
+ * opencode's `normalizeForMatch`: typographic quotes, dashes and unicode
+ * spaces folded to their plain forms, one character for one character so an
+ * index into the folded text is still an index into the original.
+ */
+function normalizeForMatch(value: string): string {
+  return value
+    .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
+    .replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]/g, "-")
+    .replace(/[\u00A0\u2002-\u200A\u202F\u205F\u3000]/g, " ")
+}
+
+/**
+ * The line where this edit's replacement already sits, or undefined.
+ *
+ * opencode's `missHint` asks this before offering the closest text: a model
+ * that retries an edit that already landed - after a dropped connection, or
+ * from a confident reread of its own plan - should be told the work is there
+ * rather than being shown the old line and asked to quote it again. Short
+ * replacements are left out because a line like `}` or `return` says nothing
+ * about whether the edit applied.
+ */
+function alreadyApplied(content: string, replacement: string): number | undefined {
+  const wanted = replacement.replaceAll("\r\n", "\n")
+  if (wanted.trim().length < 20) return undefined
+  const view = content.replaceAll("\r\n", "\n")
+  const at = normalizeForMatch(view).indexOf(normalizeForMatch(wanted))
+  if (at < 0) return undefined
+  return view.slice(0, at).split("\n").length
+}
+
 function normalizeUnicodeLine(line: string): string {
   return line
     .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
@@ -503,6 +535,17 @@ function replaceIn(original: string, change: Change, ending: "\r\n" | "\n", disp
         reindented: tier === "indentation",
       }
     }
+  }
+
+  /*
+   * The work may already be done: order matters here, because the old line's
+   * closest text is no help when the replacement is sitting in the file.
+   */
+  const appliedAt = alreadyApplied(original, change.newString)
+  if (appliedAt !== undefined) {
+    throw new ToolError(
+      `old_string was not found in ${display}, but new_string is already there at line ${appliedAt}, so this edit may already be applied.`,
+    )
   }
 
   const hint = closestMatch(original, change.oldString)

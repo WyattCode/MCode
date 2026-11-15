@@ -83,7 +83,7 @@ function responsesMedia(part: WirePart): Record<string, unknown>[] {
 export function toInput(history: Message[], inputs?: Partial<ModelModalities>, model?: ModelRef): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = []
 
-  for (const message of requestHistory(history)) {
+  for (const message of requestHistory(history, inputs)) {
     if (message.role === "user") {
       // MiMo's parts: a picture the model reads goes natively; every other attachment is named by path in the turn's blocks.
       const parts = attachmentParts(message.attachments ?? [], inputs, "responses", "user")

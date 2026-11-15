@@ -1,4 +1,4 @@
-import type { AssistantMessage, AssistantPart, Message, ToolPart, UserMessage } from "@shared/protocol"
+import type { AssistantMessage, AssistantPart, Attachment, Message, ModelModalities, ToolPart, UserMessage } from "@shared/protocol"
 
 /**
  * The stored transcript as MiMo shapes it for a provider, in the request only.
@@ -76,7 +76,75 @@ function spoken(message: AssistantMessage): boolean {
   return message.parts.some((part) => (part.type === "text" && part.text.trim() !== "") || part.type === "tool")
 }
 
-export function requestHistory(messages: Message[]): Message[] {
+/** The word a note uses for one kind of attachment. */
+const MEDIA_WORD = { image: "image", pdf: "PDF" } as const
+
+type UnsupportedMedia = keyof typeof MEDIA_WORD
+
+/** Whether a file is a picture or a PDF, the two kinds a model's `inputs` decides by name here. */
+function mediaOf(file: Attachment): UnsupportedMedia | undefined {
+  if (file.mime.startsWith("image/")) return "image"
+  if (file.mime === "application/pdf") return "pdf"
+  return undefined
+}
+
+function mediaNote(file: Attachment, media: UnsupportedMedia): string {
+  const name = file.path.split(/[\\/]/).pop() || file.path
+  return `[${name} was attached, but this model cannot read ${MEDIA_WORD[media]} input, so the file was not sent. Tell the user it could not be read.]`
+}
+
+/** Replaces a file the target model cannot read with the one line the model reads instead. */
+function replacedFile(file: Attachment, media: UnsupportedMedia): Attachment {
+  // `byPath` and `copy` go with the payload: nothing may load or send this file later.
+  return { path: file.path, mime: file.mime, data: "", byPath: false, note: mediaNote(file, media) }
+}
+
+function replaceUnsupported(files: Attachment[] | undefined, inputs: Partial<ModelModalities>): Attachment[] | undefined {
+  if (!files?.length) return files
+  let changed = false
+  const out = files.map((file) => {
+    // A loader's own note already stands in for the file; keep the more specific reason.
+    if (file.note) return file
+    const media = mediaOf(file)
+    if (!media || inputs[media]) return file
+    changed = true
+    return replacedFile(file, media)
+  })
+  return changed ? out : files
+}
+
+/**
+ * Replaces every picture and PDF the target model cannot read with a line of
+ * text saying so, across the whole transcript.
+ *
+ * `read` already refuses to attach media the conversation's model cannot take,
+ * but a conversation that changes model keeps its old attachments. A provider
+ * hands those history records straight to the wire, where an unsupported image
+ * is a failed request rather than a note - so the substitution has to happen
+ * here, for every message, before an adapter writes it. `byPath` and `copy`
+ * are cleared with the bytes, so nothing loads the file again for a request
+ * that cannot carry it.
+ */
+export function unsupportedAttachments(messages: Message[], inputs: Partial<ModelModalities>): Message[] {
+  return messages.map((message) => {
+    if (message.role === "user") {
+      const current = message.attachments ?? []
+      const attachments = replaceUnsupported(current, inputs) ?? current
+      return attachments === current ? message : { ...message, attachments }
+    }
+    let changed = false
+    const parts = message.parts.map((part) => {
+      if (part.type !== "tool") return part
+      const attachments = replaceUnsupported(part.attachments, inputs)
+      if (attachments === part.attachments) return part
+      changed = true
+      return { ...part, attachments }
+    })
+    return changed ? { ...message, parts } : message
+  })
+}
+
+export function requestHistory(messages: Message[], inputs?: Partial<ModelModalities>): Message[] {
   const out: Message[] = messages.map((message) => {
     if (message.role === "user") return sendable(message) ? message : { ...message, text: CONTINUE }
     if (cutWhileThinking(message)) {
@@ -97,5 +165,6 @@ export function requestHistory(messages: Message[]): Message[] {
   if (last?.role === "assistant" && !last.parts.some((part) => part.type === "tool")) {
     out.push({ id: `${last.id}:continue`, sessionID: last.sessionID, role: "user", text: CONTINUE, attachments: [], time: { created: last.time.created } })
   }
-  return out
+  // MiMo does this after the transcript is shaped, so a note it synthesises is not mistaken for the user's own file.
+  return inputs ? unsupportedAttachments(out, inputs) : out
 }
