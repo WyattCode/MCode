@@ -163,6 +163,28 @@ async function main(): Promise<void> {
     check("an edit matching once lands", (await fs.readFile(target, "utf8")).includes("delta"))
   }
 
+  console.log("an edit whose replacement is already in the file")
+  {
+    const read = findTool("read")
+    if (!read) throw new Error("the registry is missing the read tool")
+    const target = path.join(project, "applied.txt")
+    const applied = 'const greeting = "hello, world"'
+    await fs.writeFile(target, `first line\n${applied}\nlast line\n`, "utf8")
+    const controller = new AbortController()
+    await read.execute({ file_path: target }, context(controller.signal, "call-applied-read"))
+    const missed = await edit
+      .execute(
+        { file_path: target, old_string: 'const greeting = "goodbye"', new_string: applied },
+        context(controller.signal, "call-applied-edit"),
+      )
+      .then(
+        () => "(no error)",
+        (failure: Error) => failure.message,
+      )
+    check("the failure says the edit may already be applied", /may already be applied/i.test(missed), missed)
+    check("and names the line its new text is on", missed.includes("line 2"), missed)
+  }
+
   /*
    * The question tool, driven the way a turn drives it.
    *
