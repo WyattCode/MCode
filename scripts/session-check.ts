@@ -72,6 +72,7 @@ let script: { name: string; input: Record<string, unknown> }[][] = []
  * sections, because a reply that is not is refused.
  */
 // OpenCode v2's template since R31-4; the headings are what `isSummary` looks for.
+const FAKE_NOTES = { goals: ["finish the context task"], constraints: ["do not push"], decisions: ["use durable notes"], files: ["src/server/session/runner.ts"], lastAction: ["read the runner"], nextSteps: ["verify the change"] }
 const FAKE_SUMMARY = "## Objective\n- a summary of the work so far\n\n## Work State\n### Completed\n- (none)\n\n## Next Move\n1. (none)"
 /** When set, the fake answers a summary request with this instead - a model that carries on. */
 let summaryReply: string | undefined
@@ -159,7 +160,8 @@ const server = http.createServer((request, response) => {
       return
     }
 
-    const asked = script.shift()
+    const flushing = body.includes("Silently write durable session notes before compaction")
+    const asked = flushing ? undefined : script.shift()
     if (asked) {
       response.writeHead(200, { "content-type": "text/event-stream" })
       asked.forEach((call, index) => {
@@ -190,7 +192,7 @@ const server = http.createServer((request, response) => {
 
     response.writeHead(200, { "content-type": "text/event-stream" })
     const chunks = [
-      { choices: [{ delta: { content: body.includes("You MUST use this format for your response") ? (summaryReply ?? FAKE_SUMMARY) : "a summary" } }] },
+      { choices: [{ delta: { content: flushing ? JSON.stringify(FAKE_NOTES) : body.includes("You MUST use this format for your response") ? (summaryReply ?? FAKE_SUMMARY) : "a summary" } }] },
       { choices: [{ delta: {}, finish_reason: "stop" }], usage: reportedUsage ?? { prompt_tokens: 10, completion_tokens: 5 } },
     ]
     let first = true
@@ -366,8 +368,13 @@ async function main(): Promise<void> {
 
   const reopened = new SessionStore(storage, bus)
   const checkpoint = await reopened.get(one.id)
-  check("compaction checkpoint survives a fresh store", checkpoint?.compacted?.messageID === lastBefore.id && checkpoint.compacted.summary === FAKE_SUMMARY)
+  check("compaction checkpoint survives a fresh store", checkpoint?.compacted?.messageID === lastBefore.id && checkpoint.compacted.summary.startsWith(FAKE_SUMMARY))
   check("compaction preserves the durable transcript", JSON.stringify(await reopened.messages(one.id)) === JSON.stringify(before))
+  const durableMemory = (await reopened.get(one.id))?.compactionMemory
+  check("silent notes persist without a transcript reply", JSON.stringify(durableMemory?.notes) === JSON.stringify(FAKE_NOTES) && (await reopened.messages(one.id)).length === before.length)
+  const summaryRequest = requests.at(-1) ?? ""
+  check("the summary absorbs the durable notes", summaryRequest.includes("finish the context task") && compacted.compacted?.summary.includes("verify the change") === true)
+
 
   /*
    * Round 27: and what the next turn actually sends.
@@ -882,6 +889,23 @@ async function main(): Promise<void> {
     check("and the session keeps its context", !after?.compacted, JSON.stringify(after?.compacted ?? null))
   }
 
+  console.log("memory flush before the compaction threshold")
+  {
+    await config.setDiscovered("fake", [{ id: "m", name: "M", contextWindow: 10000, maxOutput: 1000, input: 0, output: 0 }])
+    reportedUsage = { prompt_tokens: 8000, completion_tokens: 5 }
+    const memorySession = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
+    for (const text of ["start the context task", "continue the context task", "continue once more"]) {
+      const done = idle(memorySession.id)
+      await runner.prompt({ sessionID: memorySession.id, text })
+      await done
+    }
+    const info = await new SessionStore(storage, bus).get(memorySession.id)
+    const flushes = requests.filter((body) => body.includes("Silently write durable session notes before compaction") && body.includes("start the context task"))
+    check("80 percent flushes once per cycle before 90 percent compaction", flushes.length === 1 && !!info?.compactionMemory && !info.compacted)
+    reportedUsage = undefined
+    await config.setDiscovered("fake", [])
+  }
+
   console.log("a model with a known window is compacted by count")
   {
     // A 10,000 window leaves MiMo's 90%, 9,000, usable, and the fake reports
@@ -908,7 +932,7 @@ async function main(): Promise<void> {
     await next
     const nextAfter = await sessions.get(counted.id)
     check("the next turn starts with an automatic compaction", nextAfter?.compacted?.trigger === "automatic", JSON.stringify(nextAfter?.compacted ?? null))
-    check("in three requests: the answer, the summary, the next answer", requests.length - before === 3, String(requests.length - before))
+    check("in four requests: answer, memory flush, summary, next answer", requests.length - before === 4, String(requests.length - before))
 
     /*
      * The same crossing, but the model will not summarise. The next turn's

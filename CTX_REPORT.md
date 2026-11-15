@@ -19,3 +19,17 @@
 CAPABILITY_DIFF 实际第 3 项描述“同步现状 + 后台预生成优化”，并非断言当前异步。opencode 当前 compaction.ts:344–405 是后台预生成并持有摘要，未找到独立 pre-compact 持久笔记冲刷；本任务的笔记步骤是新增实现，不能声称逐字复刻参考。MiMo checkpoint.ts:588 是接口说明，实际 renderRebuildContext 从 1311 起，依 watermark 注入最近 snapshot、learnings 与活动；本次对齐结构化恢复语义。
 
 runner 纪律：不重构每步历史整形、继续/续写/压缩/中止决策、stream 实时 emit/append/blocks；必要钩子每处不超过 10 行。checkpoint-migrate 是文件 undo blob 迁移，patch-checkpoint 是本地模型催促 edit，均非会话重建 checkpoint。
+
+## Phase B1 — pre-compaction memory
+
+新增 compaction-memory.ts。已知窗口到 80% 时，在下一次正常请求组装前，使用当前已落盘历史做一次静默、零工具的 JSON 笔记回合；每个压缩周期成功后只做一次。80% 比现有 90% 压缩线早 10 个百分点，为笔记与工具输出留余量；未知窗口不按比例触发。手动/automatic 压缩可强制补写；provider-overflow 不再发送一个可能再次溢出的笔记请求，使用已有笔记。
+
+笔记字段：goals / constraints / decisions / files / lastAction / nextSteps；按字段限长，持久化在 session info 的 compactionMemory，含 epoch、boundary、时间。不追加 assistant/message.part 事件或聊天消息，费用归 compaction 后台用量。输入仅包含有限长纯文本记录，已知窗口进一步收缩输入，输出至多 2048 tokens。无效 JSON、空笔记、工具调用、拒绝、截断、异常、中止均不覆盖旧笔记。失败可在后续请求重试。回滚/提交回滚/删除笔记边界时清除旧笔记，fork 不继承它。
+
+摘要 instruction 明确要求吸收笔记；通过摘要验证后再附上 Durable session notes，保证笔记不会随模型摘要漏写而丢失。原摘要和 recent 的投影顺序保持。
+
+真实 runner 新断言全部 green：静默笔记由新 store 读回且不增加 transcript；摘要请求和保存摘要含笔记；80% 时三轮仅冲刷一次且尚未压缩。bundle 三项独立变异（失败时立即 exit 1）：保存 notes.goals 为 lost → 持久化断言红；禁止向摘要附笔记 → 摘要吸收断言红；把阈值改为 200% → 80% 断言红。首轮 typecheck 发现 TurnSession.agent 类型比 SessionInfo 宽，改为字段级 Pick 后通过。
+
+runner 调用点：compactNow 在边界裁剪后、split 前调用 flush（1 行）；循环读取 stored 后、markDelivered 前调用 flush（1 行）。新增独立 flush 方法，不移动受保护段；另在既有回滚/删除入口清除笔记（各 1 行）。
+
+B1 最终版本提交前：typecheck、sessioncheck、turncheck、smoke 均 exit 0；turncheck 17 passed，smoke 74/74，git diff --check 通过。

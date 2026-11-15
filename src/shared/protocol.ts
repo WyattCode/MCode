@@ -190,6 +190,13 @@ export interface SessionInfo {
    * `current` only when a compaction starts the prompt over anyway.
    */
   instructions?: { initial: Record<string, string>; current: Record<string, string> }
+  /** Silent durable notes, scoped to the compaction cycle that produced them. */
+  compactionMemory?: {
+    epoch: string
+    boundary: string
+    at: number
+    notes: Record<"goals" | "constraints" | "decisions" | "files" | "lastAction" | "nextSteps", string[]>
+  }
   compacted?: {
     messageID: string
     summary: string

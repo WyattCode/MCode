@@ -1,3 +1,5 @@
+import { MEMORY_FLUSH_PROMPT, memoryText, parseCompactionNotes, shouldFlushMemory } from "./compaction-memory"
+import { messageToText } from "./summary"
 import path from "node:path"
 import type {
   AgentName,
@@ -1213,7 +1215,7 @@ export class SessionRunner {
     if (boundary < before) await this.store.forgetRedo(sessionID)
 
     const revert = at ? { messageID: at.id, at: Date.now() } : undefined
-    return { session: await this.store.update(sessionID, { revert }), files }
+    return { session: await this.store.update(sessionID, { revert, compactionMemory: undefined }), files }
   }
 
   /**
@@ -1239,7 +1241,7 @@ export class SessionRunner {
     }
     await this.store.dropReverted(session.id)
     // The deleted messages may carry reminders of instruction changes; the next turn sets a fresh baseline, as v2's committed revert does.
-    const updated = await this.store.update(session.id, { revert: undefined, instructions: undefined })
+    const updated = await this.store.update(session.id, { revert: undefined, instructions: undefined, compactionMemory: undefined })
     this.bus.publish({ type: "session.reverted", sessionID: session.id })
     return updated
   }
@@ -1278,6 +1280,7 @@ export class SessionRunner {
     if (session.compacted && !kept.has(session.compacted.messageID)) {
       session = await this.store.update(sessionID, { compacted: undefined })
     }
+    if (session.compactionMemory && !kept.has(session.compactionMemory.boundary)) session = await this.store.update(sessionID, { compactionMemory: undefined })
     // And the reminders of instruction changes the deleted messages carried: the next turn sets a fresh baseline.
     if (session.instructions) session = await this.store.update(sessionID, { instructions: undefined })
     return session
@@ -1532,6 +1535,47 @@ export class SessionRunner {
    * question the model was never shown. Left out, the mark falls at the end, as
    * it does for the button and for an overflow.
    */
+  private async flushCompactionMemory(session: TurnSession, history: Message[], signal: AbortSignal, force = false): Promise<TurnSession> {
+    const entry = this.config.modelEntry(session.model)
+    if (!history.length || !shouldFlushMemory(session, history, entry?.contextWindow ?? 0, force) || signal.aborted) return session
+    const definition = this.config.definition(session.model.provider)
+    if (!definition) return session
+    // A bounded transcript keeps the extra round safe even when a tool just filled the window.
+    const transcriptLimit = entry?.contextWindow ? Math.min(24_000, Math.floor(entry.contextWindow * 1.5)) : 24_000
+    const transcript = history.map((message) => messageToText(message, false)).join("\n").slice(-transcriptLimit)
+    const prior = session.compactionMemory ? memoryText(session.compactionMemory.notes) : ""
+    const instruction: UserMessage = {
+      id: `${session.id}:memory-flush`, sessionID: session.id, role: "user",
+      text: `${MEMORY_FLUSH_PROMPT}\n\nPrevious notes (update using newer evidence):\n${prior}\n\nTranscript:\n${transcript}`,
+      attachments: [], time: { created: Date.now() },
+    }
+    try {
+      const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
+      let text = ""
+      let called = false
+      const outcome = await adapterFor(definition.kind).stream({
+        apiKey: tokens?.access ?? this.config.apiKey(definition.id) ?? "",
+        model: session.model, system: "Write factual session notes only.", history: [instruction], tools: [],
+        ...smallRequest(session.model.provider, session.model.model),
+        signal, baseURL: definition.baseURL, headers: definition.headers, accountId: tokens?.accountId,
+        maxOutput: Math.min(2048, entry?.maxOutput || 2048), outputLimit: entry?.maxOutput,
+        sessionID: session.id,
+      }, (event) => {
+        if (event.type === "text.delta") text += event.text
+        if (event.type === "tool") called = true
+      })
+      this.noteBackground(session.id, session.model, outcome.usage, "compaction")
+      const notes = !called && !outcome.toolCalls.length && outcome.stop === "end_turn" ? parseCompactionNotes(text) : undefined
+      if (!notes || signal.aborted) return session
+      return keepTurn(await this.store.update(session.id, {
+        compactionMemory: { epoch: session.compacted?.messageID ?? "", boundary: history.at(-1)!.id, at: Date.now(), notes },
+      }), session)
+    } catch {
+      // A note failure cannot destroy the transcript or prevent the ordinary overflow rescue.
+      return session
+    }
+  }
+
   private async compactNow(session: TurnSession, signal: AbortSignal, trigger: CompactionTrigger, boundary?: string): Promise<SessionInfo> {
     const stored = await this.store.messages(session.id)
     const live = this.liveMessages(session, stored)
@@ -1539,6 +1583,7 @@ export class SessionRunner {
     const cut = boundary ? seen.findIndex((message) => message.id === boundary) : -1
     // Summarising past the boundary would describe the request as work already done.
     if (cut >= 0) seen = seen.slice(0, cut + 1)
+    if (trigger !== "provider-overflow") session = await this.flushCompactionMemory(session, seen, signal, true)
     const last = cut >= 0 ? live.find((message) => message.id === boundary) : live.at(-1)
     // skills: what a message loaded is part of the conversation being summarised.
     const context = withSkillReminders(withAutomationNotes(withChatHeaders(seen)))
@@ -1553,7 +1598,8 @@ export class SessionRunner {
     const split = splitConversation(context)
     if (!split || split.older.length === 0) throw new Error("Nothing to compact yet")
     const update = split.older.some(isCheckpoint)
-    const prompt = summaryPrompt(update, update && session.compacted !== undefined && legacySummary(session.compacted.summary))
+    const durable = session.compactionMemory ? memoryText(session.compactionMemory.notes) : ""
+    const prompt = summaryPrompt(update, update && session.compacted !== undefined && legacySummary(session.compacted.summary)) + (durable ? `\n\nAbsorb these durable notes into the summary; reconcile with newer transcript evidence:\n${durable}` : "")
 
     const definition = this.config.definition(session.model.provider)
     if (!definition) throw new CodedError(`No provider called ${session.model.provider} is set up`, "error.noModel")
@@ -1699,6 +1745,7 @@ export class SessionRunner {
     }
     if (!summary) throw new Error("The model returned an empty summary")
     if (!isSummary(summary)) throw new Error("The model did not return a summary")
+    if (durable) summary += `\n\n## Durable session notes\n${durable}`
     const files = touchedFiles(context, session.directory)
     const mark = { messageID: last.id, summary, ...(split.recent ? { recent: split.recent } : {}), at: Date.now(), trigger, ...(files.length ? { files } : {}) }
     /*
@@ -3064,6 +3111,7 @@ export class SessionRunner {
         }
       }
       const stored = await this.store.messages(sessionID)
+      session = await this.flushCompactionMemory(session, this.contextFor(session, stored), controller.signal)
       const delivered = this.markDelivered(sessionID, stored)
       if (delivered.length) await this.openSteeredTurn(sessionID, session.directory, delivered, stored)
       /*
