@@ -13,7 +13,7 @@ import { createRequire } from "node:module"
 import { pathToFileURL } from "node:url"
 import path from "node:path"
 import os from "node:os"
-import { execSync, spawn } from "node:child_process"
+import { execFileSync, execSync, spawn } from "node:child_process"
 import { Storage } from "../src/server/storage"
 import { Bus } from "../src/server/bus"
 import { Config } from "../src/server/config"
@@ -496,9 +496,9 @@ async function main(): Promise<void> {
     const models = findTool("models")
     check("the models tool is offered to the model", models !== undefined)
     check(
-      "and sits last in the registry, so every earlier tool prefix stays cached",
-      TOOLS[TOOLS.length - 1]?.name === "models",
-      TOOLS.map((tool) => tool.name).slice(-3).join(","),
+      "and stays with the last few, since every earlier tool prefix is cached",
+      TOOLS.map((tool) => tool.name).slice(-6).includes("models"),
+      TOOLS.map((tool) => tool.name).slice(-6).join(","),
     )
     if (models) {
       const controller = new AbortController()
@@ -512,6 +512,64 @@ async function main(): Promise<void> {
       const vision = await models.execute({ provider: "anthropic", vision: true }, context(controller.signal, "call-models-vision"))
       check("vision: true keeps the model that reads images", vision.output.includes("anthropic/claude-sonnet-4-5"), vision.output)
       check("and drops the one that does not", !vision.output.includes("anthropic/tiny-chat"), vision.output)
+    }
+  }
+
+  console.log("the worktree tools")
+  {
+    const create = findTool("worktree_create")
+    const list = findTool("worktree_list")
+    const remove = findTool("worktree_remove")
+    check("the three worktree tools are registered", Boolean(create && list && remove))
+    check(
+      "and they sit last, so every earlier tool prefix stays cached",
+      TOOLS.slice(-3).map((tool) => tool.name).join(",") === "worktree_create,worktree_list,worktree_remove",
+      TOOLS.slice(-3).map((tool) => tool.name).join(","),
+    )
+    if (create && list && remove) {
+      const repo = path.join(root, "worktree-repo")
+      await fs.mkdir(repo, { recursive: true })
+      execFileSync("git", ["init", "-q"], { cwd: repo })
+      await fs.writeFile(path.join(repo, "README.md"), "# repo\n", "utf8")
+      execFileSync("git", ["add", "."], { cwd: repo })
+      execFileSync("git", ["-c", "user.email=mcode@example.test", "-c", "user.name=MCode", "commit", "-qm", "init"], { cwd: repo })
+      const repoContext = (signal: AbortSignal, callID: string) => ({ ...context(signal, callID), directory: repo })
+      const controller = new AbortController()
+      const target = path.join(repo, ".worktrees", "feature")
+      const made = await create.execute({ name: "feature", path: target }, repoContext(controller.signal, "call-wt-create"))
+      check("a worktree is created where the call asked", made.output.includes(target), made.output)
+      check("and the folder exists", (await fs.stat(target).catch(() => undefined))?.isDirectory() === true)
+      const listed = await list.execute({}, repoContext(controller.signal, "call-wt-list"))
+      check("the list names the new worktree", listed.output.includes(target), listed.output)
+      const removed = await remove.execute({ directory: target }, repoContext(controller.signal, "call-wt-remove"))
+      check("remove takes it back out", /removed/i.test(`${removed.title ?? ""} ${removed.output}`), removed.output)
+      check("and the folder is gone", (await fs.stat(target).catch(() => undefined)) === undefined)
+
+      /*
+       * The sandbox half: a worktree lives outside the project as often as not,
+       * and the tool must put that to the user through the same path gate every
+       * other tool uses rather than reaching the disk on the model's word.
+       */
+      const gateBus = new Bus()
+      const gateStorage = new Storage(path.join(root, "gate-storage"))
+      const gateConfig = new Config(gateStorage, gateBus, path.join(root, "gate-credentials.json"))
+      await gateStorage.write("config", {})
+      await gateConfig.load()
+      const gatePermissions = new Permissions(gateBus, gateConfig)
+      let gateAsked = 0
+      gateBus.subscribe((event) => {
+        if (event.type !== "permission.requested") return
+        gateAsked += 1
+        const request = (event as { request: { id: string } }).request
+        setTimeout(() => gatePermissions.respond(request.id, "reject"), 0)
+      })
+      const gateContext = { ...context(controller.signal, "call-wt-sandbox"), directory: repo, permissions: gatePermissions }
+      const outsider = path.join(root, "outside-worktree")
+      const refused = await remove
+        .execute({ directory: outsider }, gateContext)
+        .then(() => "(no error)", (failure: Error) => failure.message)
+      check("a worktree path outside the project is put to the user", gateAsked > 0, String(gateAsked))
+      check("and a refusal stops the call", /denied|refus/i.test(refused), refused)
     }
   }
 
