@@ -55,7 +55,7 @@ export function toProviderMessages(messages: Message[], inputs?: Partial<ModelMo
   // merged into it - the API rejects consecutive same-role messages.
   let pendingResults = false
 
-  for (const message of requestHistory(messages)) {
+  for (const message of requestHistory(messages, inputs)) {
     if (message.role === "user") {
       const content: Anthropic.ContentBlockParam[] = []
       // MiMo's parts: a picture the model reads goes natively; every other attachment is named by path in the turn's blocks.

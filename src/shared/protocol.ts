@@ -665,6 +665,13 @@ export interface Attachment {
    * afterwards. `path` still names the file the model asked for.
    */
   copy?: string
+  /**
+   * What takes the file's place when it cannot be sent, as one line of text
+   * the model reads instead. Set by the attachment loader for a file it could
+   * not read, and by request history for a picture or PDF the target model
+   * cannot take; an attachment carrying one carries no other payload.
+   */
+  note?: string
 }
 
 export interface AssistantMessage {

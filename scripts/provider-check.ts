@@ -27,13 +27,14 @@ import "./fenced-home"
 import fs from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
-import { COMMAND_SOURCES, EFFORTS, type Effort } from "@shared/protocol"
+import { COMMAND_SOURCES, EFFORTS, type AssistantMessage, type Attachment, type Effort, type UserMessage } from "@shared/protocol"
 import { Storage } from "../src/server/storage"
 import { Bus } from "../src/server/bus"
 import { Config } from "../src/server/config"
 import { modelVariants } from "../src/server/provider/variants"
 import { reasoningRequest as anthropicReasoning } from "../src/server/provider/anthropic"
 import { reasoningRequest as codexReasoning } from "../src/server/provider/chatgpt"
+import { requestHistory } from "../src/server/provider/history"
 
 const findings: string[] = []
 function note(name: string, ok: boolean, detail: unknown = ""): void {
@@ -316,6 +317,44 @@ async function main(): Promise<void> {
       "a caller that says nothing about the model still sends the level",
       anthropicReasoning("claude-opus-5", "high", undefined, MAX_TOKENS).output_config?.effort === "high",
     )
+  }
+
+  section("History media the target model cannot read")
+  {
+    const user = (attachments: Attachment[]): UserMessage => ({
+      id: "u1",
+      sessionID: "s1",
+      role: "user",
+      text: "look",
+      attachments,
+      time: { created: 0 },
+    })
+    const image: Attachment = { path: "/pictures/photo.png", mime: "image/png", data: "cGl4ZWw=", byPath: true }
+    const pdf: Attachment = { path: "/papers/paper.pdf", mime: "application/pdf", data: "JVBERi0=", byPath: true }
+
+    const textOnly = requestHistory([user([image, pdf])], { text: true })
+    const replaced = (textOnly[0] as UserMessage).attachments
+    note("an image the model cannot read is not sent", replaced[0]?.data === "" && replaced[0]?.byPath === false, replaced[0])
+    note("and it reads as one line saying why", /cannot read image input/.test(replaced[0]?.note ?? ""), replaced[0]?.note)
+    note("a PDF is replaced the same way", /cannot read PDF input/.test(replaced[1]?.note ?? ""), replaced[1]?.note)
+
+    const vision = requestHistory([user([image])], { text: true, image: true })
+    note("a model that reads the picture keeps it", (vision[0] as UserMessage).attachments[0]?.data === image.data, (vision[0] as UserMessage).attachments[0])
+
+    const tool: AssistantMessage = {
+      id: "a1",
+      sessionID: "s1",
+      role: "assistant",
+      model: { provider: "anthropic", model: "claude-opus-5" },
+      agent: "build",
+      parts: [
+        { type: "tool", id: "t1", callID: "c1", name: "read", status: "completed", input: {}, attachments: [pdf], time: { created: 0 } },
+      ],
+      time: { created: 0 },
+    }
+    const toolOnly = requestHistory([tool], { text: true })
+    const part = (toolOnly[0] as AssistantMessage).parts[0]
+    note("a tool result's PDF is replaced too", part.type === "tool" && /cannot read PDF input/.test(part.attachments?.[0]?.note ?? ""), part)
   }
 
   section("Codex: a reasoning block, or nothing")

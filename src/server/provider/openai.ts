@@ -99,7 +99,7 @@ function chatMedia(part: Exclude<WirePart, { kind: "text" }>): Record<string, un
 export function toMessages(system: string, history: Message[], inputs?: Partial<ModelModalities>, interleaved?: string) {
   const out: Record<string, unknown>[] = [{ role: "system", content: system }]
 
-  const sent = requestHistory(history)
+  const sent = requestHistory(history, inputs)
   // The step the model has not answered yet: the only one whose tool pictures it still has to look at.
   const answering = sent.findLastIndex((entry) => entry.role === "assistant")
 
