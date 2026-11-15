@@ -15,6 +15,7 @@ import { mergeConflictNotice } from "./merge-conflict"
 import { killTree } from "../kill-tree"
 import { windowsOfTree } from "../appdrive/windows"
 import { noteShellRun } from "./test-memory"
+import { cleanBashOutput } from "./bash-clean"
 
 const DEFAULT_TIMEOUT = 120_000
 
@@ -774,13 +775,23 @@ export const BashTool: ToolDefinition = {
         const file = saved ? await saved : undefined
         while (flushing) await flushing
         const raw = recent.map((item) => item.text).join("")
-        const end = tailWithin(raw, budget)
+        /*
+         * The terminal's noise comes off before the budget decides what fits:
+         * progress frames, colour codes, secrets and very long lines are not
+         * what the model is meant to read, and paying for them out of the same
+         * bytes would cut the part that is. The guard inside keeps a cleaning
+         * that would grow the text from ever being used, and `# raw` or
+         * MCODE_BASH_RAW=1 leaves a command's output exactly as it was.
+         */
+        const cleaned = cleanBashOutput(raw, { command })
+        const head = cleanBashOutput(first, { command }).text
+        const end = tailWithin(cleaned.text, budget)
         const cut = dropped || end.cut
         let output = end.text
         if (cut && file) {
-          const suffix = tailWithin(raw, Math.max(0, budget - byteLength(first))).text
-          const shown = byteLength(first) + byteLength(suffix)
-          output = `The output was cut: about ${Math.ceil(total / 4)} tokens in all.\n\n${first}\n… about ${Math.ceil(Math.max(0, total - shown) / 4)} tokens left out …\n${suffix}`
+          const suffix = tailWithin(cleaned.text, Math.max(0, budget - byteLength(head))).text
+          const shown = byteLength(head) + byteLength(suffix)
+          output = `The output was cut: about ${Math.ceil(total / 4)} tokens in all.\n\n${head}\n… about ${Math.ceil(Math.max(0, total - shown) / 4)} tokens left out …\n${suffix}`
         }
         if (!output) output = "(no output)"
         /*

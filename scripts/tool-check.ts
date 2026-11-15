@@ -25,6 +25,7 @@ import { guardPlanWrite, planFolders, planWritable } from "../src/server/session
 import { ToolError } from "../src/server/tool/types"
 import type { ServerEvent } from "../src/shared/protocol"
 import { Shells } from "../src/server/shell"
+import { cleanBashOutput, createPipeline } from "../src/server/tool/bash-clean"
 
 const problems: string[] = []
 function check(name: string, ok: boolean, detail = ""): void {
@@ -571,6 +572,40 @@ async function main(): Promise<void> {
       check("a worktree path outside the project is put to the user", gateAsked > 0, String(gateAsked))
       check("and a refusal stops the call", /denied|refus/i.test(refused), refused)
     }
+  }
+
+  console.log("cleaning bash output")
+  {
+    const controller = new AbortController()
+    const ansi = cleanBashOutput("\u001b[31mred\u001b[0m plain")
+    check("ANSI colour codes are stripped", !ansi.text.includes("\u001b") && ansi.text === "red plain", JSON.stringify(ansi.text))
+
+    const progress = cleanBashOutput("downloading 10%\rdownloading 60%\rdownloading 100%\n")
+    check("only the last frame of a carriage-return progress line survives", progress.text === "downloading 100%\n", JSON.stringify(progress.text))
+
+    const redacted = cleanBashOutput("Authorization: Bearer abcdefghijklmnop123456\naws AKIAABCDEFGHIJKLMNOP\n")
+    check("a bearer token is redacted", !redacted.text.includes("abcdefghijklmnop123456"), redacted.text)
+    check("and so is an AWS access key", !redacted.text.includes("AKIAABCDEFGHIJKLMNOP"), redacted.text)
+
+    const long = cleanBashOutput("y".repeat(900))
+    check("a line past the ceiling keeps its head and says what was elided", long.text.includes("<elided") && long.text.length < 900, long.text.slice(0, 60))
+
+    const grown = createPipeline([{ name: "grow", apply: (text) => text + "plus" }]).run("short")
+    check("the never-worse guard returns the original when cleaning grows it", grown.text === "short" && grown.degraded, JSON.stringify(grown))
+
+    const raw = cleanBashOutput("\u001b[31mred\u001b[0m", { command: "echo hi # raw" })
+    check("# raw skips cleaning", raw.text.includes("\u001b"), JSON.stringify(raw.text))
+    const previous = process.env.MCODE_BASH_RAW
+    process.env.MCODE_BASH_RAW = "1"
+    const envRaw = cleanBashOutput("\u001b[31mred\u001b[0m")
+    if (previous === undefined) delete process.env.MCODE_BASH_RAW
+    else process.env.MCODE_BASH_RAW = previous
+    check("MCODE_BASH_RAW=1 skips cleaning", envRaw.text.includes("\u001b"))
+
+    const script = path.join(project, "noisy.js")
+    await fs.writeFile(script, 'process.stdout.write("\\u001b[31mred\\u001b[0m\\nstep 1\\rstep 2\\n")', "utf8")
+    const noisy = await bash.execute({ command: `node "${script}"`, timeout: 60000 }, context(controller.signal, "call-clean"))
+    check("the bash tool's own output is cleaned", !noisy.output.includes("\u001b") && noisy.output.includes("step 2") && !noisy.output.includes("step 1"), JSON.stringify(noisy.output))
   }
 
   console.log("a todowrite-shaped call to the task tool")
