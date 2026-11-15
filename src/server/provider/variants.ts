@@ -20,6 +20,7 @@
  * grounds that `Effort` could not hold them; `Effort` now holds all seven of
  * the reference's ids, so every level a model accepts survives to the picker.
  */
+import { geminiCapabilities } from "./gemini"
 import { EFFORTS, type Effort } from "@shared/protocol"
 import type { ModelEntry, ProviderKind } from "./catalog"
 
@@ -181,6 +182,9 @@ export function modelVariants(kind: ProviderKind, entry: ModelEntry, provider?: 
 
   // The Responses API, subscription or custom: MiMo's `@ai-sdk/openai` arm.
   if (kind === "chatgpt" || kind === "openai-responses") return narrow(openaiCompatibleEfforts(id))
+
+  const gemini = geminiCapabilities({ provider: provider ?? "", model: entry.id })
+  if (gemini) return [...gemini.reasoningEfforts]
 
   // MiMo's OpenAI-compatible arm: the three widely supported levels.
   return narrow(WIDELY_SUPPORTED)

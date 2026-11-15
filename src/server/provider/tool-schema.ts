@@ -1,3 +1,4 @@
+import { isGemini } from "./gemini"
 import type { ModelRef } from "@shared/protocol"
 
 /**
@@ -51,10 +52,6 @@ const DESCRIBING = [
 
 function describes(node: Node): boolean {
   return combines(node) || DESCRIBING.some((key) => key in node)
-}
-
-function isGemini(model: ModelRef): boolean {
-  return model.provider === "google" || model.model.includes("gemini")
 }
 
 function isMoonshot(model: ModelRef): boolean {

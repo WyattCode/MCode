@@ -1,3 +1,4 @@
+import { compatibleOptions } from "./gemini"
 import type { Message, ModelModalities, ModelRef, Usage } from "@shared/protocol"
 import { transformTool } from "./transform"
 import { TOOL_MEDIA_NOTE, attachmentParts, type WirePart } from "./attachment-parts"
@@ -299,26 +300,11 @@ export const OpenAICompatible: ProviderAdapter = {
         stream_options: { include_usage: true },
         max_tokens: request.maxOutput ?? MAX_TOKENS,
         messages,
-        /*
-         * The field the effort control has always meant and never sent.
-         *
-         * The reference emits exactly this for `@ai-sdk/openai-compatible`
-         * (`{reasoningEffort: effort}`, which its SDK writes out as
-         * `reasoning_effort`). It is withheld only where the caller has said
-         * which levels the model accepts and this is not one of them - a model
-         * with an empty list takes no effort parameter at all, and handing it
-         * one is a field the provider will reject or drop. A caller that says
-         * nothing gets the field, because sending it is what the control has
-         * always claimed to do.
-         */
-        ...(request.variants && !request.variants.includes(request.effort)
-          ? {}
-          : { reasoning_effort: request.effort }),
         ...(tools.length ? { tools, tool_choice: request.toolChoice ?? "auto" } : {}),
         // MiMo's family sampling; top-k is not a chat-completions field, so it stays off this wire.
         ...(request.sampling?.temperature !== undefined ? { temperature: request.sampling.temperature } : {}),
         ...(request.sampling?.topP !== undefined ? { top_p: request.sampling.topP } : {}),
-        ...request.extra,
+        ...compatibleOptions(request),
       }),
     }).catch((err: unknown) => {
       guard.dispose()

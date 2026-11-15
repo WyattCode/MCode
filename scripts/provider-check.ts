@@ -38,6 +38,7 @@ import { adapterFor } from "../src/server/provider/adapter"
 import { AnthropicAdapter, toProviderMessages, messagesRequest } from "../src/server/provider/anthropic"
 import { ChatGPTSubscription, OpenAIResponses, toInput } from "../src/server/provider/chatgpt"
 import { OpenAICompatible } from "../src/server/provider/openai"
+import { compatibleOptions, geminiCapabilities } from "../src/server/provider/gemini"
 import { transformMessages, transformTool } from "../src/server/provider/transform"
 import type { TurnEvent, TurnRequest } from "../src/server/provider/types"
 import { requestHistory } from "../src/server/provider/history"
@@ -176,6 +177,62 @@ async function main(): Promise<void> {
       }
     } finally { globalThis.fetch = originalFetch }
     note("tool schema is unchanged after all three builders", JSON.stringify(tool.parameters) === schemaBefore)
+  }
+
+  section("Gemini through OpenAI compatibility")
+  {
+    const model = (id: string) => ({ provider: "google", model: id })
+    const options = (id: string, effort: string, more: Partial<Pick<TurnRequest, "variants" | "thinkingOff" | "extra">> = {}) => compatibleOptions({ model: model(id), effort, ...more })
+    const families = [
+      ["gemini-2.5-pro", "low,medium,high"],
+      ["gemini-2.5-flash", "none,low,medium,high"],
+      ["gemini-2.5-flash-lite", "none,low,medium,high"],
+      ["gemini-3-pro-preview", "low,high"],
+      ["gemini-3.1-pro-preview", "low,medium,high"],
+      ["gemini-3-flash-preview", "minimal,low,medium,high"],
+      ["gemini-3.1-flash-lite", "minimal,low,medium,high"],
+      ["gemini-2.0-flash", ""],
+      ["gemini-unknown", ""],
+      ["gemini-3-pro-image-preview", ""],
+    ] as const
+    for (const [id, efforts] of families) {
+      const capabilities = geminiCapabilities(model(id))
+      note(`${id} advertises only mapped efforts`, capabilities?.reasoningEfforts.join() === efforts)
+      note(`${id} menu uses compatible capabilities`, modelVariants("openai-compatible", { id, name: id, reasoning: true, contextWindow: 0, input: 0, output: 0 }, "google").join() === efforts)
+      note(`${id} never claims native protocol or signature replay`, capabilities?.nativeProtocol === false && capabilities.thoughtSignatureReplay === false)
+    }
+    note("Gemini 2.5 flash can turn thinking off", options("gemini-2.5-flash", "none").reasoning_effort === "none" && geminiCapabilities(model("gemini-2.5-flash"))?.canDisableThinking === true)
+    for (const id of ["gemini-2.5-pro", "gemini-3-pro-preview", "gemini-3-flash-preview"]) {
+      note(`${id} never pretends thinking can be disabled`, !geminiCapabilities(model(id))?.canDisableThinking && options(id, "none").reasoning_effort === undefined && options(id, "high", { thinkingOff: true }).reasoning_effort === undefined)
+    }
+    note("thinkingOff maps to none on flash", options("gemini-2.5-flash", "high", { thinkingOff: true, variants: ["high"] }).reasoning_effort === "none")
+    note("minimal budget maps to low and Gemini 3 Pro medium maps to high", options("gemini-2.5-pro", "minimal").reasoning_effort === "low" && options("gemini-3-pro-preview", "medium").reasoning_effort === "high")
+    note("newer Pro retains medium and Flash retains minimal", options("gemini-3.1-pro-preview", "medium").reasoning_effort === "medium" && options("gemini-3-flash-preview", "minimal").reasoning_effort === "minimal")
+    note("xhigh and max clamp to high", options("gemini-2.5-pro", "xhigh").reasoning_effort === "high" && options("gemini-3-flash-preview", "max").reasoning_effort === "high")
+    note("unknown Gemini generation keeps server default", options("gemini-unknown", "high").reasoning_effort === undefined)
+    note("declared effort restrictions still apply", options("gemini-2.5-pro", "high", { variants: [] }).reasoning_effort === undefined && options("gemini-2.5-pro", "max", { variants: ["low"] }).reasoning_effort === undefined)
+    note("gateways and case variants get the same family detection", compatibleOptions({ model: { provider: "gateway", model: "Google/GEMINI-2.5-PRO" }, effort: "max" }).reasoning_effort === "high")
+    const extra = { extra_body: { google: { thinking_config: { thinking_budget: 2048, include_thoughts: true } } }, reasoning_effort: "xhigh", custom: true }
+    const before = JSON.stringify(extra)
+    note("native budget wins over conflicting reasoning_effort", options("gemini-2.5-pro", "high", { extra }).reasoning_effort === undefined)
+    note("native level also excludes reasoning_effort", options("gemini-3-flash-preview", "high", { extra: { extra_body: { google: { thinking_config: { thinking_level: "low" } } } } }).reasoning_effort === undefined)
+    note("include_thoughts alone still permits effort", options("gemini-3-flash-preview", "low", { extra: { extra_body: { google: { thinking_config: { include_thoughts: true } } } } }).reasoning_effort === "low")
+    note("extras cannot bypass Gemini effort allowlist", options("gemini-unknown", "high", { extra: { reasoning_effort: "max" } }).reasoning_effort === undefined)
+    note("Gemini options do not mutate extras", JSON.stringify(extra) === before)
+    note("generic compatible behavior and overrides are unchanged", compatibleOptions({ model: { provider: "local", model: "plain" }, effort: "max" }).reasoning_effort === "max" && compatibleOptions({ model: { provider: "local", model: "plain" }, effort: "high", variants: [] }).reasoning_effort === undefined && compatibleOptions({ model: { provider: "local", model: "plain" }, effort: "high", extra: { reasoning_effort: "custom" } }).reasoning_effort === "custom")
+    const originalFetch = globalThis.fetch
+    try {
+      let body: Record<string, unknown> = {}
+      globalThis.fetch = async (_url, init) => {
+        body = JSON.parse(String(init?.body))
+        return new Response('data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', { headers: { "content-type": "text/event-stream" } })
+      }
+      const request: TurnRequest = { apiKey: "test", model: model("gemini-2.5-flash"), system: "test", history: [], tools: [], effort: "max", signal: new AbortController().signal, baseURL: "https://example.test/v1" }
+      await OpenAICompatible.stream(request, () => undefined)
+      note("Gemini mapping reaches the actual compatible request", body.reasoning_effort === "high" && !("thinking" in body) && !("top_k" in body))
+      await OpenAICompatible.stream({ ...request, extra }, () => undefined)
+      note("actual request never combines native config and effort", body.reasoning_effort === undefined && JSON.stringify(body.extra_body) === JSON.stringify(extra.extra_body) && body.custom === true)
+    } finally { globalThis.fetch = originalFetch }
   }
 
   section("The effort vocabulary")
