@@ -2863,7 +2863,7 @@ export class SessionRunner {
     }
   }
 
-  private async run(sessionID: string, apiKey: string, controller: AbortController, resumed: Resumed = false, lead?: Lead): Promise<void> {
+  private async prepareTurn(sessionID: string, controller: AbortController) {
     /*
      * OpenCode v2's write-ahead claim, before anything else the turn does: a
      * quit or a crash from here on leaves it behind, and the next start
@@ -2896,6 +2896,13 @@ export class SessionRunner {
     const config = this.config.get()
     // MiMo's prefix snapshot, with the skills and a subagent's notes; memory rides after it (see systemFor).
     let { system, systemTail } = await this.systemFor(session)
+    return { planning, session, definition, adapter, tokens, config, system, systemTail }
+  }
+
+  private async run(sessionID: string, apiKey: string, controller: AbortController, resumed: Resumed = false, lead?: Lead): Promise<void> {
+    const prepared = await this.prepareTurn(sessionID, controller)
+    const { planning, definition, adapter, tokens, config } = prepared
+    let { session, system, systemTail } = prepared
     // subagents: a subagent asked for structured output returns it through its tool.
     const outputSchema = session.subagent?.outputSchema
 
