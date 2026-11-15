@@ -2863,7 +2863,7 @@ export class SessionRunner {
     }
   }
 
-  private async run(sessionID: string, apiKey: string, controller: AbortController, resumed: Resumed = false, lead?: Lead): Promise<void> {
+  private async prepareTurn(sessionID: string, controller: AbortController) {
     /*
      * OpenCode v2's write-ahead claim, before anything else the turn does: a
      * quit or a crash from here on leaves it behind, and the next start
@@ -2896,6 +2896,13 @@ export class SessionRunner {
     const config = this.config.get()
     // MiMo's prefix snapshot, with the skills and a subagent's notes; memory rides after it (see systemFor).
     let { system, systemTail } = await this.systemFor(session)
+    return { planning, session, definition, adapter, tokens, config, system, systemTail }
+  }
+
+  private async run(sessionID: string, apiKey: string, controller: AbortController, resumed: Resumed = false, lead?: Lead): Promise<void> {
+    const prepared = await this.prepareTurn(sessionID, controller)
+    const { planning, definition, adapter, tokens, config } = prepared
+    let { session, system, systemTail } = prepared
     // subagents: a subagent asked for structured output returns it through its tool.
     const outputSchema = session.subagent?.outputSchema
 
@@ -3628,6 +3635,30 @@ export class SessionRunner {
     })
   }
 
+  private settleToolCalls(assistant: AssistantMessage, outcome: TurnOutcome, announce: (part: AssistantPart) => void): void {
+    // Tool arguments stream as partial JSON, so they are only trustworthy
+    // once the turn closes - fill them in from the settled outcome.
+    for (const call of outcome.toolCalls) {
+      let part = assistant.parts.find(
+        (candidate): candidate is ToolPart => candidate.type === "tool" && candidate.callID === call.callID,
+      )
+      if (part) part.input = call.input
+      else {
+        part = {
+          type: "tool",
+          id: Identifier.part(),
+          callID: call.callID,
+          name: call.name,
+          status: "pending",
+          input: call.input,
+          time: { created: Date.now() },
+        }
+        announce(part)
+      }
+      if (call.inputError) this.inputErrors.set(part, call.inputError)
+    }
+  }
+
   /**
    * Streams one assistant turn, materializing parts as the adapter reports
    * them. Returns undefined if the turn was aborted.
@@ -3921,27 +3952,7 @@ export class SessionRunner {
        */
       if (cut && !request.signal.aborted) outcome = { stop: "end_turn", toolCalls: [], usage: outcome.usage, finishReason: LOOP_FINISH }
 
-      // Tool arguments stream as partial JSON, so they are only trustworthy
-      // once the turn closes - fill them in from the settled outcome.
-      for (const call of outcome.toolCalls) {
-        let part = assistant.parts.find(
-          (candidate): candidate is ToolPart => candidate.type === "tool" && candidate.callID === call.callID,
-        )
-        if (part) part.input = call.input
-        else {
-          part = {
-            type: "tool",
-            id: Identifier.part(),
-            callID: call.callID,
-            name: call.name,
-            status: "pending",
-            input: call.input,
-            time: { created: Date.now() },
-          }
-          announce(part)
-        }
-        if (call.inputError) this.inputErrors.set(part, call.inputError)
-      }
+      this.settleToolCalls(assistant, outcome, announce)
 
       await this.store.saveMessage(assistant)
       return outcome

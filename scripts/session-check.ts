@@ -1510,6 +1510,76 @@ async function main(): Promise<void> {
     )
   }
 
+  // Public store boundaries make the otherwise tiny finalization window deterministic.
+  console.log("turn finalization edge cases (3 scenarios)")
+  {
+    const settles = async (probe: () => Promise<boolean>) => {
+      const deadline = Date.now() + 3000
+      while (Date.now() < deadline) {
+        if (await probe()) return true
+        await new Promise((resolve) => setTimeout(resolve, 25))
+      }
+      return probe()
+    }
+    const failed = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
+    let queued = ""
+    onRequest = () => {
+      onRequest = undefined
+      refuseNext = JSON.stringify({ error: { message: "invalid test request" } })
+      void runner.prompt({ sessionID: failed.id, text: "queued after failure", delivery: "queue" }).then((id) => (queued = id))
+    }
+    script = []
+    await runner.prompt({ sessionID: failed.id, text: "fail this request" })
+    await settles(async () => !!queued && !runner.busySessions().includes(failed.id))
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    check("a failed turn reports an error and retains its queue without sending it",
+      (await sessions.messages(failed.id)).some((message) => message.role === "assistant" && message.finish === "error") && !!queued && (await sessions.require(failed.id)).queued?.some((item) => item.id === queued) === true &&
+      !(await sessions.messages(failed.id)).some((message) => message.role === "user" && message.text === "queued after failure"))
+
+    const late = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
+    const update = sessions.update.bind(sessions)
+    let carried = ""
+    let idleBeforeResume = false
+    let requestsAtRelease = 0
+    const offLate = bus.subscribe((event) => {
+      if (event.type === "session.idle" && event.sessionID === late.id && requests.length <= requestsAtRelease) idleBeforeResume = true
+    })
+    sessions.update = async (...args: Parameters<typeof sessions.update>) => {
+      if (args[0] === late.id && "claim" in args[1] && args[1].claim === undefined && !carried) {
+        requestsAtRelease = requests.length
+        carried = await runner.prompt({ sessionID: late.id, text: "stranded at release" })
+      }
+      return update(...args)
+    }
+    try {
+      await runner.prompt({ sessionID: late.id, text: "finish before the steer" })
+      const resumed = await settles(async () => !!carried && requests.length > requestsAtRelease && !runner.busySessions().includes(late.id))
+      check("a stranded message resumes without an intermediate idle or duplicate transcript entry",
+        resumed && !idleBeforeResume && (requests.at(-1) ?? "").includes("stranded at release") &&
+        (await sessions.messages(late.id)).filter((message) => message.role === "user" && message.text === "stranded at release").length === 1)
+    } finally {
+      sessions.update = update
+      offLate()
+    }
+
+    // Closing is terminal for a runner, so give this scenario its own instance.
+    const closing = new SessionRunner(sessions, bus, config, permissions, auth, storage)
+    const quit = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
+    let parked = ""
+    onRequest = () => {
+      onRequest = undefined
+      closing.closeTurns()
+      void closing.prompt({ sessionID: quit.id, text: "queued during quit", delivery: "queue" }).then((id) => (parked = id))
+    }
+    await closing.prompt({ sessionID: quit.id, text: "finish during quit" })
+    await settles(async () => !!parked && !closing.busySessions().includes(quit.id))
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    const saved = await sessions.require(quit.id)
+    check("closing preserves the claim and queue while releasing busy state",
+      !!saved.claim && !closing.busySessions().includes(quit.id) && !!parked && saved.queued?.some((item) => item.id === parked) === true &&
+      !(await sessions.messages(quit.id)).some((message) => message.role === "user" && message.text === "queued during quit"))
+  }
+
   // --- two prompts at once claim one session, not two -----------------------
   console.log("stopping a turn")
   {
