@@ -33,3 +33,13 @@ runner 纪律：不重构每步历史整形、继续/续写/压缩/中止决策�
 runner 调用点：compactNow 在边界裁剪后、split 前调用 flush（1 行）；循环读取 stored 后、markDelivered 前调用 flush（1 行）。新增独立 flush 方法，不移动受保护段；另在既有回滚/删除入口清除笔记（各 1 行）。
 
 B1 最终版本提交前：typecheck、sessioncheck、turncheck、smoke 均 exit 0；turncheck 17 passed，smoke 74/74，git diff --check 通过。
+
+## Phase B2 — structured rebuild
+
+压缩边界冻结 rebuild snapshot（来自持久笔记）；旧 checkpoint 无 snapshot 时从已有摘要 Objective / Requirements / Decisions / Work State / Next Move 和 files 恢复。块含 Session goals、Established constraints、Decisions、Key files、Last action、Unfinished work，空项明确 unknown。历史快照仅作数据，要求更新的用户消息与当前指令优先，操作前核验文件，避免旧笔记升级成新指令。
+
+组装顺序：context.ts 的 runtimeContext/sessionNote 仍随原用户消息保存；runner.contextFor 先生成 summary + recent + boundary 后消息，再保留原有 crop/prune/headers/skills/attachment/forWire 次序。最后请求组装才加入独立 developer 字段，OpenAI wire 为 system → developer rebuild → 投影历史；Responses 在 input 起始放 developer 消息，instructions 不变；Anthropic 没有 developer 角色，在 system 的缓存前缀和 memory/goal tail 之后追加不标缓存的等效文本块。重建文本计入 requestTokens 与 fitOutput。
+
+首轮正常请求成功返回 outcome 后才持久化 compacted.rebuildDelivered；失败/中止未交付，重试仍有重建块；新压缩边界重新触发。后续正常请求不重复，不增加 transcript。runner 仅加 snapshot 字段、请求组装的 developer 变量/字段、成功后确认钩子（各处≤2行），不搬移或拆分决策与 emit 段。
+
+B2 新增四个公开行为断言均 green：首轮 structured developer 块与顺序、持久交付标记与仅一次、Anthropic system tail 顺序、Responses developer 位于历史前。四项独立 bundle 变异均 exit 1 且对应断言 BAD：删除 OpenAI developer splice；把 rebuildDelivered 写成 false；删除 Anthropic rebuild system block；删除 Responses developer input。最终 typecheck / sessioncheck / turncheck / smoke 均 exit 0，turncheck 17 passed，smoke 74/74，diff --check 通过。

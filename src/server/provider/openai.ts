@@ -264,6 +264,7 @@ export const OpenAICompatible: ProviderAdapter = {
     if (!root) throw new Error("This provider has no base URL configured")
 
     const messages = toMessages(systemText(request), request.history, request.inputs, request.interleaved, request.model)
+    if (request.developer) messages.splice(1, 0, { role: "developer", content: request.developer })
     const tools: Record<string, unknown>[] = toolSchemas(request.tools, request.model)
     if (cacheMarked(request.model.provider, request.model.model)) withCacheMarks(messages, tools)
     else if (qwenCacheMarked(request.model.provider, request.model.model)) withQwenCacheMarks(messages)

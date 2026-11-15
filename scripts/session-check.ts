@@ -36,6 +36,7 @@ import { SessionRunner } from "../src/server/session/runner"
 import { findTool } from "../src/server/tool/registry"
 import { Shells } from "../src/server/shell"
 import { McpServers } from "../src/server/mcp"
+import { messagesRequest } from "../src/server/provider/anthropic"
 import { OpenAICompatible } from "../src/server/provider/openai"
 import { ChatGPTSubscription } from "../src/server/provider/chatgpt"
 import { handle } from "../src/server/handlers"
@@ -401,6 +402,19 @@ async function main(): Promise<void> {
     check("the turn after a manual compaction goes out from the summary", turns.some((message) => String(message.content).includes("## Objective")), JSON.stringify(turns.map((message) => String(message.content).slice(0, 30))))
     check("and the conversation it replaced is not sent again", !turns.some((message) => String(message.content).includes("the first question")), JSON.stringify(turns.map((message) => String(message.content).slice(0, 30))))
     check("the new question is there, so this is the turn's own request", turns.some((message) => String(message.content).includes("and what did we settle on?")))
+    const firstMessages = sent[0]?.messages ?? []
+    const rebuild = firstMessages.find((message) => message.role === "developer")
+    check("the first post-compaction request receives a structured developer rebuild", firstMessages[0]?.role === "system" && firstMessages[1] === rebuild && ["Session goals", "Established constraints", "Key files", "Last action", "Unfinished work", "finish the context task", "verify the change"].every((text) => String(rebuild?.content).includes(text)))
+    const acknowledged = await new SessionStore(storage, bus).get(one.id)
+    const secondFrom = requests.length
+    const secondDone = idle(one.id)
+    await runner.prompt({ sessionID: one.id, text: "one more normal request" })
+    await secondDone
+    check("rebuild delivery persists and is not repeated", acknowledged?.compacted?.rebuildDelivered === true && !requests.slice(secondFrom).some((body) => body.includes("<session-rebuild")))
+    const anthropic = messagesRequest({ apiKey: "", model: { provider: "fake", model: "m" }, system: "base", systemTail: "tail", developer: "rebuild snapshot", history: [], tools: [], effort: "", signal: new AbortController().signal })
+    check("Anthropic receives rebuild after the system tail", JSON.stringify(anthropic.system).includes('"text":"rebuild snapshot"') && JSON.stringify(anthropic.system).indexOf('"text":"tail"') < JSON.stringify(anthropic.system).indexOf('"text":"rebuild snapshot"'))
+
+
   }
 
   // --- a restore that fails leaves the snapshot where it was ----------------
@@ -1733,6 +1747,7 @@ async function main(): Promise<void> {
         model: { provider: "chatgpt", model: "gpt-5-codex" },
         system: "",
         history,
+        developer: "rebuild snapshot",
         tools: [],
         effort: "high",
         signal: new AbortController().signal,
@@ -1742,6 +1757,7 @@ async function main(): Promise<void> {
     )
 
     const sent = JSON.parse(codexBody) as { input: { type: string; output?: string }[] }
+    check("Responses receives a developer rebuild before history", (sent.input[0] as { role?: string })?.role === "developer" && JSON.stringify(sent.input[0]).includes("rebuild snapshot"))
     const result = sent.input.find((item) => item.type === "function_call_output")
     check("the failed call is still paired with a result", Boolean(result))
     check("the model is told the command failed", (result?.output ?? "").includes("timed out"))

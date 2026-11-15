@@ -199,6 +199,10 @@ export interface SessionInfo {
   }
   compacted?: {
     messageID: string
+    /** Snapshot frozen at this compaction boundary. */
+    rebuild?: NonNullable<SessionInfo["compactionMemory"]>["notes"]
+    /** A successful normal request has received the rebuild block. */
+    rebuildDelivered?: boolean
     summary: string
     at: number
     trigger?: "manual" | "automatic" | "provider-overflow"

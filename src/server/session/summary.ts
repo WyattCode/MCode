@@ -372,8 +372,8 @@ export function continueNote(trigger: CompactionTrigger): string {
 
 /** How much of a request these messages make, by the same four-characters-to-a-token reckoning as everything else here. */
 /** A whole request by the same estimate: the system prompt, its tail, the tool schemas and the history. */
-export function requestTokens(request: { system: string; systemTail?: string; tools: readonly unknown[]; history: readonly Message[] }): number {
-  return estimateTokens(request.system) + estimateTokens(request.systemTail) + estimateTokens(JSON.stringify(request.tools)) + messagesTokens(request.history)
+export function requestTokens(request: { system: string; systemTail?: string; developer?: string; tools: readonly unknown[]; history: readonly Message[] }): number {
+  return estimateTokens(request.system) + estimateTokens(request.systemTail) + estimateTokens(request.developer) + estimateTokens(JSON.stringify(request.tools)) + messagesTokens(request.history)
 }
 
 export function messagesTokens(messages: readonly Message[]): number {

@@ -1,5 +1,6 @@
 import { MEMORY_FLUSH_PROMPT, memoryText, parseCompactionNotes, shouldFlushMemory } from "./compaction-memory"
 import { messageToText } from "./summary"
+import { rebuildContext } from "./rebuild"
 import path from "node:path"
 import type {
   AgentName,
@@ -1747,7 +1748,7 @@ export class SessionRunner {
     if (!isSummary(summary)) throw new Error("The model did not return a summary")
     if (durable) summary += `\n\n## Durable session notes\n${durable}`
     const files = touchedFiles(context, session.directory)
-    const mark = { messageID: last.id, summary, ...(split.recent ? { recent: split.recent } : {}), at: Date.now(), trigger, ...(files.length ? { files } : {}) }
+    const mark = { messageID: last.id, summary, ...(session.compactionMemory ? { rebuild: session.compactionMemory.notes } : {}), ...(split.recent ? { recent: split.recent } : {}), at: Date.now(), trigger, ...(files.length ? { files } : {}) }
     /*
      * What the ring should say now, rather than after the next turn: the next
      * request is the system prompt, the tools, the summary, and whatever
@@ -3265,7 +3266,8 @@ export class SessionRunner {
       const sentTools = [...this.offeredTools(session), ...(outputSchema ? [structuredOutputTool(outputSchema)] : [])]
       // The output asked for, fitted to what the window has left (OpenCode v2, d9987ef9); see `promptSince`.
       const modelKey = `${session.model.provider}/${session.model.model}`
-      const estimated = requestTokens({ system, systemTail, tools: sentTools, history: sentHistory })
+      const developer = rebuildContext(session)
+      const estimated = requestTokens({ system, systemTail, developer, tools: sentTools, history: sentHistory })
       const prompt = promptSince(this.promptAnchors.get(sessionID), modelKey, estimated)
       const maxOutput = fitOutput(maxOutputTokens(session.model, this.config.modelEntry(session.model)), this.config.modelEntry(session.model), prompt)
 
@@ -3277,6 +3279,7 @@ export class SessionRunner {
         model: session.model,
         system,
         systemTail,
+        developer,
         history: sentHistory,
         tools: sentTools,
         /*
@@ -3362,6 +3365,8 @@ export class SessionRunner {
         await this.store.saveMessage(assistant)
         return
       }
+
+      if (developer && session.compacted) session = keepTurn(await this.store.update(sessionID, { compacted: { ...session.compacted, rebuildDelivered: true } }), session)
 
       // MiMo's cost: cache reads and writes at their own prices, reasoning at the output price.
       const usage = { ...outcome.usage, cost: costOf(outcome.usage, this.config.modelEntry(session.model)) }
