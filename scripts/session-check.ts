@@ -184,7 +184,7 @@ const server = http.createServer((request, response) => {
         }
         response.write(`data: ${JSON.stringify(frame)}\n\n`)
       })
-      const close = { choices: [{ delta: {}, finish_reason: "tool_calls" }], usage: { prompt_tokens: 1, completion_tokens: 1 } }
+      const close = { choices: [{ delta: {}, finish_reason: "tool_calls" }], usage: reportedUsage ?? { prompt_tokens: 1, completion_tokens: 1 } }
       response.write(`data: ${JSON.stringify(close)}\n\n`)
       response.write("data: [DONE]\n\n")
       response.end()
@@ -918,6 +918,56 @@ async function main(): Promise<void> {
     check("80 percent flushes once per cycle before 90 percent compaction", flushes.length === 1 && !!info?.compactionMemory && !info.compacted)
     reportedUsage = undefined
     await config.setDiscovered("fake", [])
+  }
+
+  console.log("count overflow waits for compaction before the next model request")
+  {
+    await config.setDiscovered("fake", [{ id: "m", name: "M", contextWindow: 10000, maxOutput: 1000, input: 0, output: 0 }])
+    reportedUsage = { prompt_tokens: 9000, completion_tokens: 5 }
+    const boundarySession = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
+    const file = path.join(project, "boundary-proof.txt")
+    await fs.writeFile(file, "boundary proof")
+    script = [[{ name: "read", input: { file_path: file } }]]
+    const original = OpenAICompatible.stream
+    let enter!: () => void
+    let release!: () => void
+    const entered = new Promise<void>((resolve) => { enter = resolve })
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    let holding = false
+    let unsafe = false
+    OpenAICompatible.stream = async (request, emit) => {
+      const last = request.history.at(-1)
+      if (last?.role === "user" && last.text.includes("You MUST use this format for your response")) {
+        holding = true
+        enter()
+        await gate
+        holding = false
+      } else if (holding) unsafe = true
+      return original(request, emit)
+    }
+    const from = requests.length
+    const finished = idle(boundarySession.id)
+    let deadline: ReturnType<typeof setTimeout> | undefined
+    try {
+      await runner.prompt({ sessionID: boundarySession.id, text: "read the boundary proof, then finish" })
+      await Promise.race([entered, new Promise<never>((_, reject) => { deadline = setTimeout(() => reject(new Error("count boundary never entered compaction")), 10000) })])
+      clearTimeout(deadline)
+      // Give an incorrectly detached caller an opportunity to issue its next request while the gate stays shut.
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      const during = await sessions.get(boundarySession.id)
+      check("a crossed tool step cannot send its next request while summary is blocked", !unsafe && requests.length - from === 1 && !during?.compacted)
+      release()
+      await finished
+      const sent = requests.slice(from).map((body) => JSON.parse(body))
+      const after = await sessions.get(boundarySession.id)
+      check("the next request follows committed compaction and contains rebuilt history", sent.length === 3 && JSON.stringify(sent[1]).includes("You MUST use this format for your response") && JSON.stringify(sent[2]).includes("<session-rebuild") && after?.compacted?.trigger === "provider-overflow" && after.compacted.rebuildDelivered === true)
+    } finally {
+      clearTimeout(deadline)
+      release()
+      OpenAICompatible.stream = original
+      reportedUsage = undefined
+      await config.setDiscovered("fake", [])
+    }
   }
 
   console.log("a model with a known window is compacted by count")

@@ -43,3 +43,60 @@ B1 最终版本提交前：typecheck、sessioncheck、turncheck、smoke 均 exit
 首轮正常请求成功返回 outcome 后才持久化 compacted.rebuildDelivered；失败/中止未交付，重试仍有重建块；新压缩边界重新触发。后续正常请求不重复，不增加 transcript。runner 仅加 snapshot 字段、请求组装的 developer 变量/字段、成功后确认钩子（各处≤2行），不搬移或拆分决策与 emit 段。
 
 B2 新增四个公开行为断言均 green：首轮 structured developer 块与顺序、持久交付标记与仅一次、Anthropic system tail 顺序、Responses developer 位于历史前。四项独立 bundle 变异均 exit 1 且对应断言 BAD：删除 OpenAI developer splice；把 rebuildDelivered 写成 false；删除 Anthropic rebuild system block；删除 Responses developer input。最终 typecheck / sessioncheck / turncheck / smoke 均 exit 0，turncheck 17 passed，smoke 74/74，diff --check 通过。
+
+## Phase B3 — NO_GAP
+
+结论：NO_GAP（同步压缩时序）。CAPABILITY_DIFF 原文已称 MCode 压缩同步；其后台预生成/指定压缩模型优化不属于本次三项范围。现状的 count/refusal 触发点都 await compactForOverflow；它 await compactNow，后者 await store.update 写完 checkpoint 后才返回。新回合入口也 await compactIfCrossed，结束回合越线不会在下一回合先发一个旧历史请求。故不为此改动产品调度，更未引入 detached/background 压缩。结束回合的延迟是压缩触发策略，不构成下一次请求越过同步屏障的缺口。未知窗口只能依 provider 拒绝后压缩，字符估计无法承诺从不被 provider 拒绝；本结论限定为已触发压缩的同步时序。
+
+补充真实 runner 可控 gate 特征测试：fake 的工具步骤报告 9005/10000 tokens；截住 summary adapter 调用并持有 gate，确认只有工具请求发出、checkpoint 尚未提交、无后续模型调用。放行后恰有 tool → summary → next request 三次 HTTP 请求，下一请求携带 rebuild，store 中 checkpoint 已交付。100ms 只给错误的 detached 调度执行机会，摘要 gate 全程保持，正常路径不依赖摘要返回速度。超过 10 秒未进入压缩直接失败，避免零执行假绿。
+
+此段只改 session-check：让工具响应可使用既有 reportedUsage fixture，并增加两个同步边界断言；runner 产品调用点无改动。
+
+B3 两项独立 bundle 变异均 exit 1 且对应新断言 BAD：将工具后 `await compactForOverflow` 改成不等待的调用 → gate 期间下一请求越界断言红；在 overflow 路径提前设置 rebuildDelivered → 下一请求重建断言红。恢复源码的四项最终检查全绿。
+
+## 最终验证、调用点与提交
+
+| 段 | typecheck | sessioncheck | turncheck | smoke |
+| --- | --- | --- | --- | --- |
+| A | exit 0 | 230 ok / exit 0 | 17 passed / exit 0 | 74/74 / exit 0 |
+| B1 | exit 0 | 233 ok / exit 0 | 17 passed / exit 0 | 74/74 / exit 0 |
+| B2 | exit 0 | 237 ok / exit 0 | 17 passed / exit 0 | 74/74 / exit 0 |
+| B3 (NO_GAP) | exit 0 | 239 ok / exit 0 | 17 passed / exit 0 | 74/74 / exit 0 |
+
+每段先 export PATH=/opt/homebrew/opt/python@3.11/libexec/bin:$PATH，依次执行要求的四项 npm 脚本。所有变异均在仓内临时 bundle，产品源码保持恢复态；不存在只扫描源码或零条目假绿。
+
+最终 runner 调用点清单（本 worktree 行号）：
+- 1587：compactNow 在 summary split 前补写持久笔记。
+- 3115：每步 stored 读取后、markDelivered 前按 80% 触发静默笔记。
+- 1748：压缩 mark 冻结 notes snapshot，保留原有 summary/recent/files。
+- 3269–3270、3282：组装 developer rebuild 并纳入请求估计和 adapter 参数。
+- 3369：正常请求返回 outcome 后持久化 rebuildDelivered。
+- 1219、1244、1284 附近：回滚/提交回滚/删除历史时清除失效笔记。
+- 原有同步调用保持：2991 await compactIfCrossed；3343、3575、3605、3664 await compactForOverflow；1807 await compactNow；compactNow 最后返回 store.update 的 Promise，调用方 await 写盘后才继续。
+
+没有重构 CODEX_REPORT 点名的每步决策或流式 emit 段，各新增钩子≤2行。不修改 permission.ts、i18n/registry、node_modules 符号链接，不安装依赖、不 push。删除 tmp-local 临时 bundle、日志和失败 fixture，保留用户原有未跟踪 TASK_CTX.md 和 node_modules。
+
+以下 git log 是最终 B3 测试和报告提交前的实际记录；B3 随本报告以 `test(session): verify synchronous compaction boundary` 提交（NO_GAP，无产品调度修改）：
+
+```text
+f602f86 feat(session): inject structured rebuild after compaction
+d4b6155 feat(session): flush memory before compaction
+361542c test(session): pin compaction checkpoint persistence and history
+63a7618 Merge branch 'perm-rules': wildcard permission rules + self-asking contract
+```
+
+`git diff --stat 63a7618 -- . ':(exclude)CTX_REPORT.md'`（完整代码与测试差异，排除报告自身）：
+
+```text
+ scripts/session-check.ts                | 103 ++++++++++++++++++++++++++++++--
+ src/server/provider/anthropic.ts        |   2 +-
+ src/server/provider/chatgpt.ts          |   2 +-
+ src/server/provider/openai.ts           |   1 +
+ src/server/provider/types.ts            |   2 +
+ src/server/session/compaction-memory.ts |  33 ++++++++++
+ src/server/session/rebuild.ts           |  35 +++++++++++
+ src/server/session/runner.ts            |  63 +++++++++++++++++--
+ src/server/session/summary.ts           |   4 +-
+ src/shared/protocol.ts                  |  11 ++++
+ 10 files changed, 243 insertions(+), 13 deletions(-)
+```
