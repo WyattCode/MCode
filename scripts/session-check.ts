@@ -1446,6 +1446,70 @@ async function main(): Promise<void> {
   offOverlap()
   check("no session ever had two turns writing at once", overlaps === 0, `${overlaps} overlap(s)`)
 
+  /*
+   * What a turn leaves behind when it ends.
+   *
+   * The release is the last thing a turn does, and everything a window sees
+   * after the words stop comes from it: the claim comes off the conversation,
+   * the session stops being busy, it is told it is idle, and a message queued
+   * behind the turn is sent. A turn the reader stopped keeps that message for
+   * the reader instead, which is the half of the release that is easy to lose.
+   */
+  console.log("releasing a finished turn")
+  {
+    const settles = async (probe: () => Promise<boolean>, ms = 3000): Promise<boolean> => {
+      const deadline = Date.now() + ms
+      while (Date.now() < deadline) {
+        if (await probe()) return true
+        await new Promise((resolve) => setTimeout(resolve, 25))
+      }
+      return probe()
+    }
+    const usersOf = async (sessionID: string) =>
+      (await sessions.messages(sessionID)).filter((message) => message.role === "user").map((message) => message.text)
+
+    const released = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
+    let queued: string = "(never queued)"
+    onRequest = () => {
+      onRequest = undefined
+      void runner
+        .prompt({ sessionID: released.id, text: "the queued question", delivery: "queue" })
+        .then((id) => (queued = id))
+        .catch((failure: Error) => (queued = `refused: ${failure.message}`))
+    }
+    script = []
+    await runner.prompt({ sessionID: released.id, text: "the first question" })
+
+    const delivered = await settles(async () => (await usersOf(released.id)).includes("the queued question"))
+    await settles(async () => !runner.busySessions().includes(released.id))
+    check("a turn that ends releases its claim", (await sessions.require(released.id)).claim === undefined)
+    check("and stops being busy", !runner.busySessions().includes(released.id))
+    check("a message queued behind it is sent once it ends", queued.startsWith("msg_") && delivered, `${queued} / ${(await usersOf(released.id)).join(" | ")}`)
+
+    const halted = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
+    let parked: string = "(never queued)"
+    onRequest = () => {
+      onRequest = undefined
+      void runner
+        .prompt({ sessionID: halted.id, text: "waits behind stop", delivery: "queue" })
+        .then((id) => {
+          parked = id
+          setTimeout(() => runner.abort(halted.id), 30)
+        })
+        .catch((failure: Error) => (parked = `refused: ${failure.message}`))
+    }
+    script = [[{ name: "bash", input: wait }]]
+    await runner.prompt({ sessionID: halted.id, text: "a turn that will be stopped" }).catch(() => undefined)
+
+    await settles(async () => !runner.busySessions().includes(halted.id))
+    const left = (await sessions.require(halted.id)).queued ?? []
+    check(
+      "a stopped turn leaves a queued message for the reader",
+      parked.startsWith("msg_") && left.some((item) => item.text === "waits behind stop") && !(await usersOf(halted.id)).includes("waits behind stop"),
+      `${parked} / ${left.map((item) => item.text).join(" | ")}`,
+    )
+  }
+
   // --- two prompts at once claim one session, not two -----------------------
   console.log("stopping a turn")
   {
