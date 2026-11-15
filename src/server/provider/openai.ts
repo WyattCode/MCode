@@ -1,5 +1,6 @@
+import { compatibleOptions } from "./gemini"
 import type { Message, ModelModalities, ModelRef, Usage } from "@shared/protocol"
-import { schemaFor } from "./tool-schema"
+import { transformTool } from "./transform"
 import { TOOL_MEDIA_NOTE, attachmentParts, type WirePart } from "./attachment-parts"
 import { userText } from "@shared/annotations"
 import type { ToolDefinition } from "../tool/types"
@@ -76,7 +77,7 @@ interface Chunk {
 function toolSchemas(tools: ToolDefinition[], model: ModelRef) {
   return tools.map((tool) => ({
     type: "function" as const,
-    function: { name: tool.name, description: tool.description, parameters: schemaFor(model, tool.parameters) },
+    function: transformTool(tool, model, "chat"),
   }))
 }
 
@@ -96,10 +97,10 @@ function chatMedia(part: Exclude<WirePart, { kind: "text" }>): Record<string, un
  * `role: "tool"` entries keyed by call id, which is what this format expects
  * in place of Anthropic's batched tool_result blocks.
  */
-export function toMessages(system: string, history: Message[], inputs?: Partial<ModelModalities>, interleaved?: string) {
+export function toMessages(system: string, history: Message[], inputs?: Partial<ModelModalities>, interleaved?: string, model?: ModelRef) {
   const out: Record<string, unknown>[] = [{ role: "system", content: system }]
 
-  const sent = requestHistory(history, inputs)
+  const sent = requestHistory(history, inputs, model)
   // The step the model has not answered yet: the only one whose tool pictures it still has to look at.
   const answering = sent.findLastIndex((entry) => entry.role === "assistant")
 
@@ -262,7 +263,7 @@ export const OpenAICompatible: ProviderAdapter = {
     const root = (request.baseURL ?? "").replace(/\/+$/, "")
     if (!root) throw new Error("This provider has no base URL configured")
 
-    const messages = toMessages(systemText(request), request.history, request.inputs, request.interleaved)
+    const messages = toMessages(systemText(request), request.history, request.inputs, request.interleaved, request.model)
     const tools: Record<string, unknown>[] = toolSchemas(request.tools, request.model)
     if (cacheMarked(request.model.provider, request.model.model)) withCacheMarks(messages, tools)
     else if (qwenCacheMarked(request.model.provider, request.model.model)) withQwenCacheMarks(messages)
@@ -299,26 +300,11 @@ export const OpenAICompatible: ProviderAdapter = {
         stream_options: { include_usage: true },
         max_tokens: request.maxOutput ?? MAX_TOKENS,
         messages,
-        /*
-         * The field the effort control has always meant and never sent.
-         *
-         * The reference emits exactly this for `@ai-sdk/openai-compatible`
-         * (`{reasoningEffort: effort}`, which its SDK writes out as
-         * `reasoning_effort`). It is withheld only where the caller has said
-         * which levels the model accepts and this is not one of them - a model
-         * with an empty list takes no effort parameter at all, and handing it
-         * one is a field the provider will reject or drop. A caller that says
-         * nothing gets the field, because sending it is what the control has
-         * always claimed to do.
-         */
-        ...(request.variants && !request.variants.includes(request.effort)
-          ? {}
-          : { reasoning_effort: request.effort }),
         ...(tools.length ? { tools, tool_choice: request.toolChoice ?? "auto" } : {}),
         // MiMo's family sampling; top-k is not a chat-completions field, so it stays off this wire.
         ...(request.sampling?.temperature !== undefined ? { temperature: request.sampling.temperature } : {}),
         ...(request.sampling?.topP !== undefined ? { top_p: request.sampling.topP } : {}),
-        ...request.extra,
+        ...compatibleOptions(request),
       }),
     }).catch((err: unknown) => {
       guard.dispose()

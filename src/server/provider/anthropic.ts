@@ -9,7 +9,7 @@ import { anthropicAdaptive, anthropicOpus45 } from "./variants"
 import { guarded, stallGuard } from "./stall"
 import { costOf } from "../session/usage"
 import { requestHistory } from "./history"
-import { schemaFor } from "./tool-schema"
+import { transformTool } from "./transform"
 
 /**
  * A Messages client, for Anthropic itself or a gateway that speaks its API.
@@ -30,12 +30,10 @@ export function createClient(apiKey: string, maxRetries = 2, baseURL?: string, h
 }
 
 function toolSchemas(tools: ToolDefinition[], model: ModelRef): Anthropic.Tool[] {
-  return tools.map((tool) => ({
-    name: tool.name,
-    description: tool.description,
-    // A Kimi or Gemini model reached over this protocol still wants its family's schema shape.
-    input_schema: schemaFor(model, tool.parameters) as Anthropic.Tool.InputSchema,
-  }))
+  return tools.map((tool) => {
+    const normalized = transformTool(tool, model, "anthropic")
+    return { name: normalized.name, description: normalized.description, input_schema: normalized.parameters as Anthropic.Tool.InputSchema }
+  })
 }
 
 /**
@@ -55,7 +53,7 @@ export function toProviderMessages(messages: Message[], inputs?: Partial<ModelMo
   // merged into it - the API rejects consecutive same-role messages.
   let pendingResults = false
 
-  for (const message of requestHistory(messages, inputs)) {
+  for (const message of requestHistory(messages, inputs, model)) {
     if (message.role === "user") {
       const content: Anthropic.ContentBlockParam[] = []
       // MiMo's parts: a picture the model reads goes natively; every other attachment is named by path in the turn's blocks.
@@ -95,7 +93,8 @@ export function toProviderMessages(messages: Message[], inputs?: Partial<ModelMo
          * to carry on a tool call is still whole. The text arm below guards the
          * same way.
          */
-        if (sameModel && part.signature && part.text) assistant.push({ type: "thinking", thinking: part.text, signature: part.signature })
+        const signature = typeof part.native?.signature === "string" ? part.native.signature : part.signature
+        if (sameModel && signature && part.text) assistant.push({ type: "thinking", thinking: part.text, signature })
       } else if (part.type === "text") {
         if (part.text.trim()) assistant.push({ type: "text", text: part.text })
       } else if (part.type === "tool") {
@@ -403,7 +402,7 @@ export const AnthropicAdapter: ProviderAdapter = {
         } else if (event.delta.type === "thinking_delta") {
           emit({ type: "reasoning.delta", index: event.index, text: event.delta.thinking })
         } else if (event.delta.type === "signature_delta") {
-          emit({ type: "reasoning.signature", index: event.index, signature: event.delta.signature })
+          emit({ type: "reasoning.signature", index: event.index, signature: event.delta.signature, native: { signature: event.delta.signature } })
         }
         continue
       }

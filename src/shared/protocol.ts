@@ -340,7 +340,7 @@ export interface ReasoningPart {
   itemID?: string
 }
 
-export type AssistantPart = TextPart | ReasoningPart | ToolPart
+export type AssistantPart = (TextPart | ReasoningPart | ToolPart) & { native?: Record<string, unknown> }
 
 /**
  * One file a stored session produced, as the artifacts page needs it.

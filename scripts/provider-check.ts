@@ -34,6 +34,13 @@ import { Config } from "../src/server/config"
 import { modelVariants } from "../src/server/provider/variants"
 import { reasoningRequest as anthropicReasoning } from "../src/server/provider/anthropic"
 import { reasoningRequest as codexReasoning } from "../src/server/provider/chatgpt"
+import { adapterFor } from "../src/server/provider/adapter"
+import { AnthropicAdapter, toProviderMessages, messagesRequest } from "../src/server/provider/anthropic"
+import { ChatGPTSubscription, OpenAIResponses, toInput } from "../src/server/provider/chatgpt"
+import { OpenAICompatible } from "../src/server/provider/openai"
+import { compatibleOptions, geminiCapabilities } from "../src/server/provider/gemini"
+import { transformMessages, transformTool } from "../src/server/provider/transform"
+import type { TurnEvent, TurnRequest } from "../src/server/provider/types"
 import { requestHistory } from "../src/server/provider/history"
 
 const findings: string[] = []
@@ -52,6 +59,182 @@ function section(title: string): void {
 const MAX_TOKENS = 64_000
 
 async function main(): Promise<void> {
+  section("Provider breadth characterization")
+  {
+    note("all four kinds select their adapter", adapterFor("anthropic") === AnthropicAdapter && adapterFor("chatgpt") === ChatGPTSubscription && adapterFor("openai-responses") === OpenAIResponses && adapterFor("openai-compatible") === OpenAICompatible)
+    const user: UserMessage = { id: "u", sessionID: "s", role: "user", text: "", attachments: [], time: { created: 1 } }
+    const assistant = { id: "a", sessionID: "s", role: "assistant", model: { provider: "anthropic", model: "claude" }, parts: [{ type: "reasoning", text: "thought", signature: "proof" }, { type: "text", text: "answer" }], time: { created: 1 } } as AssistantMessage
+    note("empty user becomes Continue", (requestHistory([user])[0] as UserMessage).text === "Continue.")
+    note("assistant ending gets Continue", (requestHistory([assistant]).at(-1) as UserMessage).text === "Continue.")
+    const wire = JSON.stringify(toProviderMessages([user, assistant], undefined, assistant.model))
+    note("Anthropic replays signed thinking", wire.includes('"signature":"proof"') && wire.includes('"thinking":"thought"'))
+    note("Anthropic drops foreign signatures", !JSON.stringify(toProviderMessages([user, assistant], undefined, { provider: "anthropic", model: "other" })).includes("proof"))
+    const pending = { ...assistant, parts: [{ type: "tool", callID: "call", name: "read", input: {}, status: "running" }] } as AssistantMessage
+    const tools = JSON.stringify(toProviderMessages([user, pending], undefined, assistant.model))
+    note("unfinished tools get paired interrupted results", tools.includes('"tool_use"') && tools.includes('"tool_result"') && tools.includes("[Tool execution was interrupted]"))
+    note("history shaping leaves stored tools untouched", pending.parts[0]?.type === "tool" && pending.parts[0].status === "running")
+  }
+
+  section("Model-scoped native reasoning metadata")
+  {
+    const model = { provider: "anthropic", model: "claude" }
+    const message = { id: "native", sessionID: "s", role: "assistant", model, agent: "build", parts: [
+      { type: "reasoning", id: "r", text: "thought", native: { signature: "native-proof", extra: { opaque: true } }, time: { created: 0 } },
+      { type: "text", id: "t", text: "answer" },
+    ], time: { created: 0 } } as AssistantMessage
+    const before = JSON.stringify(message)
+    const same = requestHistory([message], undefined, model)[0] as AssistantMessage
+    note("same model keeps native metadata intact", same.parts[0].native?.signature === "native-proof" && JSON.stringify(same.parts[0].native) === JSON.stringify(message.parts[0].native))
+    for (const target of [{ provider: "anthropic", model: "other" }, { provider: "gateway", model: "claude" }]) {
+      const other = requestHistory([message], undefined, target)[0] as AssistantMessage
+      note(`switch to ${target.provider}/${target.model} strips native but keeps readable reasoning`, !other.parts[0].native && other.parts[0].type === "reasoning" && other.parts[0].text === "thought")
+    }
+    note("unknown destination never replays native", !(requestHistory([message])[0] as AssistantMessage).parts[0].native)
+    note("Anthropic consumes native signature", JSON.stringify(toProviderMessages([message], undefined, model)).includes('"signature":"native-proof"'))
+    const responses = { ...message, model: { provider: "openai", model: "gpt" }, parts: [
+      { type: "reasoning", id: "r", text: "", native: { encrypted_content: "cipher", id: "rs_1" }, time: { created: 0 } },
+      { type: "text", id: "t", text: "answer" },
+    ] } as AssistantMessage
+    const replay = toInput([responses], undefined, responses.model)
+    note("Responses replays native ciphertext and id even without summary", replay.some((item) => item.type === "reasoning" && item.encrypted_content === "cipher" && item.id === "rs_1"))
+    note("Responses never replays foreign ciphertext", !JSON.stringify(toInput([responses], undefined, model)).includes("cipher"))
+    note("native request shaping never mutates stored transcript", JSON.stringify(message) === before)
+
+    // Exercise the producer's real SSE parser; no credentials or network leave the process.
+    const originalFetch = globalThis.fetch
+    const events: TurnEvent[] = []
+    try {
+      globalThis.fetch = async () => new Response([
+        { type: "response.output_item.done", item: { type: "reasoning", id: "rs_stream", encrypted_content: "stream-cipher" } },
+        { type: "response.output_text.delta", delta: "answer" },
+        { type: "response.completed", response: { usage: {} } },
+      ].map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } })
+      await OpenAIResponses.stream({ apiKey: "test", model: responses.model, system: "test", history: [], tools: [], effort: "low", signal: new AbortController().signal, baseURL: "https://example.test/v1" }, (event) => events.push(event))
+      note("Responses stream emits native payload for persistence", events.some((event) => event.type === "reasoning.signature" && event.native?.encrypted_content === "stream-cipher" && event.native.id === "rs_stream"))
+      events.length = 0
+      globalThis.fetch = async () => new Response([
+        { type: "message_start", message: { id: "msg_1", type: "message", role: "assistant", model: "claude", content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } } },
+        { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "", signature: "" } },
+        { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "thought" } },
+        { type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "anthropic-proof" } },
+        { type: "content_block_stop", index: 0 },
+        { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 2 } },
+        { type: "message_stop" },
+      ].map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } })
+      await AnthropicAdapter.stream({ apiKey: "test", model, system: "test", history: [], tools: [], effort: "low", signal: new AbortController().signal, baseURL: "https://example.test/v1", retries: 0 }, (event) => events.push(event))
+      note("Anthropic stream emits native signature for persistence", events.some((event) => event.type === "reasoning.signature" && event.native?.signature === "anthropic-proof"))
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  }
+
+  section("Cross-provider message invariants")
+  {
+    const model = { provider: "openai", model: "gpt" }
+    const user: UserMessage = { id: "u", sessionID: "s", role: "user", text: " ", attachments: [], time: { created: 0 } }
+    const assistant = { id: "a", sessionID: "s", role: "assistant", model, agent: "build", parts: [
+      { type: "text", id: "blank", text: " " },
+      { type: "reasoning", id: "empty", text: "", time: { created: 0 } },
+      { type: "text", id: "answer", text: "answer" },
+    ], time: { created: 0 } } as AssistantMessage
+    const empty = { ...assistant, id: "empty", parts: assistant.parts.slice(0, 2) }
+    const before = JSON.stringify([user, empty, assistant])
+    const normalized = transformMessages([user, empty, assistant])
+    const reply = normalized.find((message) => message.role === "assistant") as AssistantMessage
+    note("empty text and reasoning blocks are removed", reply.parts.length === 1 && reply.parts[0].type === "text" && reply.parts[0].text === "answer")
+    note("empty assistant messages are removed even in the middle", normalized.every((message) => message.id !== "empty"))
+    note("empty content gets Continue before prefill is checked", (normalized[0] as UserMessage).text === "Continue." && (normalized.at(-1) as UserMessage).text === "Continue.")
+    note("transform is idempotent", JSON.stringify(transformMessages(normalized)) === JSON.stringify(normalized))
+    note("transform never changes the stored transcript", JSON.stringify([user, empty, assistant]) === before)
+    const encrypted = { ...assistant, parts: [{ type: "reasoning", id: "r", text: "", native: { encrypted_content: "proof" }, time: { created: 0 } }] } as AssistantMessage
+    note("empty summary with ciphertext is not empty content", (transformMessages([encrypted])[0] as AssistantMessage).parts[0].native?.encrypted_content === "proof")
+    const toolReply = { ...assistant, parts: [{ type: "tool", id: "t", name: "read", callID: "c", status: "completed", input: {}, output: "", time: { created: 0 } }] } as AssistantMessage
+    note("empty tool results remain paired without an extra Continue", transformMessages([toolReply]).length === 1 && JSON.stringify(toProviderMessages([toolReply], undefined, model)).includes('"tool_result"'))
+    for (const wire of [toProviderMessages([user, empty, assistant], undefined, model), toInput([user, empty, assistant], undefined, model)]) {
+      note("adapter request has no empty text/reasoning blocks and ends with user", !JSON.stringify(wire).includes('"text":""') && wire.at(-1)?.role === "user")
+    }
+    const tool = { name: "probe", description: "Optional argument", parameters: { type: "object", properties: { optional: { type: "string" } }, required: [] }, execute: async () => { throw new Error("not executed") } }
+    const schemaBefore = JSON.stringify(tool.parameters)
+    note("Responses explicitly disables strict without making optional fields required", transformTool(tool, model, "responses").strict === false && JSON.stringify(transformTool(tool, model, "responses").parameters) === schemaBefore)
+    note("Messages and compatible transports do not gain unsupported strict flags", !("strict" in transformTool(tool, model, "anthropic")) && !("strict" in transformTool(tool, model, "chat")))
+    const request: TurnRequest = { apiKey: "test", model, system: "test", history: [user, empty, assistant], tools: [tool], effort: "low", signal: new AbortController().signal, baseURL: "https://example.test/v1" }
+    note("Messages tool builder uses common schema normalization without strict", !JSON.stringify(messagesRequest(request).tools).includes('"strict"'))
+    const originalFetch = globalThis.fetch
+    try {
+      for (const [adapter, response] of [
+        [OpenAIResponses, 'data: {"type":"response.completed","response":{"usage":{}}}\n\n'],
+        [OpenAICompatible, 'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'],
+      ] as const) {
+        let body: Record<string, unknown> = {}
+        globalThis.fetch = async (_url, init) => { body = JSON.parse(String(init?.body)); return new Response(response, { headers: { "content-type": "text/event-stream" } }) }
+        await adapter.stream(request, () => undefined)
+        const tools = body.tools as { strict?: boolean; function?: { strict?: boolean } }[]
+        note("strict normalization reaches the actual request body", adapter === OpenAIResponses ? tools[0].strict === false : !("strict" in tools[0].function!))
+        if (adapter === OpenAICompatible) {
+          const messages = body.messages as { role: string; content?: unknown }[]
+          note("compatible adapter uses the same cleanup and continuation", messages.at(-1)?.role === "user" && messages.filter((message) => message.role === "assistant").length === 1)
+        }
+      }
+    } finally { globalThis.fetch = originalFetch }
+    note("tool schema is unchanged after all three builders", JSON.stringify(tool.parameters) === schemaBefore)
+  }
+
+  section("Gemini through OpenAI compatibility")
+  {
+    const model = (id: string) => ({ provider: "google", model: id })
+    const options = (id: string, effort: string, more: Partial<Pick<TurnRequest, "variants" | "thinkingOff" | "extra">> = {}) => compatibleOptions({ model: model(id), effort, ...more })
+    const families = [
+      ["gemini-2.5-pro", "low,medium,high"],
+      ["gemini-2.5-flash", "none,low,medium,high"],
+      ["gemini-2.5-flash-lite", "none,low,medium,high"],
+      ["gemini-3-pro-preview", "low,high"],
+      ["gemini-3.1-pro-preview", "low,medium,high"],
+      ["gemini-3-flash-preview", "minimal,low,medium,high"],
+      ["gemini-3.1-flash-lite", "minimal,low,medium,high"],
+      ["gemini-2.0-flash", ""],
+      ["gemini-unknown", ""],
+      ["gemini-3-pro-image-preview", ""],
+    ] as const
+    for (const [id, efforts] of families) {
+      const capabilities = geminiCapabilities(model(id))
+      note(`${id} advertises only mapped efforts`, capabilities?.reasoningEfforts.join() === efforts)
+      note(`${id} menu uses compatible capabilities`, modelVariants("openai-compatible", { id, name: id, reasoning: true, contextWindow: 0, input: 0, output: 0 }, "google").join() === efforts)
+      note(`${id} never claims native protocol or signature replay`, capabilities?.nativeProtocol === false && capabilities.thoughtSignatureReplay === false)
+    }
+    note("Gemini 2.5 flash can turn thinking off", options("gemini-2.5-flash", "none").reasoning_effort === "none" && geminiCapabilities(model("gemini-2.5-flash"))?.canDisableThinking === true)
+    for (const id of ["gemini-2.5-pro", "gemini-3-pro-preview", "gemini-3-flash-preview"]) {
+      note(`${id} never pretends thinking can be disabled`, !geminiCapabilities(model(id))?.canDisableThinking && options(id, "none").reasoning_effort === undefined && options(id, "high", { thinkingOff: true }).reasoning_effort === undefined)
+    }
+    note("thinkingOff maps to none on flash", options("gemini-2.5-flash", "high", { thinkingOff: true, variants: ["high"] }).reasoning_effort === "none")
+    note("minimal budget maps to low and Gemini 3 Pro medium maps to high", options("gemini-2.5-pro", "minimal").reasoning_effort === "low" && options("gemini-3-pro-preview", "medium").reasoning_effort === "high")
+    note("newer Pro retains medium and Flash retains minimal", options("gemini-3.1-pro-preview", "medium").reasoning_effort === "medium" && options("gemini-3-flash-preview", "minimal").reasoning_effort === "minimal")
+    note("xhigh and max clamp to high", options("gemini-2.5-pro", "xhigh").reasoning_effort === "high" && options("gemini-3-flash-preview", "max").reasoning_effort === "high")
+    note("unknown Gemini generation keeps server default", options("gemini-unknown", "high").reasoning_effort === undefined)
+    note("declared effort restrictions still apply", options("gemini-2.5-pro", "high", { variants: [] }).reasoning_effort === undefined && options("gemini-2.5-pro", "max", { variants: ["low"] }).reasoning_effort === undefined)
+    note("gateways and case variants get the same family detection", compatibleOptions({ model: { provider: "gateway", model: "Google/GEMINI-2.5-PRO" }, effort: "max" }).reasoning_effort === "high")
+    const extra = { extra_body: { google: { thinking_config: { thinking_budget: 2048, include_thoughts: true } } }, reasoning_effort: "xhigh", custom: true }
+    const before = JSON.stringify(extra)
+    note("native budget wins over conflicting reasoning_effort", options("gemini-2.5-pro", "high", { extra }).reasoning_effort === undefined)
+    note("native level also excludes reasoning_effort", options("gemini-3-flash-preview", "high", { extra: { extra_body: { google: { thinking_config: { thinking_level: "low" } } } } }).reasoning_effort === undefined)
+    note("include_thoughts alone still permits effort", options("gemini-3-flash-preview", "low", { extra: { extra_body: { google: { thinking_config: { include_thoughts: true } } } } }).reasoning_effort === "low")
+    note("extras cannot bypass Gemini effort allowlist", options("gemini-unknown", "high", { extra: { reasoning_effort: "max" } }).reasoning_effort === undefined)
+    note("Gemini options do not mutate extras", JSON.stringify(extra) === before)
+    note("generic compatible behavior and overrides are unchanged", compatibleOptions({ model: { provider: "local", model: "plain" }, effort: "max" }).reasoning_effort === "max" && compatibleOptions({ model: { provider: "local", model: "plain" }, effort: "high", variants: [] }).reasoning_effort === undefined && compatibleOptions({ model: { provider: "local", model: "plain" }, effort: "high", extra: { reasoning_effort: "custom" } }).reasoning_effort === "custom")
+    const originalFetch = globalThis.fetch
+    try {
+      let body: Record<string, unknown> = {}
+      globalThis.fetch = async (_url, init) => {
+        body = JSON.parse(String(init?.body))
+        return new Response('data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', { headers: { "content-type": "text/event-stream" } })
+      }
+      const request: TurnRequest = { apiKey: "test", model: model("gemini-2.5-flash"), system: "test", history: [], tools: [], effort: "max", signal: new AbortController().signal, baseURL: "https://example.test/v1" }
+      await OpenAICompatible.stream(request, () => undefined)
+      note("Gemini mapping reaches the actual compatible request", body.reasoning_effort === "high" && !("thinking" in body) && !("top_k" in body))
+      await OpenAICompatible.stream({ ...request, extra }, () => undefined)
+      note("actual request never combines native config and effort", body.reasoning_effort === undefined && JSON.stringify(body.extra_body) === JSON.stringify(extra.extra_body) && body.custom === true)
+    } finally { globalThis.fetch = originalFetch }
+  }
+
   section("The effort vocabulary")
   {
     /*

@@ -35,6 +35,7 @@ process.env.MCODE_GENERATE_TITLES = "0"
 import { SessionRunner } from "../src/server/session/runner"
 import { Shells } from "../src/server/shell"
 import { McpServers } from "../src/server/mcp"
+import { OpenAICompatible } from "../src/server/provider/openai"
 import { ChatGPTSubscription } from "../src/server/provider/chatgpt"
 import { handle } from "../src/server/handlers"
 import type { Runtime } from "../src/server/index"
@@ -306,6 +307,30 @@ async function main(): Promise<void> {
       }
       setTimeout(look, 25)
     })
+
+  console.log("native reasoning survives the runner and disk store")
+  {
+    const originalStream = OpenAICompatible.stream
+    const probe = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
+    try {
+      OpenAICompatible.stream = async (request, emit) => {
+        emit({ type: "reasoning.start", index: 99 })
+        emit({ type: "reasoning.delta", index: 99, text: "a thought" })
+        emit({ type: "reasoning.signature", index: 99, signature: "proof", native: { signature: "proof", opaque: { key: "kept" } } })
+        emit({ type: "block.end", index: 99 })
+        return originalStream(request, emit)
+      }
+      const done = idle(probe.id)
+      await runner.prompt({ sessionID: probe.id, text: "remember metadata" })
+      await done
+      const reopened = new SessionStore(storage, bus)
+      const reply = (await reopened.messages(probe.id)).find((message) => message.role === "assistant")
+      const part = reply?.role === "assistant" ? reply.parts.find((part) => part.type === "reasoning") : undefined
+      check("native metadata is persisted alongside legacy signatures", part?.native?.signature === "proof" && JSON.stringify(part.native.opaque) === '{"key":"kept"}' && part.type === "reasoning" && part.signature === "proof")
+    } finally {
+      OpenAICompatible.stream = originalStream
+    }
+  }
 
   // --- compaction cannot swallow a turn that arrives while it runs -----------
   console.log("compaction")
