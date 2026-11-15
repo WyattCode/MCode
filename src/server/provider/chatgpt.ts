@@ -1,3 +1,4 @@
+import { transformTool } from "./transform"
 import type { Message, ModelModalities, ModelRef } from "@shared/protocol"
 import { TOOL_MEDIA_NOTE, attachmentParts, type WirePart } from "./attachment-parts"
 import { userText } from "@shared/annotations"
@@ -54,13 +55,10 @@ interface StreamEvent {
   }
 }
 
-function toolSchemas(tools: ToolDefinition[]) {
+function toolSchemas(tools: ToolDefinition[], model: ModelRef) {
   return tools.map((tool) => ({
     type: "function" as const,
-    name: tool.name,
-    description: tool.description,
-    parameters: tool.parameters,
-    strict: false,
+    ...transformTool(tool, model, "responses"),
   }))
 }
 
@@ -273,7 +271,7 @@ async function streamResponses(
       instructions: systemText(request),
       input: toInput(request.history, request.inputs, request.model),
       include: INCLUDE_ENCRYPTED_REASONING,
-      tools: toolSchemas(request.tools),
+      tools: toolSchemas(request.tools, request.model),
       tool_choice: request.toolChoice ?? "auto",
       parallel_tool_calls: false,
       // Nothing is retained server-side: the transcript lives in this app.

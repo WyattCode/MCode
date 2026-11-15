@@ -35,10 +35,11 @@ import { modelVariants } from "../src/server/provider/variants"
 import { reasoningRequest as anthropicReasoning } from "../src/server/provider/anthropic"
 import { reasoningRequest as codexReasoning } from "../src/server/provider/chatgpt"
 import { adapterFor } from "../src/server/provider/adapter"
-import { AnthropicAdapter, toProviderMessages } from "../src/server/provider/anthropic"
+import { AnthropicAdapter, toProviderMessages, messagesRequest } from "../src/server/provider/anthropic"
 import { ChatGPTSubscription, OpenAIResponses, toInput } from "../src/server/provider/chatgpt"
 import { OpenAICompatible } from "../src/server/provider/openai"
-import type { TurnEvent } from "../src/server/provider/types"
+import { transformMessages, transformTool } from "../src/server/provider/transform"
+import type { TurnEvent, TurnRequest } from "../src/server/provider/types"
 import { requestHistory } from "../src/server/provider/history"
 
 const findings: string[] = []
@@ -124,6 +125,57 @@ async function main(): Promise<void> {
     } finally {
       globalThis.fetch = originalFetch
     }
+  }
+
+  section("Cross-provider message invariants")
+  {
+    const model = { provider: "openai", model: "gpt" }
+    const user: UserMessage = { id: "u", sessionID: "s", role: "user", text: " ", attachments: [], time: { created: 0 } }
+    const assistant = { id: "a", sessionID: "s", role: "assistant", model, agent: "build", parts: [
+      { type: "text", id: "blank", text: " " },
+      { type: "reasoning", id: "empty", text: "", time: { created: 0 } },
+      { type: "text", id: "answer", text: "answer" },
+    ], time: { created: 0 } } as AssistantMessage
+    const empty = { ...assistant, id: "empty", parts: assistant.parts.slice(0, 2) }
+    const before = JSON.stringify([user, empty, assistant])
+    const normalized = transformMessages([user, empty, assistant])
+    const reply = normalized.find((message) => message.role === "assistant") as AssistantMessage
+    note("empty text and reasoning blocks are removed", reply.parts.length === 1 && reply.parts[0].type === "text" && reply.parts[0].text === "answer")
+    note("empty assistant messages are removed even in the middle", normalized.every((message) => message.id !== "empty"))
+    note("empty content gets Continue before prefill is checked", (normalized[0] as UserMessage).text === "Continue." && (normalized.at(-1) as UserMessage).text === "Continue.")
+    note("transform is idempotent", JSON.stringify(transformMessages(normalized)) === JSON.stringify(normalized))
+    note("transform never changes the stored transcript", JSON.stringify([user, empty, assistant]) === before)
+    const encrypted = { ...assistant, parts: [{ type: "reasoning", id: "r", text: "", native: { encrypted_content: "proof" }, time: { created: 0 } }] } as AssistantMessage
+    note("empty summary with ciphertext is not empty content", (transformMessages([encrypted])[0] as AssistantMessage).parts[0].native?.encrypted_content === "proof")
+    const toolReply = { ...assistant, parts: [{ type: "tool", id: "t", name: "read", callID: "c", status: "completed", input: {}, output: "", time: { created: 0 } }] } as AssistantMessage
+    note("empty tool results remain paired without an extra Continue", transformMessages([toolReply]).length === 1 && JSON.stringify(toProviderMessages([toolReply], undefined, model)).includes('"tool_result"'))
+    for (const wire of [toProviderMessages([user, empty, assistant], undefined, model), toInput([user, empty, assistant], undefined, model)]) {
+      note("adapter request has no empty text/reasoning blocks and ends with user", !JSON.stringify(wire).includes('"text":""') && wire.at(-1)?.role === "user")
+    }
+    const tool = { name: "probe", description: "Optional argument", parameters: { type: "object", properties: { optional: { type: "string" } }, required: [] }, execute: async () => { throw new Error("not executed") } }
+    const schemaBefore = JSON.stringify(tool.parameters)
+    note("Responses explicitly disables strict without making optional fields required", transformTool(tool, model, "responses").strict === false && JSON.stringify(transformTool(tool, model, "responses").parameters) === schemaBefore)
+    note("Messages and compatible transports do not gain unsupported strict flags", !("strict" in transformTool(tool, model, "anthropic")) && !("strict" in transformTool(tool, model, "chat")))
+    const request: TurnRequest = { apiKey: "test", model, system: "test", history: [user, empty, assistant], tools: [tool], effort: "low", signal: new AbortController().signal, baseURL: "https://example.test/v1" }
+    note("Messages tool builder uses common schema normalization without strict", !JSON.stringify(messagesRequest(request).tools).includes('"strict"'))
+    const originalFetch = globalThis.fetch
+    try {
+      for (const [adapter, response] of [
+        [OpenAIResponses, 'data: {"type":"response.completed","response":{"usage":{}}}\n\n'],
+        [OpenAICompatible, 'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'],
+      ] as const) {
+        let body: Record<string, unknown> = {}
+        globalThis.fetch = async (_url, init) => { body = JSON.parse(String(init?.body)); return new Response(response, { headers: { "content-type": "text/event-stream" } }) }
+        await adapter.stream(request, () => undefined)
+        const tools = body.tools as { strict?: boolean; function?: { strict?: boolean } }[]
+        note("strict normalization reaches the actual request body", adapter === OpenAIResponses ? tools[0].strict === false : !("strict" in tools[0].function!))
+        if (adapter === OpenAICompatible) {
+          const messages = body.messages as { role: string; content?: unknown }[]
+          note("compatible adapter uses the same cleanup and continuation", messages.at(-1)?.role === "user" && messages.filter((message) => message.role === "assistant").length === 1)
+        }
+      }
+    } finally { globalThis.fetch = originalFetch }
+    note("tool schema is unchanged after all three builders", JSON.stringify(tool.parameters) === schemaBefore)
   }
 
   section("The effort vocabulary")

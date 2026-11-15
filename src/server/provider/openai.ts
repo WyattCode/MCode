@@ -1,5 +1,5 @@
 import type { Message, ModelModalities, ModelRef, Usage } from "@shared/protocol"
-import { schemaFor } from "./tool-schema"
+import { transformTool } from "./transform"
 import { TOOL_MEDIA_NOTE, attachmentParts, type WirePart } from "./attachment-parts"
 import { userText } from "@shared/annotations"
 import type { ToolDefinition } from "../tool/types"
@@ -76,7 +76,7 @@ interface Chunk {
 function toolSchemas(tools: ToolDefinition[], model: ModelRef) {
   return tools.map((tool) => ({
     type: "function" as const,
-    function: { name: tool.name, description: tool.description, parameters: schemaFor(model, tool.parameters) },
+    function: transformTool(tool, model, "chat"),
   }))
 }
 

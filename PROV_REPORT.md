@@ -30,3 +30,20 @@ AssistantPart 消息结构新增 native?: Record<string, unknown>；TurnEvent.re
 变异：忽略 model ID 比较、禁用 Anthropic native signature、禁用 Responses native ciphertext、producer 改 native 字段名，各自 providercheck RED，恢复后 GREEN。runner.ts 必要修改 2 行：blocks map 类型携带 AssistantPart 的 native；收到 signature 事件时保存 native。未改权限文件或权限区块。
 
 B1 最终四项检查全部 GREEN（含新增落盘测试，smoke 74/74）。
+
+## Phase B2 — 消息不变量
+
+新 transform.ts 是共享请求侧归一层，三个 adapter 均经 requestHistory → transformMessages；三条工具构造路径均调用 transformTool。
+
+不变量：
+- 清理空白 text/reasoning 块，保留 tool；Responses 无摘要但有密文的 reasoning 保留（旧 signature+itemID 同样保留）；Anthropic 被 prune 后只剩 signature 的空思考不回放。
+- 空 user 补 Continue.；空 assistant 在任意位置移除；空 tool 结果不删，保证配对。
+- 先清空内容，再处理尾部 prefill；保留 assistant 正文并补 user Continue.；尾部 tool turn 已由 adapter 产生结果，不额外补；保留旧的尾部无签名纯思考残留丢弃规则。
+- 归一幂等，不修改 session 历史或原工具 schema。
+- Responses 的工具显式 strict:false；不强制扩 required、不强制 additionalProperties:false。Anthropic/通用兼容接口不添无依据的 strict 字段，保持原有协议行为。工具类型目前没有显式 strict 配置，若二期开放该配置，应保留明确 opt-in。
+
+去重决定：sendable、spoken、空 user、尾部 assistant 处理从 history 迁入 transform；history 仅委托，不再实现第二套。history 保留未完成工具结算、interrupted 输出、thoughtDigest、native 模型作用域和媒体降级；tool-schema.ts 保留 Gemini/Kimi 具体 schema 规则，transformTool 统一调用（Responses 此前直接使用原 schema，现也经过同一路径）。
+
+变异：停用空块过滤、保留空 assistant、禁用补尾部 user、strict 改 true、禁用空摘要密文例外，五项均 providercheck RED，恢复源码。新增测试还验证幂等、原历史/schema 不变、空 tool 保留、真实出站 strict 字段和三种请求构造。
+
+B2 变异恢复后的最终 typecheck/providercheck/sessioncheck/smoke 全部 GREEN，smoke 74/74。
