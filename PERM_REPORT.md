@@ -252,11 +252,13 @@ risk to the enforcement change. It is left as a documented follow-up.
 
 ```
 $ git log --oneline 9bd56de..HEAD
+25d7cc6 docs(permission): record rule engine verification
 4b6ddd9 feat(permission): enforce self-asking contract
 e3b4ebe feat(permission): evaluate wildcard user rules before buckets
 3587646 test(session): characterize permission levels, forced asks and rule persistence
 
 $ git diff --stat 9bd56de..HEAD
+ PERM_REPORT.md                 | 279 ++++++++++++++++++++++++++++++
  scripts/session-check.ts       | 373 ++++++++++++++++++++++++++++++++++++++++-
  scripts/tool-check.ts          |  22 ++-
  src/server/config.ts           |  31 +++-
@@ -275,5 +277,5 @@ $ git diff --stat 9bd56de..HEAD
  src/server/tool/websearch.ts   |   1 +
  src/server/tool/worktree.ts    |   2 +
  src/shared/protocol.ts         |  28 ++++
- 18 files changed, 649 insertions(+), 37 deletions(-)
+ 19 files changed, 928 insertions(+), 37 deletions(-)
 ```
