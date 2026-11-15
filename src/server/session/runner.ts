@@ -2708,53 +2708,56 @@ export class SessionRunner {
         const code = codeOf(err)
         this.bus.publish({ type: "session.error", sessionID, error: describe(err), ...(code ? { errorCode: code, errorParams: paramsOf(err) } : {}) })
       })
-      .finally(async () => {
-        /*
-         * Awaited before the session is released. Undo reads this stack the
-         * moment a turn ends, and starting the write without waiting for it
-         * meant that read could land one turn behind.
-         */
-        try {
-          await this.commitSnapshot(sessionID)
-        } catch (cause) {
-          this.bus.publish({
-            type: "session.error",
-            sessionID,
-            error: `Could not record this turn for undo: ${(cause as Error).message}`,
-          })
-        }
-        // The turn ended for a reason of its own: nothing to carry on at the next start. A turn cut off by the quit keeps its claim.
-        if (!this.closing) await this.store.update(sessionID, { claim: undefined }).catch(() => undefined)
-        /*
-         * The last read of the waiting list, and the only one that can see a
-         * message that arrived after the loop had stopped looking. Everything
-         * from here down is synchronous, so the entry is removed and the next
-         * turn claims the session in the same tick - a prompt sent in this
-         * moment finds either a turn to join or an idle session, never a busy
-         * one it cannot reach.
-         *
-         * Nothing is resumed after Stop. The message stays in the transcript
-         * and goes to the model with whatever is asked next, which is what Stop
-         * has to mean if it is to mean anything.
-         */
-        const steering = this.steering.get(sessionID)
-        const waiting = steering?.waiting ?? []
-        const stranded = waiting.length > 0 && !controller.signal.aborted
-        const carried = [...waiting]
-        if (this.running.get(sessionID) === controller) this.running.delete(sessionID)
-        this.retrying.delete(sessionID)
-        this.workingIn.delete(sessionID)
-        // Drop steering only when this turn still owns it. abort() clears it up
-        // front; a new turn after Stop has a different entry that must remain.
-        if (this.steering.get(sessionID) === steering) this.steering.delete(sessionID)
-        if (stranded) {
-          void this.resume(sessionID, carried)
-          return
-        }
-        this.bus.publish({ type: "session.idle", sessionID })
-        // OpenCode v2: the next queued message once a turn ends of its own accord; after Stop or a failure they wait for the user.
-        if (!controller.signal.aborted && !failed && !this.closing) void this.sendQueued(sessionID)
+      .finally(() => this.finishTurn(sessionID, controller, failed))
+  }
+
+  /** Records the turn, releases its claim, and hands the session on to whatever waits behind it. */
+  private async finishTurn(sessionID: string, controller: AbortController, failed: boolean): Promise<void> {
+    /*
+     * Awaited before the session is released. Undo reads this stack the
+     * moment a turn ends, and starting the write without waiting for it
+     * meant that read could land one turn behind.
+     */
+    try {
+      await this.commitSnapshot(sessionID)
+    } catch (cause) {
+      this.bus.publish({
+        type: "session.error",
+        sessionID,
+        error: `Could not record this turn for undo: ${(cause as Error).message}`,
       })
+    }
+    // The turn ended for a reason of its own: nothing to carry on at the next start. A turn cut off by the quit keeps its claim.
+    if (!this.closing) await this.store.update(sessionID, { claim: undefined }).catch(() => undefined)
+    /*
+     * The last read of the waiting list, and the only one that can see a
+     * message that arrived after the loop had stopped looking. Everything
+     * from here down is synchronous, so the entry is removed and the next
+     * turn claims the session in the same tick - a prompt sent in this
+     * moment finds either a turn to join or an idle session, never a busy
+     * one it cannot reach.
+     *
+     * Nothing is resumed after Stop. The message stays in the transcript
+     * and goes to the model with whatever is asked next, which is what Stop
+     * has to mean if it is to mean anything.
+     */
+    const steering = this.steering.get(sessionID)
+    const waiting = steering?.waiting ?? []
+    const stranded = waiting.length > 0 && !controller.signal.aborted
+    const carried = [...waiting]
+    if (this.running.get(sessionID) === controller) this.running.delete(sessionID)
+    this.retrying.delete(sessionID)
+    this.workingIn.delete(sessionID)
+    // Drop steering only when this turn still owns it. abort() clears it up
+    // front; a new turn after Stop has a different entry that must remain.
+    if (this.steering.get(sessionID) === steering) this.steering.delete(sessionID)
+    if (stranded) {
+      void this.resume(sessionID, carried)
+      return
+    }
+    this.bus.publish({ type: "session.idle", sessionID })
+    // OpenCode v2: the next queued message once a turn ends of its own accord; after Stop or a failure they wait for the user.
+    if (!controller.signal.aborted && !failed && !this.closing) void this.sendQueued(sessionID)
   }
 
   /**
