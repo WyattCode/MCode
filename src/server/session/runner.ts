@@ -4181,6 +4181,11 @@ export class SessionRunner {
         subagents: this.workers.has(input.session.id)
           ? undefined
           : this.subagentControl({ parentID: input.session.id, messageID: assistant.id, callID: part.callID, signal: input.signal }),
+        // models: the connected providers and their catalogs, as the models tool lists them.
+        models:
+          tool.name === "models"
+            ? { providers: () => this.config.providers(), models: (provider: string) => this.config.models(provider) }
+            : undefined,
         // fanout: offered to a conversation's own calls only, as the subagents are.
         fanout: this.workers.has(input.session.id) || tool.name !== "fanout" ? undefined : this.fanoutControl({ sessionID: input.session.id, signal: input.signal }),
         progress: (text) => {

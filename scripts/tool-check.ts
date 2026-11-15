@@ -87,6 +87,44 @@ async function main(): Promise<void> {
       snapshot: async (target: string) => {
         recorded.push(target)
       },
+      models: {
+        providers: () => [
+          { id: "anthropic", name: "Anthropic", kind: "anthropic", configured: true },
+          { id: "local", name: "Local", kind: "openai-compatible", configured: false },
+        ],
+        models: (provider: string) =>
+          provider === "anthropic"
+            ? [
+                {
+                  id: "claude-sonnet-4-5",
+                  name: "Claude Sonnet 4.5",
+                  contextWindow: 200000,
+                  input: 3,
+                  output: 15,
+                  reasoning: true,
+                  inputs: { text: true, image: true, pdf: true },
+                  efforts: ["low", "medium", "high", "max"],
+                },
+                {
+                  id: "tiny-chat",
+                  name: "Tiny Chat",
+                  contextWindow: 32000,
+                  input: 0,
+                  output: 0,
+                  inputs: { text: true },
+                },
+              ]
+            : [
+                {
+                  id: "local-model",
+                  name: "Local Model",
+                  contextWindow: 8000,
+                  input: 0,
+                  output: 0,
+                  inputs: { text: true },
+                },
+              ],
+      },
     }) as never
 
   const bash = findTool("bash")
@@ -451,6 +489,30 @@ async function main(): Promise<void> {
 
     check("the model is never offered the invalid tool", !build.includes("invalid"))
     check("though a call can still be routed to it", findTool("invalid") !== undefined)
+  }
+
+  console.log("the models tool")
+  {
+    const models = findTool("models")
+    check("the models tool is offered to the model", models !== undefined)
+    check(
+      "and sits last in the registry, so every earlier tool prefix stays cached",
+      TOOLS[TOOLS.length - 1]?.name === "models",
+      TOOLS.map((tool) => tool.name).slice(-3).join(","),
+    )
+    if (models) {
+      const controller = new AbortController()
+      const listed = await models.execute({ provider: "anthropic" }, context(controller.signal, "call-models"))
+      check("it names each model as provider/model", listed.output.includes("anthropic/claude-sonnet-4-5"), listed.output)
+      check("with its price per million tokens", listed.output.includes("$3/$15"), listed.output)
+      check("with its context window", listed.output.includes("200000 context"), listed.output)
+      check("with the input types it accepts", listed.output.includes("inputs: text, image, pdf"), listed.output)
+      check("and with its variants", listed.output.includes("variants: low, medium, high, max"), listed.output)
+      check("it leaves out a provider that is not connected", !listed.output.includes("local/local-model"), listed.output)
+      const vision = await models.execute({ provider: "anthropic", vision: true }, context(controller.signal, "call-models-vision"))
+      check("vision: true keeps the model that reads images", vision.output.includes("anthropic/claude-sonnet-4-5"), vision.output)
+      check("and drops the one that does not", !vision.output.includes("anthropic/tiny-chat"), vision.output)
+    }
   }
 
   console.log("a call that could not be dispatched")

@@ -26,6 +26,7 @@ import { AppTool } from "./app"
 import { LspTool } from "./lsp"
 import { FanoutTool } from "./fanout"
 import { VerifyPageTool } from "./verify-page"
+import { ModelsTool } from "./models"
 import { offlineByEnv } from "./offline"
 
 /**
@@ -103,6 +104,8 @@ export const TOOLS: ToolDefinition[] = [
   // fanout and verify_page: appended, for the same reason. Side-by-side single-shot generation, and the check of a page it helped write.
   FanoutTool,
   VerifyPageTool,
+  // models: appended last, for the same reason. The catalog a subagent model is chosen from, so it is never guessed.
+  ModelsTool,
 ]
 
 /**
