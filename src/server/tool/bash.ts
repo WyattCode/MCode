@@ -501,6 +501,7 @@ export const BashTool: ToolDefinition = {
   /* The machine's default shell; a turn whose settings name another gets its own through `toolsForTurn`. */
   description: bashDescription(),
   permission: "bash",
+  asksForItself: true,
   parameters: {
     type: "object",
     properties: {
@@ -542,6 +543,8 @@ export const BashTool: ToolDefinition = {
      * which is what is written here in this app's own words.
      */
     if (input.interactive === true) {
+      // Refused before running, so it needed no question; recorded as consulting the gate.
+      context.permissions.waive(context.callID)
       return {
         output: INTERACTIVE_REFUSAL,
         title: description || command,
@@ -593,6 +596,9 @@ export const BashTool: ToolDefinition = {
       await context.permissions.ask({ ...question, patterns: scan.deletes, always: [], forced: true })
     } else if (scan.patterns.length) {
       await context.permissions.ask({ ...question, patterns: scan.patterns, always: scan.always, forced: false })
+    } else {
+      // A line made only of `cd`: it changes nothing this process can see, so it asks nothing.
+      context.permissions.waive(context.callID)
     }
 
     const identity = await gitIdentityEnv(context.directory)

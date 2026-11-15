@@ -28,6 +28,7 @@ export const VerifyPageTool: ToolDefinition = {
     "Needs Chrome or Edge on this machine.",
   ].join("\n"),
   permission: "bash",
+  asksForItself: true,
   parameters: {
     type: "object",
     properties: {

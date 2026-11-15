@@ -137,6 +137,7 @@ export const WebSearchTool: ToolDefinition = {
   },
   // The network bucket webfetch asks in: a search sends the query to a service, as a fetch sends the address.
   permission: "webfetch",
+  asksForItself: true,
   parameters: {
     type: "object",
     properties: { query: { type: "string", description: "Websearch query" } },

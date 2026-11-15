@@ -76,6 +76,7 @@ export const WorktreeCreateTool: ToolDefinition = {
     "The new folder is a full checkout sharing this repository's history. Files written in it do not appear in the current project; pass its path as `workdir` to bash, or change the conversation's folder, to work there. Use worktree_list to see the checkouts that already exist, and worktree_remove to take one back out.",
   ].join("\n"),
   permission: "edit",
+  asksForItself: true,
   parameters: {
     type: "object",
     properties: {
@@ -171,6 +172,7 @@ export const WorktreeRemoveTool: ToolDefinition = {
     "The main checkout cannot be removed. The worktree's branch is kept, so its commits are still there; remove the folder's files and its entry in this repository's list. Use worktree_list to see which checkouts exist.",
   ].join("\n"),
   permission: "edit",
+  asksForItself: true,
   parameters: {
     type: "object",
     properties: {

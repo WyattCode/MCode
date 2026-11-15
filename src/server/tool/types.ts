@@ -213,9 +213,43 @@ export interface ToolDefinition {
   parameters: Record<string, unknown>
   /** Permission bucket; approvals are remembered per bucket. */
   permission?: string
+  /**
+   * Whether this tool raises its own permission question before it acts.
+   *
+   * A tool that says so must reach `permissions.ask` (or, on a path its design
+   * deliberately lets through, `permissions.waive`) for the call. The runner
+   * enforces it: a declared tool that ran without either is refused and the
+   * call is recorded as a permission defect. Absent means the question, if
+   * any, is `Permissions.check`'s and the tool need not ask.
+   */
+  asksForItself?: boolean
   /** The MCP server an outside tool comes from; absent for this app's own tools. */
   server?: string
   execute(input: Record<string, unknown>, context: ToolContext): Promise<ToolResult>
+}
+
+/**
+ * The buckets whose question is raised by `Permissions.check` in front of the
+ * call, rather than by the tool itself. Everything else that declares a
+ * bucket is a tool that has to ask for itself.
+ */
+export const GATE_ASKING_KINDS: readonly string[] = ["read", "glob", "grep", "list"]
+
+/**
+ * Whether a tool declares a bucket but has not said it asks for itself.
+ *
+ * This is the registry invariant `tool-check` calls red: a new tool that names
+ * `edit` or `bash` and forgets the declaration is exactly the silent permission
+ * bypass this contract exists to close. Read-only buckets are exempt because
+ * `Permissions.check` asks for them.
+ */
+export function selfAskMissing(tool: Pick<ToolDefinition, "permission" | "asksForItself">): boolean {
+  return Boolean(tool.permission) && !GATE_ASKING_KINDS.includes(tool.permission!) && tool.asksForItself !== true
+}
+
+/** Whether a declared self-asking call ran without asking (or waiving). */
+export function selfAskViolated(tool: Pick<ToolDefinition, "asksForItself">, askedBefore: number, askedAfter: number): boolean {
+  return tool.asksForItself === true && askedAfter <= askedBefore
 }
 
 /**

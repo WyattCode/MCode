@@ -185,6 +185,7 @@ export const WebFetchTool: ToolDefinition = {
     "Use it when the work genuinely depends on what a page says - an API's documentation, a release note, an error message someone has written up - and quote what it said rather than what you expected it to say. A redirect is followed, and the result names the address it ended up at.",
   ].join("\n"),
   permission: "webfetch",
+  asksForItself: true,
   parameters: {
     type: "object",
     properties: {

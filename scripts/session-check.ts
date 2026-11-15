@@ -22,8 +22,8 @@ import { execFileSync } from "node:child_process"
 import fs from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
-import type { Message, PermissionAction, PermissionKind, PermissionRequest } from "@shared/protocol"
-import { DEFAULT_PERMISSIONS } from "@shared/protocol"
+import type { Message, PermissionAction, PermissionKind, PermissionRequest, PermissionRule } from "@shared/protocol"
+import { DEFAULT_PERMISSIONS, PERMISSION_KINDS } from "@shared/protocol"
 import { Storage } from "../src/server/storage"
 import { Bus } from "../src/server/bus"
 import { Config } from "../src/server/config"
@@ -33,6 +33,7 @@ import { SessionStore } from "../src/server/session/store"
 // round 5: these providers are scripted reply by reply, and a background title request would take one.
 process.env.MCODE_GENERATE_TITLES = "0"
 import { SessionRunner } from "../src/server/session/runner"
+import { findTool } from "../src/server/tool/registry"
 import { Shells } from "../src/server/shell"
 import { McpServers } from "../src/server/mcp"
 import { OpenAICompatible } from "../src/server/provider/openai"
@@ -1952,6 +1953,373 @@ async function main(): Promise<void> {
     await waiting
   }
 
+  /*
+   * The three positions of the composer's chip, end to end.
+   *
+   * These are the product's answer to confirmation fatigue, and the ladder is
+   * the whole point: Ask stops for a command and an edit, Auto lets everyday
+   * ones through and keeps the dangerous ones, and Full asks nothing at all.
+   * A regression here is quiet - the tool still runs - so each rung is pinned
+   * both by what reached the screen and by what reached the disk.
+   */
+  console.log("the three access levels")
+  {
+    const allAllow = Object.fromEntries(PERMISSION_KINDS.map((kind) => [kind, "allow"])) as Record<PermissionKind, PermissionAction>
+    const answerOnce = (sessionID: string) => {
+      const seen: PermissionRequest[] = []
+      const off = bus.subscribe((event) => {
+        if (event.type !== "permission.requested") return
+        const request = (event as { request: PermissionRequest }).request
+        if (request.sessionID !== sessionID) return
+        seen.push(request)
+        permissions.respond(request.id, "once")
+      })
+      return { seen, off }
+    }
+    const runBash = async (level: string, map: Record<PermissionKind, PermissionAction>, name: string, text: string) => {
+      await config.set({ accessLevel: level as never, permissions: map })
+      const target = path.join(project, name)
+      await fs.rm(target, { force: true })
+      const session = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
+      const watch = answerOnce(session.id)
+      script = [[{ name: "bash", input: mark(name, text) }]]
+      const done = idle(session.id)
+      await runner.prompt({ sessionID: session.id, text: "run it" })
+      await done
+      watch.off()
+      return { watched: watch.seen.length, wrote: (await fs.readFile(target, "utf8").catch(() => "")) === text }
+    }
+    const runEdit = async (level: string, map: Record<PermissionKind, PermissionAction>, name: string, text: string) => {
+      await config.set({ accessLevel: level as never, permissions: map })
+      const target = path.join(project, name)
+      await fs.writeFile(target, "before", "utf8")
+      const session = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
+      const watch = answerOnce(session.id)
+      script = [
+        [{ name: "read", input: { file_path: name } }],
+        [{ name: "edit", input: { file_path: name, old_string: "before", new_string: text } }],
+      ]
+      const done = idle(session.id)
+      await runner.prompt({ sessionID: session.id, text: "change it" })
+      await done
+      watch.off()
+      return { watched: watch.seen.length, wrote: (await fs.readFile(target, "utf8").catch(() => "")) === text }
+    }
+
+    const atAsk = await runBash("ask", { ...DEFAULT_PERMISSIONS }, "level-ask.txt", "ask-ran")
+    check("at Ask a command asks", atAsk.watched === 1, `${atAsk.watched} raised`)
+    check("and runs once it is answered", atAsk.wrote)
+    const editAsk = await runEdit("ask", { ...DEFAULT_PERMISSIONS }, "level-ask-edit.txt", "ask-edited")
+    check("at Ask an edit asks", editAsk.watched === 1, `${editAsk.watched} raised`)
+    check("and is written once it is answered", editAsk.wrote)
+
+    const atAuto = await runBash("auto", { ...DEFAULT_PERMISSIONS }, "level-auto.txt", "auto-ran")
+    check("at Auto an everyday command asks nothing", atAuto.watched === 0, `${atAuto.watched} raised`)
+    check("and still runs", atAuto.wrote)
+    const editAuto = await runEdit("auto", { ...DEFAULT_PERMISSIONS }, "level-auto-edit.txt", "auto-edited")
+    check("and an edit inside the project asks nothing", editAuto.watched === 0, `${editAuto.watched} raised`)
+    check("and is written", editAuto.wrote)
+
+    const atFull = await runBash("full", allAllow, "level-full.txt", "full-ran")
+    check("at Full a command asks nothing", atFull.watched === 0, `${atFull.watched} raised`)
+    check("and runs", atFull.wrote)
+    const editFull = await runEdit("full", allAllow, "level-full-edit.txt", "full-edited")
+    check("at Full an edit asks nothing", editFull.watched === 0, `${editFull.watched} raised`)
+    check("and is written", editFull.wrote)
+
+    await config.set({ accessLevel: "ask", permissions: { ...DEFAULT_PERMISSIONS } })
+  }
+
+  /*
+   * A command that loses work is asked about every time, whatever the bucket
+   * says. MiMo forces its delete question; this app keeps that below Full and
+   * intentionally drops it there (the user's 2026-09-26 decision), so both
+   * halves are pinned here.
+   */
+  console.log("a command that loses work")
+  {
+    const doomed = path.join(project, "doomed")
+    const arm = (sessionID: string, response: "once" | "always") => {
+      const seen: PermissionRequest[] = []
+      const off = bus.subscribe((event) => {
+        if (event.type !== "permission.requested") return
+        const request = (event as { request: PermissionRequest }).request
+        if (request.sessionID !== sessionID) return
+        seen.push(request)
+        permissions.respond(request.id, response)
+      })
+      return { seen, off }
+    }
+    const remove = async (sessionID: string, response: "once" | "always") => {
+      const watch = arm(sessionID, response)
+      script = [[{ name: "bash", input: { command: `rm -rf '${forward(doomed)}'`, description: "Remove the folder" } }]]
+      const done = idle(sessionID)
+      await runner.prompt({ sessionID, text: "remove it" })
+      await done
+      watch.off()
+      return watch.seen
+    }
+
+    await config.set({ accessLevel: "ask", permissions: { ...DEFAULT_PERMISSIONS, bash: "allow" } })
+    const session = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
+    await fs.mkdir(doomed, { recursive: true })
+    const first = await remove(session.id, "always")
+    check("a delete asks even though commands are allowed", first.length === 1, `${first.length} raised`)
+    check("and the question is marked as one that can never be remembered", first[0]?.forced === true, String(first[0]?.forced))
+    check("it still runs once answered", !(await fs.stat(doomed).catch(() => undefined)))
+
+    await fs.mkdir(doomed, { recursive: true })
+    const second = await remove(session.id, "always")
+    check("the same delete asks again after an always", second.length === 1, `${second.length} raised`)
+    check("and the folder is gone again", !(await fs.stat(doomed).catch(() => undefined)))
+
+    const allAllow = Object.fromEntries(PERMISSION_KINDS.map((kind) => [kind, "allow"])) as Record<PermissionKind, PermissionAction>
+    await config.set({ accessLevel: "full", permissions: allAllow })
+    const fullSession = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
+    await fs.mkdir(doomed, { recursive: true })
+    const atFull = await remove(fullSession.id, "once")
+    check("at Full a delete asks nothing, as the product chose", atFull.length === 0, `${atFull.length} raised`)
+    check("and it runs", !(await fs.stat(doomed).catch(() => undefined)))
+
+    await config.set({ accessLevel: "ask", permissions: { ...DEFAULT_PERMISSIONS } })
+  }
+
+  /*
+   * "Always" is written to the permissions document as it is granted, and read
+   * back by a later process. Without the write every approval is forgotten at
+   * quit and the same question comes back the next morning.
+   */
+  console.log("an always that outlives the app")
+  {
+    const where = path.join(root, "rules-own")
+    const rulesStorage = new Storage(path.join(where, "storage"))
+    await rulesStorage.write("config", {})
+    const rulesBus = new Bus()
+    const rulesConfig = new Config(rulesStorage, rulesBus, path.join(where, "credentials.json"))
+    await rulesConfig.load()
+    await rulesConfig.set({ permissions: { ...DEFAULT_PERMISSIONS, bash: "ask" } })
+
+    const first = new Permissions(rulesBus, rulesConfig)
+    await first.load(rulesStorage)
+    const granting = rulesBus.subscribe((event) => {
+      if (event.type !== "permission.requested") return
+      first.respond((event as { request: PermissionRequest }).request.id, "always")
+    })
+    await first.ask({
+      sessionID: "rules-session",
+      messageID: "m1",
+      callID: "rules-c1",
+      kind: "bash",
+      title: "Run command",
+      subject: "npm run build",
+      directory: project,
+    })
+    granting()
+    await first.flush()
+
+    let reasked = 0
+    const watching = rulesBus.subscribe((event) => {
+      if (event.type !== "permission.requested") return
+      reasked += 1
+      // Answered here so a regression reports the extra question rather than hanging on it.
+      first.respond((event as { request: PermissionRequest }).request.id, "once")
+    })
+    await first.ask({
+      sessionID: "rules-session",
+      messageID: "m2",
+      callID: "rules-c2",
+      kind: "bash",
+      title: "Run command",
+      subject: "npm run build",
+      directory: project,
+    })
+    watching()
+    check("an always is remembered in the same process", reasked === 0, `${reasked} raised`)
+
+    /*
+     * A new Permissions over the same storage is the next launch of the app:
+     * it reads the document rather than inheriting the first one's memory.
+     */
+    const reloaded = new Permissions(rulesBus, rulesConfig)
+    await reloaded.load(rulesStorage)
+    let afterReload = 0
+    const reloadWatch = rulesBus.subscribe((event) => {
+      if (event.type !== "permission.requested") return
+      afterReload += 1
+      reloaded.respond((event as { request: PermissionRequest }).request.id, "once")
+    })
+    await reloaded.ask({
+      sessionID: "rules-session",
+      messageID: "m3",
+      callID: "rules-c3",
+      kind: "bash",
+      title: "Run command",
+      subject: "npm run build",
+      directory: project,
+    })
+    reloadWatch()
+    check("and it is read back by a later process", afterReload === 0, `${afterReload} raised`)
+  }
+
+  /*
+   * User-written pattern rules: `bash` with `npm test *` allowed, `edit` with
+   * `docs/*` allowed, `bash` with `git push *` asked. These are what let a
+   * project keep its tests quiet without waving every command through.
+   *
+   * The semantics pinned here are MiMo's and OpenCode's: both fields are
+   * wildcards, a `*` crosses slashes, the last matching rule wins, and the
+   * rule is read before the bucket and the access level.
+   */
+  console.log("user-written permission rules")
+  {
+    const base = { ...DEFAULT_PERMISSIONS, bash: "ask" as const, edit: "ask" as const }
+    const set = (rules: PermissionRule[], extra: Partial<{ accessLevel: "ask" | "auto" | "full"; permissions: typeof base }> = {}) =>
+      config.set({ accessLevel: "ask", permissions: base, permissionRules: rules, ...extra })
+
+    await set([
+      { action: "bash", resource: "npm *", effect: "deny" },
+      { action: "bash", resource: "npm test *", effect: "allow" },
+    ])
+    check(
+      "the last rule that matches is the one that answers",
+      permissions.action("bash", "ask", "npm test --watch") === "allow",
+      permissions.action("bash", "ask", "npm test --watch"),
+    )
+    check(
+      "and an earlier, wider rule still answers what the later one does not cover",
+      permissions.action("bash", "ask", "npm publish") === "deny",
+      permissions.action("bash", "ask", "npm publish"),
+    )
+
+    await set([{ action: "edit", resource: "docs/*", effect: "allow" }])
+    check(
+      "a path wildcard crosses folders",
+      permissions.action("edit", "ask", "docs/guide/index.md") === "allow",
+      permissions.action("edit", "ask", "docs/guide/index.md"),
+    )
+    check(
+      "and does not cover a lookalike outside the folder",
+      permissions.action("edit", "ask", "src/docs.md") === "ask",
+      permissions.action("edit", "ask", "src/docs.md"),
+    )
+    await set([{ action: "*", resource: "docs/*", effect: "allow" }])
+    check(
+      "a bucket wildcard covers every tool",
+      permissions.action("read", "ask", "docs/a.md") === "allow" && permissions.action("bash", "ask", "docs/a.md") === "allow",
+      `${permissions.action("read", "ask", "docs/a.md")}/${permissions.action("bash", "ask", "docs/a.md")}`,
+    )
+
+    await set([{ action: "bash", resource: "git push *", effect: "ask" }], { permissions: { ...base, bash: "allow" } })
+    check(
+      "a rule may ask where its bucket allows",
+      permissions.action("bash", "ask", "git push origin main") === "ask",
+      permissions.action("bash", "ask", "git push origin main"),
+    )
+
+    await set([{ action: "bash", resource: "rm *", effect: "deny" }], { permissions: { ...base, bash: "allow" } })
+    check(
+      "one denied piece refuses a call made of several",
+      permissions.action("bash", "ask", ["git status", "rm -rf dist"]) === "deny",
+      permissions.action("bash", "ask", ["git status", "rm -rf dist"]),
+    )
+    check("and the same call is allowed without the denied piece", permissions.action("bash", "ask", ["git status", "git diff"]) === "allow")
+
+    const allAllow = Object.fromEntries(PERMISSION_KINDS.map((kind) => [kind, "allow"])) as Record<PermissionKind, PermissionAction>
+    await set([{ action: "bash", resource: "git push *", effect: "ask" }], { accessLevel: "full", permissions: allAllow })
+    check(
+      "a rule is read over the access level too",
+      permissions.action("bash", "full", "git push origin main") === "ask",
+      permissions.action("bash", "full", "git push origin main"),
+    )
+
+    // Written down and read back in the order the user wrote them.
+    const where = path.join(root, "rule-config")
+    const ruleStorage = new Storage(path.join(where, "storage"))
+    await ruleStorage.write("config", {
+      permissionRules: [
+        { action: "bash", resource: "npm *", effect: "deny" },
+        { action: "bash", resource: "npm test *", effect: "allow" },
+        { action: "bash", resource: 7, effect: "allow" },
+      ],
+    })
+    const ruleConfig = new Config(ruleStorage, new Bus(), path.join(where, "credentials.json"))
+    await ruleConfig.load()
+    const kept = ruleConfig.get().permissionRules ?? []
+    check("the stored rules keep their written order", kept.map((rule) => `${rule.action}:${rule.resource}:${rule.effect}`).join("|") === "bash:npm *:deny|bash:npm test *:allow", JSON.stringify(kept))
+    check("and one this build cannot read is dropped", kept.length === 2, String(kept.length))
+
+    /*
+     * Reached through the real runner: a rule that allows an edit under docs
+     * is what the edit tool reads, not only what this function returns.
+     */
+    await set([{ action: "edit", resource: "docs/*", effect: "allow" }])
+    await fs.mkdir(path.join(project, "docs"), { recursive: true })
+    const target = path.join(project, "docs", "rule.md")
+    await fs.writeFile(target, "before", "utf8")
+    const session = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
+    const watch = listen(session.id)
+    // Answered so a regression reports the question rather than waiting on it.
+    const answering = bus.subscribe((event) => {
+      if (event.type !== "permission.requested") return
+      const request = (event as { request: PermissionRequest }).request
+      if (request.sessionID === session.id) permissions.respond(request.id, "once")
+    })
+    script = [
+      [{ name: "read", input: { file_path: "docs/rule.md" } }],
+      [{ name: "edit", input: { file_path: "docs/rule.md", old_string: "before", new_string: "after" } }],
+    ]
+    const done = idle(session.id)
+    await runner.prompt({ sessionID: session.id, text: "change it" })
+    await done
+    answering()
+    watch.off()
+    check("an allowed edit under docs raises no question", watch.seen.length === 0, `${watch.seen.length} raised`)
+    check("and the edit really landed", (await fs.readFile(target, "utf8").catch(() => "")) === "after")
+
+    await config.set({ accessLevel: "ask", permissions: { ...DEFAULT_PERMISSIONS }, permissionRules: [] })
+  }
+
+  /*
+   * The other half of the self-asking contract, end to end. A new tool that
+   * declares the bucket and the declaration but never raises the question used
+   * to run silently at every level but Deny. The runner must refuse the result
+   * and leave the defect on the call.
+   */
+  console.log("a tool that declares it asks but does not")
+  {
+    const probe = findTool("edit")
+    if (!probe) throw new Error("the registry is missing the edit tool")
+    const previousExecute = probe.execute
+    const previousDeclaration = probe.asksForItself
+    /*
+     * The registry's dispatch list is built at load, so a probe added to
+     * `TOOLS` would not be found. The edit tool is the same object in both
+     * lists; its body is swapped for this one call and put back below.
+     */
+    probe.execute = async () => ({ output: "the probe ran without asking" })
+    probe.asksForItself = true
+    try {
+      const session = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
+      script = [[{ name: "edit", input: { file_path: "unused.txt", old_string: "a", new_string: "b" } }]]
+      const done = idle(session.id)
+      await runner.prompt({ sessionID: session.id, text: "run the probe" })
+      await done
+      const messages = await sessions.messages(session.id)
+      const parts = messages.flatMap((message) => (message.role === "assistant" ? message.parts : []))
+      const called = [...parts].reverse().find((part) => part.type === "tool" && part.name === "edit")
+      const metadata = called?.type === "tool" ? (called.metadata as { selfAsk?: { missing?: boolean } } | undefined) : undefined
+      check(
+        "a declared self-ask that never asked is refused",
+        called?.type === "tool" && called.status === "error",
+        called?.type === "tool" ? `${called.status} ${called.error ?? ""}` : String(called),
+      )
+      check("and the defect is recorded on the call", metadata?.selfAsk?.missing === true, JSON.stringify(metadata))
+    } finally {
+      probe.execute = previousExecute
+      probe.asksForItself = previousDeclaration
+    }
+  }
+
   // --- the buckets nothing used to consult ---------------------------------
   /*
    * `read`, `list`, `glob`, `grep` and `todowrite` each declare a bucket on
@@ -2000,6 +2368,7 @@ async function main(): Promise<void> {
     let waved = false
     await call("bash", "bash", { command: "git status" }).then(() => (waved = true))
     check("a tool that asks for itself is not asked about twice", waved && watch.seen.length === 1)
+    check("its bucket really is set to ask", permissions.action("bash") === "ask", String(permissions.action("bash")))
 
     await say({ bash: "deny" })
     let stopped: string | undefined

@@ -5,6 +5,7 @@ import type {
   PermissionRecord,
   PermissionRequest,
   PermissionResponse,
+  PermissionRule,
 } from "@shared/protocol"
 import { PERMISSION_KINDS, SELF_ASKING_KINDS } from "@shared/protocol"
 import { accessAction, defaultAccess, sessionAccess, type Access } from "@shared/access"
@@ -265,6 +266,12 @@ export class Permissions {
   private readonly background = new Map<string, string>()
   /** Who wants to hear how a call's questions ended, by call id. */
   private readonly listeners = new Map<string, (record: PermissionRecord) => void>()
+  /**
+   * How many times each call has consulted the gate, by call id: one per
+   * `ask`, plus each explicit `waive` for a path a tool lets through without a
+   * question. The runner reads this to enforce the self-asking contract.
+   */
+  private readonly consultations = new Map<string, number>()
   private reviewer?: CommandReviewer
   private reviewTimeout = REVIEW_TIMEOUT_MS
 
@@ -343,17 +350,81 @@ export class Permissions {
   }
 
   /**
-   * What the settings say about a bucket.
+   * The last user-written rule that covers one resource.
+   *
+   * Read from the end, as MiMo's `findLast` reads its ruleset: a later rule
+   * overrides an earlier one. Both fields are wildcards, so `*` in `action`
+   * covers every bucket and `*` in `resource` covers every command, path or
+   * URL; `?` matches one character, and a slash is an ordinary character.
+   */
+  private ruleFor(kind: string, resource: string): PermissionRule | undefined {
+    const rules = this.config.get().permissionRules ?? []
+    for (let index = rules.length - 1; index >= 0; index -= 1) {
+      const rule = rules[index]
+      if (wildcardMatch(kind, rule.action) && wildcardMatch(resource, rule.resource)) return rule
+    }
+    return undefined
+  }
+
+  /**
+   * What one call does, knowing what it is about.
+   *
+   * The order is MiMo's: an explicit rule that covers the resource wins over
+   * the bucket, and the bucket wins over the access level. A call with several
+   * resources - the pieces of a command, the paths of a patch - gets the worst
+   * answer of them: any deny refuses, else any ask asks, else it is allowed.
+   */
+  private decide(kind: string, level: Access, resources: readonly string[]): PermissionAction {
+    const bucket = bucketOf(kind)
+    if (!bucket) return "ask"
+    const fallback = accessAction(bucket, level, this.config.get())
+    if (resources.length === 0) return fallback
+    let answer: PermissionAction = "allow"
+    for (const resource of resources) {
+      const effect = this.ruleFor(kind, resource)?.effect ?? fallback
+      if (effect === "deny") return "deny"
+      if (effect === "ask") answer = "ask"
+    }
+    return answer
+  }
+
+  /**
+   * What the settings say about a bucket, or about one resource in it.
    *
    * A name this build does not know is treated as one that asks. That is the
    * safe direction for a tool arriving from somewhere else - an MCP server, or
    * a build newer than this config - and it is what happened before, when an
    * unknown name simply failed to match anything in the approved list.
    */
-  action(kind: string, level: Access = defaultAccess(this.config.get())): PermissionAction {
+  action(kind: string, level: Access = defaultAccess(this.config.get()), resource?: string | readonly string[]): PermissionAction {
     const bucket = bucketOf(kind)
     if (!bucket) return "ask"
-    return accessAction(bucket, level, this.config.get())
+    const resources = resource === undefined ? [] : typeof resource === "string" ? [resource] : resource
+    return this.decide(kind, level, resources)
+  }
+
+  /** How many times this call has consulted the gate, asked or waived. */
+  asked(callID: string): number {
+    return this.consultations.get(callID) ?? 0
+  }
+
+  private consult(callID: string): void {
+    this.consultations.set(callID, (this.consultations.get(callID) ?? 0) + 1)
+  }
+
+  /**
+   * A tool's own record that this call deliberately needed no question - a
+   * memory file it may write silently, a command it is about to refuse for
+   * another reason. It counts as consulting the gate, so the runner's
+   * self-asking check is satisfied without asking anyone anything.
+   */
+  waive(callID: string): void {
+    this.consult(callID)
+  }
+
+  /** Drops the count for a call once it has settled, so the map does not grow for the process's life. */
+  forget(callID: string): void {
+    this.consultations.delete(callID)
   }
 
   /**
@@ -426,9 +497,20 @@ export class Permissions {
     /** A pattern rule asks for this call even where its bucket allows it - a `.env` read - except at full access. */
     patternAsks?: boolean
   }): Promise<void> {
+    this.consult(input.callID)
     const found = this.levelOf(this.background.get(input.sessionID) ?? input.sessionID)
     const level = found instanceof Promise ? await found : found
-    let action = this.action(input.kind, level)
+    const key = projectKey(input)
+    const scoped = input.scope ? [scopePattern(input.kind, input.scope)] : undefined
+    const patterns = input.patterns?.length ? input.patterns : (scoped ?? [input.subject])
+    const always = input.always ?? scoped ?? ["*"]
+    /*
+     * A user's own rule is read with the same patterns a saved "always" is
+     * matched against, so `git push *` covers a command however its arguments
+     * are spelled and a path rule covers the file the question names.
+     */
+    let action = this.action(input.kind, level, patterns)
+    const explicitAsk = patterns.some((pattern) => this.ruleFor(input.kind, pattern)?.effect === "ask")
     if (input.patternAsks && action === "allow" && level !== "full") action = "ask"
     /*
      * Read first, before anything remembered. A bucket switched to Deny has to
@@ -454,12 +536,9 @@ export class Permissions {
      */
     if (action === "allow" && (!forced || level === "full")) return
     // MiMo's read-only allowlist: a command made only of reading pieces runs once without a question.
-    // Except one naming a file the read rules ask about (`type .env`): reading it through a shell asks too.
-    if (!forced && input.kind === "bash" && readOnlyCommand(input.subject) && !namesAskingFile(input.subject)) return
-    const key = projectKey(input)
-    const scoped = input.scope ? [scopePattern(input.kind, input.scope)] : undefined
-    const patterns = input.patterns?.length ? input.patterns : (scoped ?? [input.subject])
-    const always = input.always ?? scoped ?? ["*"]
+    // Except one naming a file the read rules ask about (`type .env`): reading it through a shell asks too,
+    // and except a command a user rule deliberately put to them.
+    if (!forced && !explicitAsk && input.kind === "bash" && readOnlyCommand(input.subject) && !namesAskingFile(input.subject)) return
     /*
      * A background subagent runs with nobody watching, so a remembered
      * "always" carries it only for commands the middle level would let through
@@ -471,9 +550,9 @@ export class Permissions {
     /*
      * The middle access level, as this conversation runs at. What it does not
      * let through goes to the model's review - except a delete, which only a
-     * person answers.
+     * person answers, and except a rule that deliberately asked.
      */
-    if (!forced && level === "auto") {
+    if (!forced && !explicitAsk && level === "auto") {
       // A `.env` named on a command line is the model's review to pass, as a `.env` read is.
       if (!input.patternAsks && autoAllows(input.kind, input.subject)) return
       if (await this.reviewed(input.sessionID, input.kind, input.subject)) return
@@ -520,7 +599,7 @@ export class Permissions {
        * model can act on the difference: one says try something else, the other
        * says this particular thing was not wanted.
        */
-      if (this.action(input.kind) === "deny") {
+      if (this.action(input.kind, level, patterns) === "deny") {
         throw new PermissionDenied(input.subject, refusal(input.kind, input.subject))
       }
       // A person said no; anything else here is a question closed by Stop, which ends the turn by itself.
@@ -571,7 +650,8 @@ export class Permissions {
      * Everything else about those tools is left to the question they raise.
      */
     if (SELF_ASKING_KINDS.includes(bucket)) {
-      if (this.action(bucket) === "deny") {
+      // The resource is what the tool is about, so a user rule can deny one command or one path before it starts.
+      if (this.action(bucket, undefined, subject) === "deny") {
         throw new PermissionDenied(subject, refusal(bucket, subject))
       }
       return
@@ -632,7 +712,7 @@ export class Permissions {
       const level = found instanceof Promise ? await found : found
       // Answered, or settled by another pass, while the level was read.
       if (this.pending.get(id) !== pending) continue
-      const action = this.action(pending.request.kind, level)
+      const action = this.action(pending.request.kind, level, pending.patterns)
       /*
        * A delete waiting for its answer is settled by a person, or by the
        * reader switching this conversation to full access - never by a bucket
@@ -649,8 +729,9 @@ export class Permissions {
        * A delete is never among them.
        */
       const bucket = bucketOf(pending.request.kind)
+      const explicitAsk = pending.patterns.some((pattern) => this.ruleFor(pending.request.kind, pattern)?.effect === "ask")
       const released =
-        action === "ask" && auto && !pending.request.forced && bucket !== undefined && autoAllows(bucket, pending.request.subject)
+        action === "ask" && auto && !pending.request.forced && !explicitAsk && bucket !== undefined && autoAllows(bucket, pending.request.subject)
       if (action === "ask" && !released) continue
       this.pending.delete(id)
       pending.decided = released ? "allow-once" : "policy"
