@@ -36,8 +36,9 @@ import { reasoningRequest as anthropicReasoning } from "../src/server/provider/a
 import { reasoningRequest as codexReasoning } from "../src/server/provider/chatgpt"
 import { adapterFor } from "../src/server/provider/adapter"
 import { AnthropicAdapter, toProviderMessages } from "../src/server/provider/anthropic"
-import { ChatGPTSubscription, OpenAIResponses } from "../src/server/provider/chatgpt"
+import { ChatGPTSubscription, OpenAIResponses, toInput } from "../src/server/provider/chatgpt"
 import { OpenAICompatible } from "../src/server/provider/openai"
+import type { TurnEvent } from "../src/server/provider/types"
 import { requestHistory } from "../src/server/provider/history"
 
 const findings: string[] = []
@@ -70,6 +71,59 @@ async function main(): Promise<void> {
     const tools = JSON.stringify(toProviderMessages([user, pending], undefined, assistant.model))
     note("unfinished tools get paired interrupted results", tools.includes('"tool_use"') && tools.includes('"tool_result"') && tools.includes("[Tool execution was interrupted]"))
     note("history shaping leaves stored tools untouched", pending.parts[0]?.type === "tool" && pending.parts[0].status === "running")
+  }
+
+  section("Model-scoped native reasoning metadata")
+  {
+    const model = { provider: "anthropic", model: "claude" }
+    const message = { id: "native", sessionID: "s", role: "assistant", model, agent: "build", parts: [
+      { type: "reasoning", id: "r", text: "thought", native: { signature: "native-proof", extra: { opaque: true } }, time: { created: 0 } },
+      { type: "text", id: "t", text: "answer" },
+    ], time: { created: 0 } } as AssistantMessage
+    const before = JSON.stringify(message)
+    const same = requestHistory([message], undefined, model)[0] as AssistantMessage
+    note("same model keeps native metadata intact", same.parts[0].native?.signature === "native-proof" && JSON.stringify(same.parts[0].native) === JSON.stringify(message.parts[0].native))
+    for (const target of [{ provider: "anthropic", model: "other" }, { provider: "gateway", model: "claude" }]) {
+      const other = requestHistory([message], undefined, target)[0] as AssistantMessage
+      note(`switch to ${target.provider}/${target.model} strips native but keeps readable reasoning`, !other.parts[0].native && other.parts[0].type === "reasoning" && other.parts[0].text === "thought")
+    }
+    note("unknown destination never replays native", !(requestHistory([message])[0] as AssistantMessage).parts[0].native)
+    note("Anthropic consumes native signature", JSON.stringify(toProviderMessages([message], undefined, model)).includes('"signature":"native-proof"'))
+    const responses = { ...message, model: { provider: "openai", model: "gpt" }, parts: [
+      { type: "reasoning", id: "r", text: "", native: { encrypted_content: "cipher", id: "rs_1" }, time: { created: 0 } },
+      { type: "text", id: "t", text: "answer" },
+    ] } as AssistantMessage
+    const replay = toInput([responses], undefined, responses.model)
+    note("Responses replays native ciphertext and id even without summary", replay.some((item) => item.type === "reasoning" && item.encrypted_content === "cipher" && item.id === "rs_1"))
+    note("Responses never replays foreign ciphertext", !JSON.stringify(toInput([responses], undefined, model)).includes("cipher"))
+    note("native request shaping never mutates stored transcript", JSON.stringify(message) === before)
+
+    // Exercise the producer's real SSE parser; no credentials or network leave the process.
+    const originalFetch = globalThis.fetch
+    const events: TurnEvent[] = []
+    try {
+      globalThis.fetch = async () => new Response([
+        { type: "response.output_item.done", item: { type: "reasoning", id: "rs_stream", encrypted_content: "stream-cipher" } },
+        { type: "response.output_text.delta", delta: "answer" },
+        { type: "response.completed", response: { usage: {} } },
+      ].map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } })
+      await OpenAIResponses.stream({ apiKey: "test", model: responses.model, system: "test", history: [], tools: [], effort: "low", signal: new AbortController().signal, baseURL: "https://example.test/v1" }, (event) => events.push(event))
+      note("Responses stream emits native payload for persistence", events.some((event) => event.type === "reasoning.signature" && event.native?.encrypted_content === "stream-cipher" && event.native.id === "rs_stream"))
+      events.length = 0
+      globalThis.fetch = async () => new Response([
+        { type: "message_start", message: { id: "msg_1", type: "message", role: "assistant", model: "claude", content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } } },
+        { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "", signature: "" } },
+        { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "thought" } },
+        { type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "anthropic-proof" } },
+        { type: "content_block_stop", index: 0 },
+        { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 2 } },
+        { type: "message_stop" },
+      ].map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } })
+      await AnthropicAdapter.stream({ apiKey: "test", model, system: "test", history: [], tools: [], effort: "low", signal: new AbortController().signal, baseURL: "https://example.test/v1", retries: 0 }, (event) => events.push(event))
+      note("Anthropic stream emits native signature for persistence", events.some((event) => event.type === "reasoning.signature" && event.native?.signature === "anthropic-proof"))
+    } finally {
+      globalThis.fetch = originalFetch
+    }
   }
 
   section("The effort vocabulary")

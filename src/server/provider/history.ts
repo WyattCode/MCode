@@ -1,4 +1,4 @@
-import type { AssistantMessage, AssistantPart, Attachment, Message, ModelModalities, ToolPart, UserMessage } from "@shared/protocol"
+import type { AssistantMessage, AssistantPart, Attachment, Message, ModelModalities, ModelRef, ToolPart, UserMessage } from "@shared/protocol"
 
 /**
  * The stored transcript as MiMo shapes it for a provider, in the request only.
@@ -144,7 +144,11 @@ export function unsupportedAttachments(messages: Message[], inputs: Partial<Mode
   })
 }
 
-export function requestHistory(messages: Message[], inputs?: Partial<ModelModalities>): Message[] {
+export function requestHistory(messages: Message[], inputs?: Partial<ModelModalities>, model?: ModelRef): Message[] {
+  messages = messages.map((message) => {
+    if (message.role !== "assistant" || (model && message.model.provider === model.provider && message.model.model === model.model)) return message
+    return { ...message, parts: message.parts.map(({ native, ...part }) => part) }
+  })
   const out: Message[] = messages.map((message) => {
     if (message.role === "user") return sendable(message) ? message : { ...message, text: CONTINUE }
     if (cutWhileThinking(message)) {

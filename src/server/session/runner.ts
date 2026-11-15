@@ -3702,7 +3702,7 @@ export class SessionRunner {
     // Text and reasoning blocks are keyed by the index the adapter reports;
     // tools are keyed by call id, since only the provider knows how those
     // interleave with the rest of the turn.
-    const blocks = new Map<number, TextPart | ReasoningPart>()
+    const blocks = new Map<number, Extract<AssistantPart, { type: "text" | "reasoning" }>>()
     /*
      * The message as this attempt found it, so a retry puts it back rather than
      * emptying it. Everything here belongs to an earlier step of the same
@@ -3808,6 +3808,7 @@ export class SessionRunner {
         if (part?.type === "reasoning") {
           part.signature = event.signature
           if (event.itemID) part.itemID = event.itemID
+          if (event.native) part.native = { ...part.native, ...event.native }
           dirty = true
         }
       } else if (event.type === "tool") {

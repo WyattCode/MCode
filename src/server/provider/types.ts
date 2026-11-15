@@ -21,7 +21,7 @@ export type TurnEvent =
    * block is complete: Anthropic's signature, or the Responses API's
    * `encrypted_content` and the id of the item it came in.
    */
-  | { type: "reasoning.signature"; index: number; signature: string; itemID?: string }
+  | { type: "reasoning.signature"; index: number; signature: string; itemID?: string; native?: Record<string, unknown> }
   /** A tool the model wants to run, announced as soon as its name is known. */
   | { type: "tool"; callID: string; name: string }
 

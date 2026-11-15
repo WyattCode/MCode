@@ -96,10 +96,10 @@ function chatMedia(part: Exclude<WirePart, { kind: "text" }>): Record<string, un
  * `role: "tool"` entries keyed by call id, which is what this format expects
  * in place of Anthropic's batched tool_result blocks.
  */
-export function toMessages(system: string, history: Message[], inputs?: Partial<ModelModalities>, interleaved?: string) {
+export function toMessages(system: string, history: Message[], inputs?: Partial<ModelModalities>, interleaved?: string, model?: ModelRef) {
   const out: Record<string, unknown>[] = [{ role: "system", content: system }]
 
-  const sent = requestHistory(history, inputs)
+  const sent = requestHistory(history, inputs, model)
   // The step the model has not answered yet: the only one whose tool pictures it still has to look at.
   const answering = sent.findLastIndex((entry) => entry.role === "assistant")
 
@@ -262,7 +262,7 @@ export const OpenAICompatible: ProviderAdapter = {
     const root = (request.baseURL ?? "").replace(/\/+$/, "")
     if (!root) throw new Error("This provider has no base URL configured")
 
-    const messages = toMessages(systemText(request), request.history, request.inputs, request.interleaved)
+    const messages = toMessages(systemText(request), request.history, request.inputs, request.interleaved, request.model)
     const tools: Record<string, unknown>[] = toolSchemas(request.tools, request.model)
     if (cacheMarked(request.model.provider, request.model.model)) withCacheMarks(messages, tools)
     else if (qwenCacheMarked(request.model.provider, request.model.model)) withQwenCacheMarks(messages)

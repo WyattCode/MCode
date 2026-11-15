@@ -83,7 +83,7 @@ function responsesMedia(part: WirePart): Record<string, unknown>[] {
 export function toInput(history: Message[], inputs?: Partial<ModelModalities>, model?: ModelRef): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = []
 
-  for (const message of requestHistory(history, inputs)) {
+  for (const message of requestHistory(history, inputs, model)) {
     if (message.role === "user") {
       // MiMo's parts: a picture the model reads goes natively; every other attachment is named by path in the turn's blocks.
       const parts = attachmentParts(message.attachments ?? [], inputs, "responses", "user")
@@ -108,11 +108,14 @@ export function toInput(history: Message[], inputs?: Partial<ModelModalities>, m
      */
     const sameModel = Boolean(model && message.model.provider === model.provider && message.model.model === model.model)
     for (const part of message.parts) {
-      if (part.type !== "reasoning" || !sameModel || !part.signature) continue
+      if (part.type !== "reasoning" || !sameModel) continue
+      const encrypted = typeof part.native?.encrypted_content === "string" ? part.native.encrypted_content : part.signature
+      const itemID = typeof part.native?.id === "string" ? part.native.id : part.itemID
+      if (!encrypted) continue
       out.push({
         type: "reasoning",
-        ...(part.itemID ? { id: part.itemID } : {}),
-        encrypted_content: part.signature,
+        ...(itemID ? { id: itemID } : {}),
+        encrypted_content: encrypted,
         summary: part.text.trim() ? [{ type: "summary_text", text: part.text }] : [],
       })
     }
@@ -389,7 +392,7 @@ async function streamResponses(
             emit({ type: "reasoning.start", index })
             reasoningOpen = true
           }
-          emit({ type: "reasoning.signature", index, signature: event.item.encrypted_content, ...(event.item.id ? { itemID: event.item.id } : {}) })
+          emit({ type: "reasoning.signature", index, signature: event.item.encrypted_content, native: { encrypted_content: event.item.encrypted_content, ...(event.item.id ? { id: event.item.id } : {}) }, ...(event.item.id ? { itemID: event.item.id } : {}) })
           emit({ type: "block.end", index })
           reasoningOpen = false
           index += 1
