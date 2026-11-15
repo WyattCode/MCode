@@ -34,6 +34,10 @@ import { Config } from "../src/server/config"
 import { modelVariants } from "../src/server/provider/variants"
 import { reasoningRequest as anthropicReasoning } from "../src/server/provider/anthropic"
 import { reasoningRequest as codexReasoning } from "../src/server/provider/chatgpt"
+import { adapterFor } from "../src/server/provider/adapter"
+import { AnthropicAdapter, toProviderMessages } from "../src/server/provider/anthropic"
+import { ChatGPTSubscription, OpenAIResponses } from "../src/server/provider/chatgpt"
+import { OpenAICompatible } from "../src/server/provider/openai"
 import { requestHistory } from "../src/server/provider/history"
 
 const findings: string[] = []
@@ -52,6 +56,22 @@ function section(title: string): void {
 const MAX_TOKENS = 64_000
 
 async function main(): Promise<void> {
+  section("Provider breadth characterization")
+  {
+    note("all four kinds select their adapter", adapterFor("anthropic") === AnthropicAdapter && adapterFor("chatgpt") === ChatGPTSubscription && adapterFor("openai-responses") === OpenAIResponses && adapterFor("openai-compatible") === OpenAICompatible)
+    const user: UserMessage = { id: "u", sessionID: "s", role: "user", text: "", attachments: [], time: { created: 1 } }
+    const assistant = { id: "a", sessionID: "s", role: "assistant", model: { provider: "anthropic", model: "claude" }, parts: [{ type: "reasoning", text: "thought", signature: "proof" }, { type: "text", text: "answer" }], time: { created: 1 } } as AssistantMessage
+    note("empty user becomes Continue", (requestHistory([user])[0] as UserMessage).text === "Continue.")
+    note("assistant ending gets Continue", (requestHistory([assistant]).at(-1) as UserMessage).text === "Continue.")
+    const wire = JSON.stringify(toProviderMessages([user, assistant], undefined, assistant.model))
+    note("Anthropic replays signed thinking", wire.includes('"signature":"proof"') && wire.includes('"thinking":"thought"'))
+    note("Anthropic drops foreign signatures", !JSON.stringify(toProviderMessages([user, assistant], undefined, { provider: "anthropic", model: "other" })).includes("proof"))
+    const pending = { ...assistant, parts: [{ type: "tool", callID: "call", name: "read", input: {}, status: "running" }] } as AssistantMessage
+    const tools = JSON.stringify(toProviderMessages([user, pending], undefined, assistant.model))
+    note("unfinished tools get paired interrupted results", tools.includes('"tool_use"') && tools.includes('"tool_result"') && tools.includes("[Tool execution was interrupted]"))
+    note("history shaping leaves stored tools untouched", pending.parts[0]?.type === "tool" && pending.parts[0].status === "running")
+  }
+
   section("The effort vocabulary")
   {
     /*
