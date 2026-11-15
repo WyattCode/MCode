@@ -11,6 +11,7 @@ import type {
   ModelInfo,
   ModelRef,
   PermissionAction,
+  PermissionRule,
   ProviderStatus,
 } from "@shared/protocol"
 import {
@@ -133,6 +134,8 @@ function defaults(): AppConfig {
      */
     language: "",
     permissions: { ...DEFAULT_PERMISSIONS },
+    // No pattern rules until someone writes one: every call is answered by the bucket map.
+    permissionRules: [],
     /*
      * Derived, and rewritten from `permissions` on every load and every change.
      * The value here only matters for the moment between the two.
@@ -310,6 +313,28 @@ function storedPermissions(stored: Partial<AppConfig> | undefined): Record<Permi
   if (Object.keys(map).length) return { ...base, ...map }
   if (Array.isArray(stored?.autoApprove)) return fromApprovals(base, stored.autoApprove)
   return base
+}
+
+/**
+ * The user-written permission rules a document carries.
+ *
+ * The array order is the precedence: `permission.ts` reads it with the last
+ * matching rule winning, as MiMo's engine does, so the order is kept exactly
+ * as written. A hand-edited entry this build cannot read is dropped rather
+ * than put into force, the same bargain the bucket map makes.
+ */
+export function storedRules(stored: Partial<AppConfig> | undefined): PermissionRule[] {
+  if (!Array.isArray(stored?.permissionRules)) return []
+  const out: PermissionRule[] = []
+  for (const entry of stored.permissionRules) {
+    if (!entry || typeof entry !== "object") continue
+    const { action, resource, effect } = entry as { action?: unknown; resource?: unknown; effect?: unknown }
+    if (typeof action !== "string" || !action.trim()) continue
+    if (typeof resource !== "string" || !resource.trim()) continue
+    if (typeof effect !== "string" || !(PERMISSION_ACTIONS as readonly string[]).includes(effect)) continue
+    out.push({ action, resource, effect: effect as PermissionAction })
+  }
+  return out
 }
 
 /**
@@ -761,7 +786,7 @@ export class Config {
     this.existed = stored !== undefined || read.corrupt !== undefined || read.unreadable !== undefined
     // Read before anything is merged: what follows must not write over a newer document.
     this.fromNewerVersion = typeof stored?.schemaVersion === "number" && stored.schemaVersion > CONFIG_SCHEMA_VERSION
-    this.current = { ...defaults(), ...stored, permissions: storedPermissions(stored) }
+    this.current = { ...defaults(), ...stored, permissions: storedPermissions(stored), permissionRules: storedRules(stored) }
     const retired = dropRetired(this.current) || forgetDisabledCustom(this.current)
     // Before the migrations, which read these values as the types they claim to be; in memory only.
     this.held = sanitizeHeld(this.current, stored)
@@ -1132,7 +1157,7 @@ export class Config {
     const before = this.current
     // As load reads it: a later build's document is taken in but never written back over.
     this.fromNewerVersion = typeof stored.schemaVersion === "number" && stored.schemaVersion > CONFIG_SCHEMA_VERSION
-    let next: AppConfig = { ...defaults(), ...stored, permissions: storedPermissions(stored) }
+    let next: AppConfig = { ...defaults(), ...stored, permissions: storedPermissions(stored), permissionRules: storedRules(stored) }
     dropRetired(next)
     const held = sanitizeHeld(next, stored)
     // As set keeps it: a custom provider taken out of the file is disabled, not lost.
@@ -1253,6 +1278,8 @@ export class Config {
     } else {
       this.current.permissions = before
     }
+    // Rules are only ever taken from the document's own order, including one just written.
+    this.current.permissionRules = storedRules(this.current)
     this.current.autoApprove = allowed(this.current.permissions)
     /*
      * Never written over a document a later build wrote.

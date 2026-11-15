@@ -1242,6 +1242,24 @@ export const PERMISSION_ACTIONS = ["allow", "ask", "deny"] as const
 export type PermissionAction = (typeof PERMISSION_ACTIONS)[number]
 
 /**
+ * One user-written rule, as MiMo and OpenCode keep theirs.
+ *
+ * `action` is the permission bucket (a tool kind, or `*` for every bucket),
+ * `resource` is what the call is about (a command line, a path, a URL, an MCP
+ * call), and `effect` is the answer. Both `action` and `resource` are
+ * wildcards: `*` matches any run of characters, including slashes, and `?`
+ * matches one. The last matching rule wins, so a later, narrower rule
+ * overrides an earlier, wider one.
+ */
+export interface PermissionRule {
+  /** The bucket this rule is about; `*` matches every bucket. */
+  action: string
+  /** The resource this rule is about; `*` and `?` match as in a saved "always". */
+  resource: string
+  effect: PermissionAction
+}
+
+/**
  * What each bucket does when the user has never said.
  *
  * Looking at the project happens without asking, and everything that changes a
@@ -1666,6 +1684,16 @@ export interface AppConfig {
    * and there was no way to say no.
    */
   permissions: Record<PermissionKind, PermissionAction>
+  /**
+   * User-written pattern rules, in the order they were written.
+   *
+   * A rule says what one bucket does about one resource - `bash` with
+   * `npm test *` allowed, `edit` with `docs/*` allowed, `bash` with `git push *`
+   * asked. They win over the bucket and the access level; among themselves the
+   * last match wins. Absent or empty means every call is answered by the
+   * bucket map alone, which is what configs written before this field mean.
+   */
+  permissionRules?: PermissionRule[]
   /**
    * The buckets set to allow, in the shape this setting used to have.
    *

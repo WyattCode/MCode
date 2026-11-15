@@ -22,7 +22,7 @@ import { execFileSync } from "node:child_process"
 import fs from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
-import type { Message, PermissionAction, PermissionKind, PermissionRequest } from "@shared/protocol"
+import type { Message, PermissionAction, PermissionKind, PermissionRequest, PermissionRule } from "@shared/protocol"
 import { DEFAULT_PERMISSIONS, PERMISSION_KINDS } from "@shared/protocol"
 import { Storage } from "../src/server/storage"
 import { Bus } from "../src/server/bus"
@@ -2133,6 +2133,124 @@ async function main(): Promise<void> {
     })
     reloadWatch()
     check("and it is read back by a later process", afterReload === 0, `${afterReload} raised`)
+  }
+
+  /*
+   * User-written pattern rules: `bash` with `npm test *` allowed, `edit` with
+   * `docs/*` allowed, `bash` with `git push *` asked. These are what let a
+   * project keep its tests quiet without waving every command through.
+   *
+   * The semantics pinned here are MiMo's and OpenCode's: both fields are
+   * wildcards, a `*` crosses slashes, the last matching rule wins, and the
+   * rule is read before the bucket and the access level.
+   */
+  console.log("user-written permission rules")
+  {
+    const base = { ...DEFAULT_PERMISSIONS, bash: "ask" as const, edit: "ask" as const }
+    const set = (rules: PermissionRule[], extra: Partial<{ accessLevel: "ask" | "auto" | "full"; permissions: typeof base }> = {}) =>
+      config.set({ accessLevel: "ask", permissions: base, permissionRules: rules, ...extra })
+
+    await set([
+      { action: "bash", resource: "npm *", effect: "deny" },
+      { action: "bash", resource: "npm test *", effect: "allow" },
+    ])
+    check(
+      "the last rule that matches is the one that answers",
+      permissions.action("bash", "ask", "npm test --watch") === "allow",
+      permissions.action("bash", "ask", "npm test --watch"),
+    )
+    check(
+      "and an earlier, wider rule still answers what the later one does not cover",
+      permissions.action("bash", "ask", "npm publish") === "deny",
+      permissions.action("bash", "ask", "npm publish"),
+    )
+
+    await set([{ action: "edit", resource: "docs/*", effect: "allow" }])
+    check(
+      "a path wildcard crosses folders",
+      permissions.action("edit", "ask", "docs/guide/index.md") === "allow",
+      permissions.action("edit", "ask", "docs/guide/index.md"),
+    )
+    check(
+      "and does not cover a lookalike outside the folder",
+      permissions.action("edit", "ask", "src/docs.md") === "ask",
+      permissions.action("edit", "ask", "src/docs.md"),
+    )
+    await set([{ action: "*", resource: "docs/*", effect: "allow" }])
+    check(
+      "a bucket wildcard covers every tool",
+      permissions.action("read", "ask", "docs/a.md") === "allow" && permissions.action("bash", "ask", "docs/a.md") === "allow",
+      `${permissions.action("read", "ask", "docs/a.md")}/${permissions.action("bash", "ask", "docs/a.md")}`,
+    )
+
+    await set([{ action: "bash", resource: "git push *", effect: "ask" }], { permissions: { ...base, bash: "allow" } })
+    check(
+      "a rule may ask where its bucket allows",
+      permissions.action("bash", "ask", "git push origin main") === "ask",
+      permissions.action("bash", "ask", "git push origin main"),
+    )
+
+    await set([{ action: "bash", resource: "rm *", effect: "deny" }], { permissions: { ...base, bash: "allow" } })
+    check(
+      "one denied piece refuses a call made of several",
+      permissions.action("bash", "ask", ["git status", "rm -rf dist"]) === "deny",
+      permissions.action("bash", "ask", ["git status", "rm -rf dist"]),
+    )
+    check("and the same call is allowed without the denied piece", permissions.action("bash", "ask", ["git status", "git diff"]) === "allow")
+
+    const allAllow = Object.fromEntries(PERMISSION_KINDS.map((kind) => [kind, "allow"])) as Record<PermissionKind, PermissionAction>
+    await set([{ action: "bash", resource: "git push *", effect: "ask" }], { accessLevel: "full", permissions: allAllow })
+    check(
+      "a rule is read over the access level too",
+      permissions.action("bash", "full", "git push origin main") === "ask",
+      permissions.action("bash", "full", "git push origin main"),
+    )
+
+    // Written down and read back in the order the user wrote them.
+    const where = path.join(root, "rule-config")
+    const ruleStorage = new Storage(path.join(where, "storage"))
+    await ruleStorage.write("config", {
+      permissionRules: [
+        { action: "bash", resource: "npm *", effect: "deny" },
+        { action: "bash", resource: "npm test *", effect: "allow" },
+        { action: "bash", resource: 7, effect: "allow" },
+      ],
+    })
+    const ruleConfig = new Config(ruleStorage, new Bus(), path.join(where, "credentials.json"))
+    await ruleConfig.load()
+    const kept = ruleConfig.get().permissionRules ?? []
+    check("the stored rules keep their written order", kept.map((rule) => `${rule.action}:${rule.resource}:${rule.effect}`).join("|") === "bash:npm *:deny|bash:npm test *:allow", JSON.stringify(kept))
+    check("and one this build cannot read is dropped", kept.length === 2, String(kept.length))
+
+    /*
+     * Reached through the real runner: a rule that allows an edit under docs
+     * is what the edit tool reads, not only what this function returns.
+     */
+    await set([{ action: "edit", resource: "docs/*", effect: "allow" }])
+    await fs.mkdir(path.join(project, "docs"), { recursive: true })
+    const target = path.join(project, "docs", "rule.md")
+    await fs.writeFile(target, "before", "utf8")
+    const session = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
+    const watch = listen(session.id)
+    // Answered so a regression reports the question rather than waiting on it.
+    const answering = bus.subscribe((event) => {
+      if (event.type !== "permission.requested") return
+      const request = (event as { request: PermissionRequest }).request
+      if (request.sessionID === session.id) permissions.respond(request.id, "once")
+    })
+    script = [
+      [{ name: "read", input: { file_path: "docs/rule.md" } }],
+      [{ name: "edit", input: { file_path: "docs/rule.md", old_string: "before", new_string: "after" } }],
+    ]
+    const done = idle(session.id)
+    await runner.prompt({ sessionID: session.id, text: "change it" })
+    await done
+    answering()
+    watch.off()
+    check("an allowed edit under docs raises no question", watch.seen.length === 0, `${watch.seen.length} raised`)
+    check("and the edit really landed", (await fs.readFile(target, "utf8").catch(() => "")) === "after")
+
+    await config.set({ accessLevel: "ask", permissions: { ...DEFAULT_PERMISSIONS }, permissionRules: [] })
   }
 
   // --- the buckets nothing used to consult ---------------------------------
