@@ -364,6 +364,11 @@ async function main(): Promise<void> {
     compacted.compacted?.messageID === lastBefore.id,
   )
 
+  const reopened = new SessionStore(storage, bus)
+  const checkpoint = await reopened.get(one.id)
+  check("compaction checkpoint survives a fresh store", checkpoint?.compacted?.messageID === lastBefore.id && checkpoint.compacted.summary === FAKE_SUMMARY)
+  check("compaction preserves the durable transcript", JSON.stringify(await reopened.messages(one.id)) === JSON.stringify(before))
+
   /*
    * Round 27: and what the next turn actually sends.
    *
