@@ -103,7 +103,9 @@ export function applyTask(
       if (rawStatus === "pending" || rawStatus === "open") status = "open"
       else if (rawStatus === "in_progress") status = "in_progress"
       else if (rawStatus === "completed" || rawStatus === "done") status = "done"
-      else throw new ToolError(`plan status "${rawStatus}" is not one of pending, in_progress, completed (or open, done).`)
+      // A todowrite list says cancelled where this registry says abandoned.
+      else if (rawStatus === "cancelled" || rawStatus === "abandoned") status = "abandoned"
+      else throw new ToolError(`plan status "${rawStatus}" is not one of pending, in_progress, completed (or open, done, abandoned).`)
 
       if (status === "in_progress") inProgress++
       steps.push({ step, status })
@@ -125,7 +127,7 @@ export function applyTask(
           owner: context.owner,
           created: now,
           updated: now,
-          ...(status === "done" ? { ended: now } : {}),
+          ...(status === "done" || status === "abandoned" ? { ended: now } : {}),
         }
         list.push(task)
         ids.push(id)
@@ -135,7 +137,7 @@ export function applyTask(
 
       const current = list[at]!
       const next: TaskItem = { ...current, summary: step, status, owner: context.owner, updated: now }
-      if (status === "done") next.ended = current.ended ?? now
+      if (status === "done" || status === "abandoned") next.ended = current.ended ?? now
       else delete next.ended
 
       list[at] = next
@@ -178,6 +180,30 @@ export function applyTask(
   if (action === "unblock") return put({ ...current, status: "open", updated: now, ...(note ? { note } : {}) }, `${id} unblocked (open)`)
   const status: TaskStatus = action === "done" ? "done" : "abandoned"
   return put({ ...current, status, updated: now, ended: now, ...(note ? { note } : {}) }, `${id} ${status}`)
+}
+
+/**
+ * A call shaped like opencode's `todowrite`, read as this registry's `plan`.
+ *
+ * Models trained on todowrite send `{ todos: [{ content, status }] }` with no
+ * operation at all; this tool used to refuse it as an unknown action, costing
+ * a round trip to learn a schema that says the same thing. The statuses map to
+ * the plan's: pending -> open, in_progress unchanged, completed -> done, and
+ * cancelled -> abandoned, this registry's word for a task dropped unfinished.
+ * The plan's output is unchanged, because a plan is what this becomes.
+ */
+export function todoPlan(input: Record<string, unknown>): Record<string, unknown> | undefined {
+  const operation = input.operation
+  // A call that names an operation is the tool's own shape and is left alone.
+  if (operation && typeof operation === "object" && !Array.isArray(operation)) return undefined
+  if (!Array.isArray(input.todos)) return undefined
+  const plan = input.todos.map((entry) => {
+    const item = entry && typeof entry === "object" ? (entry as Record<string, unknown>) : {}
+    const step = typeof item.content === "string" ? item.content : typeof item.step === "string" ? item.step : ""
+    const raw = typeof item.status === "string" ? item.status.trim() : ""
+    return { step, status: raw === "cancelled" ? "abandoned" : raw }
+  })
+  return { ...operationInput(input), action: "plan", plan }
 }
 
 export const TaskTool: ToolDefinition = {
@@ -242,8 +268,8 @@ export const TaskTool: ToolDefinition = {
   async execute(input, context) {
     const tasks = context.tasks
     if (!tasks) throw new ToolError("Tasks are not available here.")
-    // MiMo's shape, or the same fields written flat, as MiMo also takes them.
-    const flat = operationInput(input)
+    // MiMo's shape, the same fields written flat, or a todowrite-shaped list of todos.
+    const flat = todoPlan(input) ?? operationInput(input)
     return tasks.update((list, who) => {
       const applied = applyTask(list, flat, { ...who, now: Date.now() })
       return { list: applied.tasks, result: applied.result }

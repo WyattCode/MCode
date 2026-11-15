@@ -515,6 +515,47 @@ async function main(): Promise<void> {
     }
   }
 
+  console.log("a todowrite-shaped call to the task tool")
+  {
+    const task = findTool("task")
+    if (!task) throw new Error("the registry is missing the task tool")
+    const registry: Record<string, unknown>[] = []
+    const controller = new AbortController()
+    const result = await task.execute(
+      {
+        todos: [
+          { content: "Read the parser", status: "completed" },
+          { content: "Fix the parser", status: "in_progress" },
+          { content: "Run its tests", status: "pending" },
+          { content: "Rewrite the lexer", status: "cancelled" },
+        ],
+      },
+      {
+        ...context(controller.signal, "call-todos"),
+        tasks: {
+          update: async (
+            change: (list: Record<string, unknown>[], who: { owner: string; subagent: boolean }) => {
+              list: Record<string, unknown>[]
+              result: { output: string; title?: string; metadata?: Record<string, unknown> }
+            },
+          ) => {
+            const applied = change(registry, { owner: "s1", subagent: false })
+            registry.splice(0, registry.length, ...applied.list)
+            return applied.result
+          },
+        },
+      } as never,
+    )
+    const expected = [
+      "T1 [done] Read the parser",
+      "T2 [in_progress] Fix the parser",
+      "T3 [open] Run its tests",
+      "T4 [abandoned] Rewrite the lexer",
+    ]
+    check("todos without an operation become a plan, in the order they were sent", result.output === expected.join("\n"), result.output)
+    check("and the receipt keeps the plan's own shape", result.title === "4" && JSON.stringify(result.metadata?.ids) === '["T1","T2","T3","T4"]', JSON.stringify(result.metadata))
+  }
+
   console.log("a call that could not be dispatched")
   {
     const invalid = findTool("invalid")!
