@@ -22,7 +22,7 @@ import { findTool, TOOLS, toolsFor } from "../src/server/tool/registry"
 import { Questions } from "../src/server/tool/question"
 // plan: the rule the write tools enforce, which is where planning's read-only promise now lives.
 import { guardPlanWrite, planFolders, planWritable } from "../src/server/session/plan"
-import { ToolError } from "../src/server/tool/types"
+import { selfAskMissing, selfAskViolated, ToolError } from "../src/server/tool/types"
 import type { ServerEvent } from "../src/shared/protocol"
 import { Shells } from "../src/server/shell"
 import { cleanBashOutput, createPipeline } from "../src/server/tool/bash-clean"
@@ -460,6 +460,26 @@ async function main(): Promise<void> {
     const plan = names("plan")
     check("plan keeps the write tools, as MiMo's plan agent does", plan.includes("edit") && plan.includes("write"), plan.join(","))
     check("but keeps the question tool", plan.includes("question"))
+
+    /*
+     * The self-asking contract, which the runner enforces at the one point every
+     * call passes through. A tool that declares `edit` or `bash` and never asks
+     * would otherwise run silently at every level but Deny, so the registry must
+     * say for each such tool that it puts the question itself. `read`, `glob`,
+     * `grep` and `list` are exempt: `Permissions.check` asks for them.
+     */
+    const unasked = TOOLS.filter((tool) => selfAskMissing(tool))
+    check(
+      "every tool that declares a writing or network bucket says it asks for itself",
+      unasked.length === 0,
+      unasked.map((tool) => `${tool.name}:${tool.permission}`).join(", "),
+    )
+    check("a new tool that declares edit without saying so is caught", selfAskMissing({ permission: "edit" }))
+    check("while a read-only bucket is left to the gate", !selfAskMissing({ permission: "read" }))
+    check(
+      "and a declared tool that did not consult the gate is refused",
+      selfAskViolated({ asksForItself: true }, 0, 0) && !selfAskViolated({ asksForItself: true }, 0, 1),
+    )
 
     const planPath = path.join(project, ".mcode", "plans", "1-clear-beacon.md")
     const planning = {

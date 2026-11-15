@@ -60,6 +60,7 @@ export const PatchTool: ToolDefinition = {
     "- You must prefix new lines with `+` even when creating a new file",
   ].join("\n"),
   permission: "edit",
+  asksForItself: true,
   parameters: {
     type: "object",
     properties: {
@@ -165,7 +166,10 @@ export const PatchTool: ToolDefinition = {
       const { diff, filediff } = changed(named.join(", "), sections.filter(Boolean).join("\n"))
 
       // memory: memory files are written without asking, as the other writing tools write them.
-      if (!paths.every((target) => isMemoryPath(target))) {
+      if (paths.every((target) => isMemoryPath(target))) {
+        // Deliberately silent, so it counts as consulting the gate without a question.
+        context.permissions.waive(context.callID)
+      } else {
         await context.permissions.ask({
           sessionID: context.sessionID,
           messageID: context.messageID,

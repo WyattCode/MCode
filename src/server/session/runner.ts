@@ -38,7 +38,7 @@ import { Questions } from "../tool/question"
 import type { FanoutControl, FanoutOutcome, PlanControl, SubagentControl, SubagentSpec, ToolContext, ToolDefinition, ToolResult } from "../tool/types"
 import { instructionsIn } from "../tool/read"
 import { keepReadCopy } from "../tool/read-media"
-import { ToolError } from "../tool/types"
+import { selfAskViolated, ToolError } from "../tool/types"
 import { argumentProblems, refusedArgumentsNote } from "../tool/validate"
 import { repairToolArguments } from "../tool/arg-repair"
 import { ToolOutputs } from "../tool/truncate"
@@ -4162,6 +4162,13 @@ export class SessionRunner {
        * ordinary read costs no extra look at the conversation's record.
        */
       const planControl = PLAN_AWARE.has(tool.name) ? await this.planControl(await this.store.require(input.session.id)) : undefined
+      /*
+       * The self-asking contract. A tool that declared it asks for itself has
+       * to consult the gate during this call; one that ran without asking is
+       * refused here and the defect is left on the part, so a new tool cannot
+       * silently bypass the permission buckets.
+       */
+      const askedBefore = this.permissions.asked(part.callID)
       const result = await tool.execute(part.input, {
         sessionID: input.session.id,
         messageID: assistant.id,
@@ -4215,6 +4222,12 @@ export class SessionRunner {
         // read: the model's inputs, a copy of what it attaches, and the instructions already given.
         ...(tool.name === "read" ? this.readSupport(input.session.id) : {}),
       })
+      if (selfAskViolated(tool, askedBefore, this.permissions.asked(part.callID))) {
+        part.metadata = { ...(part.metadata ?? {}), selfAsk: { tool: tool.name, kind: tool.permission ?? null, missing: true } }
+        throw new ToolError(
+          "Refused: this tool declares that it asks before it acts, but it ran without asking, so nothing it did is being reported. This is a permission defect.",
+        )
+      }
       /*
        * MiMo's shared cap, for every tool that did not cap its own output. The
        * note suggests handing the file to an explore subagent only where this
@@ -4263,6 +4276,7 @@ export class SessionRunner {
       stopListening()
       // A finished tool hands back metadata of its own, which would otherwise replace the record.
       if (decisions.length) part.metadata = { ...(part.metadata ?? {}), permissions: decisions }
+      this.permissions.forget(part.callID)
       part.time.completed = Date.now()
       this.settleForLoops(input.session.id, part, input.signal)
       publish()

@@ -55,6 +55,7 @@ export const NotebookEditTool: ToolDefinition = {
     "new_source is the cell's source as plain text, with real newlines - not the JSON array a notebook stores it as. Do not edit a .ipynb with the write or edit tools: they would have you rewrite the JSON by hand, and one mistake makes the notebook unopenable.",
   ].join("\n"),
   permission: "edit",
+  asksForItself: true,
   parameters: {
     type: "object",
     properties: {

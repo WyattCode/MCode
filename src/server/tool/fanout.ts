@@ -43,6 +43,7 @@ export const FanoutTool: ToolDefinition = {
     "Use it when there are two or more parts that do not depend on each other's output. Do not use it for a single piece of work, for work that needs to look at the project or run commands (use the actor tool for that), or when the parts cannot be described without seeing each other's results.",
   ].join("\n"),
   permission: "edit",
+  asksForItself: true,
   parameters: {
     type: "object",
     properties: {

@@ -266,6 +266,12 @@ export class Permissions {
   private readonly background = new Map<string, string>()
   /** Who wants to hear how a call's questions ended, by call id. */
   private readonly listeners = new Map<string, (record: PermissionRecord) => void>()
+  /**
+   * How many times each call has consulted the gate, by call id: one per
+   * `ask`, plus each explicit `waive` for a path a tool lets through without a
+   * question. The runner reads this to enforce the self-asking contract.
+   */
+  private readonly consultations = new Map<string, number>()
   private reviewer?: CommandReviewer
   private reviewTimeout = REVIEW_TIMEOUT_MS
 
@@ -397,6 +403,30 @@ export class Permissions {
     return this.decide(kind, level, resources)
   }
 
+  /** How many times this call has consulted the gate, asked or waived. */
+  asked(callID: string): number {
+    return this.consultations.get(callID) ?? 0
+  }
+
+  private consult(callID: string): void {
+    this.consultations.set(callID, (this.consultations.get(callID) ?? 0) + 1)
+  }
+
+  /**
+   * A tool's own record that this call deliberately needed no question - a
+   * memory file it may write silently, a command it is about to refuse for
+   * another reason. It counts as consulting the gate, so the runner's
+   * self-asking check is satisfied without asking anyone anything.
+   */
+  waive(callID: string): void {
+    this.consult(callID)
+  }
+
+  /** Drops the count for a call once it has settled, so the map does not grow for the process's life. */
+  forget(callID: string): void {
+    this.consultations.delete(callID)
+  }
+
   /**
    * Marks a subagent as running in the background for `parentID`, or clears it.
    * As MiMo's background actors, it runs at its conversation's level and on its
@@ -467,6 +497,7 @@ export class Permissions {
     /** A pattern rule asks for this call even where its bucket allows it - a `.env` read - except at full access. */
     patternAsks?: boolean
   }): Promise<void> {
+    this.consult(input.callID)
     const found = this.levelOf(this.background.get(input.sessionID) ?? input.sessionID)
     const level = found instanceof Promise ? await found : found
     const key = projectKey(input)

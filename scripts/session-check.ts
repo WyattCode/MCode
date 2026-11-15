@@ -33,6 +33,7 @@ import { SessionStore } from "../src/server/session/store"
 // round 5: these providers are scripted reply by reply, and a background title request would take one.
 process.env.MCODE_GENERATE_TITLES = "0"
 import { SessionRunner } from "../src/server/session/runner"
+import { findTool } from "../src/server/tool/registry"
 import { Shells } from "../src/server/shell"
 import { McpServers } from "../src/server/mcp"
 import { ChatGPTSubscription } from "../src/server/provider/chatgpt"
@@ -2251,6 +2252,47 @@ async function main(): Promise<void> {
     check("and the edit really landed", (await fs.readFile(target, "utf8").catch(() => "")) === "after")
 
     await config.set({ accessLevel: "ask", permissions: { ...DEFAULT_PERMISSIONS }, permissionRules: [] })
+  }
+
+  /*
+   * The other half of the self-asking contract, end to end. A new tool that
+   * declares the bucket and the declaration but never raises the question used
+   * to run silently at every level but Deny. The runner must refuse the result
+   * and leave the defect on the call.
+   */
+  console.log("a tool that declares it asks but does not")
+  {
+    const probe = findTool("edit")
+    if (!probe) throw new Error("the registry is missing the edit tool")
+    const previousExecute = probe.execute
+    const previousDeclaration = probe.asksForItself
+    /*
+     * The registry's dispatch list is built at load, so a probe added to
+     * `TOOLS` would not be found. The edit tool is the same object in both
+     * lists; its body is swapped for this one call and put back below.
+     */
+    probe.execute = async () => ({ output: "the probe ran without asking" })
+    probe.asksForItself = true
+    try {
+      const session = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
+      script = [[{ name: "edit", input: { file_path: "unused.txt", old_string: "a", new_string: "b" } }]]
+      const done = idle(session.id)
+      await runner.prompt({ sessionID: session.id, text: "run the probe" })
+      await done
+      const messages = await sessions.messages(session.id)
+      const parts = messages.flatMap((message) => (message.role === "assistant" ? message.parts : []))
+      const called = [...parts].reverse().find((part) => part.type === "tool" && part.name === "edit")
+      const metadata = called?.type === "tool" ? (called.metadata as { selfAsk?: { missing?: boolean } } | undefined) : undefined
+      check(
+        "a declared self-ask that never asked is refused",
+        called?.type === "tool" && called.status === "error",
+        called?.type === "tool" ? `${called.status} ${called.error ?? ""}` : String(called),
+      )
+      check("and the defect is recorded on the call", metadata?.selfAsk?.missing === true, JSON.stringify(metadata))
+    } finally {
+      probe.execute = previousExecute
+      probe.asksForItself = previousDeclaration
+    }
   }
 
   // --- the buckets nothing used to consult ---------------------------------

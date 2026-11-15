@@ -80,6 +80,7 @@ export const AppTool: ToolDefinition = {
     "- Judge the result from the changes and the errors the page reported, which every answer includes; take a new snapshot only when you need the whole window.",
   ].join("\n"),
   permission: "bash",
+  asksForItself: true,
   parameters: {
     type: "object",
     properties: {
@@ -126,6 +127,9 @@ export const AppTool: ToolDefinition = {
     const run = before.then(async () => {
       context.signal.throwIfAborted()
       const action = String(input.action)
+      // Only opening, attaching, or starting something asks; observing and driving what is already
+      // open does not, so those calls are recorded as consulting the gate without a question.
+      if (!["open", "attach", "window", "launch", "android"].includes(action)) context.permissions.waive(context.callID)
       const surface = action === "open" ? "browser" : ["window", "launch", "android", "attach"].includes(action) ? "computer" : surfaces.get(context.sessionID)
       await context.reportOperation?.(surface)
       context.signal.throwIfAborted()

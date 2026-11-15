@@ -1736,6 +1736,7 @@ export class McpServers {
           // One bucket for all of them: approving a server's tools once is the
           // decision a user is actually making.
           permission: "mcp",
+          asksForItself: true,
           server: name,
           execute: async (input, context) => {
             const { output, attachments } = await this.callTool(name, connection, tool, rule, input, context)
@@ -1777,6 +1778,9 @@ export class McpServers {
         // A tool its rules ask about asks even where MCP calls run without asking.
         ...(rule === "ask" ? { patternAsks: true } : {}),
       })
+    } else {
+      // Its server's rules allow it, so it needed no question; recorded as consulting the gate.
+      context.permissions.waive(context.callID)
     }
     // Counted as this conversation's for as long as it runs, so a sampling request is asked in the right place.
     return connection.callingFrom(context.sessionID, () => connection.call(tool.name, input, context.signal))
@@ -1882,6 +1886,7 @@ export class McpServers {
           additionalProperties: false,
         },
         permission: "mcp",
+        asksForItself: true,
         execute: async (input, context) => {
           const named = typeof input.server === "string" && input.server.trim() ? input.server.trim() : undefined
           if (named && !byName.has(named)) throw new ToolError(`MCP server "${named}" is not connected or does not expose resources`)
@@ -1913,6 +1918,7 @@ export class McpServers {
           additionalProperties: false,
         },
         permission: "mcp",
+        asksForItself: true,
         execute: async (input, context) => {
           const server = String(input.server ?? "").trim()
           const uri = String(input.uri ?? "").trim()

@@ -682,6 +682,7 @@ export const WriteTool: ToolDefinition = {
     "The result is a diff of what changed, and the user sees it; there is no need to repeat the file back in your reply.",
   ].join("\n"),
   permission: "edit",
+  asksForItself: true,
   parameters: {
     type: "object",
     properties: {
@@ -712,17 +713,22 @@ export const WriteTool: ToolDefinition = {
       const { diff, filediff } = changed(display, unifiedDiff(display, previous ?? "", content))
 
       // memory: memory files are written without asking, as MiMo does.
-      if (!isMemoryPath(target)) await context.permissions.ask({
-        sessionID: context.sessionID,
-        messageID: context.messageID,
-        callID: context.callID,
-        // Creating a file is judged as an edit, as MiMo and OpenCode judge it (R16-C6).
-        kind: "edit",
-        directory: context.directory,
-        title: previous === undefined ? "Create file" : "Overwrite file",
-        subject: display,
-        preview: diff,
-      })
+      if (isMemoryPath(target)) {
+        // Deliberately silent, so it counts as consulting the gate without a question.
+        context.permissions.waive(context.callID)
+      } else {
+        await context.permissions.ask({
+          sessionID: context.sessionID,
+          messageID: context.messageID,
+          callID: context.callID,
+          // Creating a file is judged as an edit, as MiMo and OpenCode judge it (R16-C6).
+          kind: "edit",
+          directory: context.directory,
+          title: previous === undefined ? "Create file" : "Overwrite file",
+          subject: display,
+          preview: diff,
+        })
+      }
 
       await context.snapshot(target)
       await fs.mkdir(path.dirname(target), { recursive: true })
@@ -779,6 +785,7 @@ export const EditTool: ToolDefinition = {
     "- The result is a diff, and the user sees it. Do not paste the changed lines back into your reply.",
   ].join("\n"),
   permission: "edit",
+  asksForItself: true,
   parameters: {
     type: "object",
     properties: {
@@ -803,9 +810,13 @@ export const EditTool: ToolDefinition = {
 
     return locked(target, async () => {
       // memory: memory files are edited without asking, as MiMo does.
-      const ask = async (diff: string) =>
-        isMemoryPath(target) ||
-        context.permissions.ask({
+      const ask = async (diff: string) => {
+        if (isMemoryPath(target)) {
+          // Deliberately silent, so it counts as consulting the gate without a question.
+          context.permissions.waive(context.callID)
+          return
+        }
+        await context.permissions.ask({
           sessionID: context.sessionID,
           messageID: context.messageID,
           callID: context.callID,
@@ -815,6 +826,7 @@ export const EditTool: ToolDefinition = {
           subject: display,
           preview: diff,
         })
+      }
 
       // MiMo's edit with nothing to find writes the whole file.
       if (oldString === "") {
