@@ -1,3 +1,4 @@
+import { codingSchemas } from '../src/server/tool/coding-schema'
 /** Deterministic wire-content probe: no user files, network, tokenizer or provider required. */
 import assert from 'node:assert/strict'
 import { agentPrompt } from '../src/server/session/prompts'
@@ -9,7 +10,14 @@ const values = { standing: 'Keep changes focused.', project: 'Run npm test befor
 const memory = { project: '/data/project/MEMORY.md', global: '/data/global/MEMORY.md', notes: '/data/session/notes.md' }
 const base = agentPrompt('build', options)
 const system = systemPromptFrom('build', values, memory, options)
-const tools = forModel(toolsForTurn('build', { voiceFeedback: false, sessionChat: false }), options.modelID)
+const rawTools = forModel(toolsForTurn('build', { voiceFeedback: false, sessionChat: false }), options.modelID)
+const tools = codingSchemas(rawTools, true)
+assert.deepEqual(tools.map(t => t.name), rawTools.map(t => t.name))
+for (let i = 0; i < tools.length; i++) {
+  assert.equal(tools[i].parameters, rawTools[i].parameters, 'parameter schema retained')
+  assert.equal(tools[i].execute, rawTools[i].execute, 'execution retained')
+}
+assert.equal(codingSchemas(rawTools, false), rawTools, 'interactive schemas unchanged')
 const rows: Record<string, number> = {}
 const add = (name: string, value: string) => rows[name] = value.length
 add('base agent prompt', base)
@@ -36,5 +44,6 @@ assert(base.length < 15000, 'B1 lean base excludes desktop narration')
 console.log('| Component | Characters | Rough tokens (chars/4) |\n|---|---:|---:|')
 for (const [name, size] of Object.entries(rows)) console.log(`| ${name} | ${size} | ${Math.ceil(size / 4)} |`)
 const schemas = Object.entries(rows).filter(([k]) => k.startsWith('tool:')).reduce((n, [,v]) => n + v, 0)
+assert(base.length + schemas <= 75239 * 0.6, 'B2 static reduction must reach 40%')
 console.log(JSON.stringify({ tools: tools.length, base: base.length, schemas, static: base.length + schemas, system: system.length }))
 console.log('promptcostcheck: characterization GREEN')

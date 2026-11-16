@@ -1,3 +1,5 @@
+import { codingSchemas } from "../tool/coding-schema"
+import { leanMode } from "./lean"
 import { MEMORY_FLUSH_PROMPT, memoryText, parseCompactionNotes, shouldFlushMemory } from "./compaction-memory"
 import { messageToText } from "./summary"
 import { rebuildContext } from "./rebuild"
@@ -636,9 +638,9 @@ export class SessionRunner {
   /** The tools a conversation's request carries: its agent's, less what a subagent never gets. */
   private offeredTools(session: TurnSession): ToolDefinition[] {
     // OpenCode v2: a GPT model edits with patch, every other with edit and write (registry `usesPatch`).
-    return forModel(this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.directory), session.model.model).filter(
+    return codingSchemas(forModel(this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.directory), session.model.model).filter(
       (tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name),
-    )
+    ), leanMode(this.isLocal(session)))
   }
 
   /** Whether the session's model comes from a user-added (custom) provider. */
