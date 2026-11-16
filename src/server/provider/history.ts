@@ -131,6 +131,54 @@ export function unsupportedAttachments(messages: Message[], inputs: Partial<Mode
   })
 }
 
+/**
+ * Long coding turns repay pruning; short chats must remain byte-identical.
+ * Keep three assistant reactions and at least four results for working context;
+ * only large successful outputs are eligible, preserving diagnostics and media.
+ * This is a soft budget: protected content is never sacrificed to meet it.
+ */
+export const TOOL_OUTPUT_BUDGET = {
+  chars: 48_000,
+  assistantMessages: 3,
+  recentResults: 4,
+  floor: 800,
+  preview: 200,
+} as const
+
+export function pruneToolOutputs(messages: Message[]): Message[] {
+  let chars = JSON.stringify(messages).length
+  if (chars <= TOOL_OUTPUT_BUDGET.chars) return messages
+  let assistants = 0
+  let results = 0
+  const eligible = new Set<ToolPart>()
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]!
+    if (message.role !== "assistant") continue
+    assistants++
+    for (let j = message.parts.length - 1; j >= 0; j--) {
+      const part = message.parts[j]!
+      if (part.type !== "tool") continue
+      results++
+      if (assistants > TOOL_OUTPUT_BUDGET.assistantMessages && results > TOOL_OUTPUT_BUDGET.recentResults &&
+        part.status === "completed" && (part.output?.length ?? 0) > TOOL_OUTPUT_BUDGET.floor) eligible.add(part)
+    }
+  }
+  return messages.map((message) => {
+    if (message.role !== "assistant") return message
+    let changed = false
+    const parts = message.parts.map((part) => {
+      if (part.type !== "tool" || !eligible.has(part) || chars <= TOOL_OUTPUT_BUDGET.chars) return part
+      const output = part.output!
+      const lines = output.split("\n").length
+      const stub = `[output elided: ${part.name}, ${lines} lines, ${output.length} chars; first ${TOOL_OUTPUT_BUDGET.preview} chars: ${output.slice(0, TOOL_OUTPUT_BUDGET.preview)}…]`
+      chars -= JSON.stringify(output).length - JSON.stringify(stub).length
+      changed = true
+      return { ...part, output: stub }
+    })
+    return changed ? { ...message, parts } : message
+  })
+}
+
 export function requestHistory(messages: Message[], inputs?: Partial<ModelModalities>, model?: ModelRef): Message[] {
   messages = messages.map((message) => {
     if (message.role !== "assistant" || (model && message.model.provider === model.provider && message.model.model === model.model)) return message
@@ -146,7 +194,7 @@ export function requestHistory(messages: Message[], inputs?: Partial<ModelModali
     return { ...message, parts: message.parts.map(settled) }
   })
 
-  const normalized = transformMessages(out)
+  const normalized = transformMessages(pruneToolOutputs(out))
   // MiMo does this after the transcript is shaped, so a note it synthesises is not mistaken for the user's own file.
   return inputs ? unsupportedAttachments(normalized, inputs) : normalized
 }
