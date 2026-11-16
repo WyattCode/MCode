@@ -36,6 +36,7 @@ import { SessionRunner } from "../src/server/session/runner"
 import { findTool } from "../src/server/tool/registry"
 import { Shells } from "../src/server/shell"
 import { McpServers } from "../src/server/mcp"
+import { messagesRequest } from "../src/server/provider/anthropic"
 import { OpenAICompatible } from "../src/server/provider/openai"
 import { ChatGPTSubscription } from "../src/server/provider/chatgpt"
 import { handle } from "../src/server/handlers"
@@ -72,6 +73,7 @@ let script: { name: string; input: Record<string, unknown> }[][] = []
  * sections, because a reply that is not is refused.
  */
 // OpenCode v2's template since R31-4; the headings are what `isSummary` looks for.
+const FAKE_NOTES = { goals: ["finish the context task"], constraints: ["do not push"], decisions: ["use durable notes"], files: ["src/server/session/runner.ts"], lastAction: ["read the runner"], nextSteps: ["verify the change"] }
 const FAKE_SUMMARY = "## Objective\n- a summary of the work so far\n\n## Work State\n### Completed\n- (none)\n\n## Next Move\n1. (none)"
 /** When set, the fake answers a summary request with this instead - a model that carries on. */
 let summaryReply: string | undefined
@@ -159,7 +161,8 @@ const server = http.createServer((request, response) => {
       return
     }
 
-    const asked = script.shift()
+    const flushing = body.includes("Silently write durable session notes before compaction")
+    const asked = flushing ? undefined : script.shift()
     if (asked) {
       response.writeHead(200, { "content-type": "text/event-stream" })
       asked.forEach((call, index) => {
@@ -181,7 +184,7 @@ const server = http.createServer((request, response) => {
         }
         response.write(`data: ${JSON.stringify(frame)}\n\n`)
       })
-      const close = { choices: [{ delta: {}, finish_reason: "tool_calls" }], usage: { prompt_tokens: 1, completion_tokens: 1 } }
+      const close = { choices: [{ delta: {}, finish_reason: "tool_calls" }], usage: reportedUsage ?? { prompt_tokens: 1, completion_tokens: 1 } }
       response.write(`data: ${JSON.stringify(close)}\n\n`)
       response.write("data: [DONE]\n\n")
       response.end()
@@ -190,7 +193,7 @@ const server = http.createServer((request, response) => {
 
     response.writeHead(200, { "content-type": "text/event-stream" })
     const chunks = [
-      { choices: [{ delta: { content: body.includes("You MUST use this format for your response") ? (summaryReply ?? FAKE_SUMMARY) : "a summary" } }] },
+      { choices: [{ delta: { content: flushing ? JSON.stringify(FAKE_NOTES) : body.includes("You MUST use this format for your response") ? (summaryReply ?? FAKE_SUMMARY) : "a summary" } }] },
       { choices: [{ delta: {}, finish_reason: "stop" }], usage: reportedUsage ?? { prompt_tokens: 10, completion_tokens: 5 } },
     ]
     let first = true
@@ -364,6 +367,16 @@ async function main(): Promise<void> {
     compacted.compacted?.messageID === lastBefore.id,
   )
 
+  const reopened = new SessionStore(storage, bus)
+  const checkpoint = await reopened.get(one.id)
+  check("compaction checkpoint survives a fresh store", checkpoint?.compacted?.messageID === lastBefore.id && checkpoint.compacted.summary.startsWith(FAKE_SUMMARY))
+  check("compaction preserves the durable transcript", JSON.stringify(await reopened.messages(one.id)) === JSON.stringify(before))
+  const durableMemory = (await reopened.get(one.id))?.compactionMemory
+  check("silent notes persist without a transcript reply", JSON.stringify(durableMemory?.notes) === JSON.stringify(FAKE_NOTES) && (await reopened.messages(one.id)).length === before.length)
+  const summaryRequest = requests.at(-1) ?? ""
+  check("the summary absorbs the durable notes", summaryRequest.includes("finish the context task") && compacted.compacted?.summary.includes("verify the change") === true)
+
+
   /*
    * Round 27: and what the next turn actually sends.
    *
@@ -389,6 +402,19 @@ async function main(): Promise<void> {
     check("the turn after a manual compaction goes out from the summary", turns.some((message) => String(message.content).includes("## Objective")), JSON.stringify(turns.map((message) => String(message.content).slice(0, 30))))
     check("and the conversation it replaced is not sent again", !turns.some((message) => String(message.content).includes("the first question")), JSON.stringify(turns.map((message) => String(message.content).slice(0, 30))))
     check("the new question is there, so this is the turn's own request", turns.some((message) => String(message.content).includes("and what did we settle on?")))
+    const firstMessages = sent[0]?.messages ?? []
+    const rebuild = firstMessages.find((message) => message.role === "developer")
+    check("the first post-compaction request receives a structured developer rebuild", firstMessages[0]?.role === "system" && firstMessages[1] === rebuild && ["Session goals", "Established constraints", "Key files", "Last action", "Unfinished work", "finish the context task", "verify the change"].every((text) => String(rebuild?.content).includes(text)))
+    const acknowledged = await new SessionStore(storage, bus).get(one.id)
+    const secondFrom = requests.length
+    const secondDone = idle(one.id)
+    await runner.prompt({ sessionID: one.id, text: "one more normal request" })
+    await secondDone
+    check("rebuild delivery persists and is not repeated", acknowledged?.compacted?.rebuildDelivered === true && !requests.slice(secondFrom).some((body) => body.includes("<session-rebuild")))
+    const anthropic = messagesRequest({ apiKey: "", model: { provider: "fake", model: "m" }, system: "base", systemTail: "tail", developer: "rebuild snapshot", history: [], tools: [], effort: "", signal: new AbortController().signal })
+    check("Anthropic receives rebuild after the system tail", JSON.stringify(anthropic.system).includes('"text":"rebuild snapshot"') && JSON.stringify(anthropic.system).indexOf('"text":"tail"') < JSON.stringify(anthropic.system).indexOf('"text":"rebuild snapshot"'))
+
+
   }
 
   // --- a restore that fails leaves the snapshot where it was ----------------
@@ -877,6 +903,73 @@ async function main(): Promise<void> {
     check("and the session keeps its context", !after?.compacted, JSON.stringify(after?.compacted ?? null))
   }
 
+  console.log("memory flush before the compaction threshold")
+  {
+    await config.setDiscovered("fake", [{ id: "m", name: "M", contextWindow: 10000, maxOutput: 1000, input: 0, output: 0 }])
+    reportedUsage = { prompt_tokens: 8000, completion_tokens: 5 }
+    const memorySession = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
+    for (const text of ["start the context task", "continue the context task", "continue once more"]) {
+      const done = idle(memorySession.id)
+      await runner.prompt({ sessionID: memorySession.id, text })
+      await done
+    }
+    const info = await new SessionStore(storage, bus).get(memorySession.id)
+    const flushes = requests.filter((body) => body.includes("Silently write durable session notes before compaction") && body.includes("start the context task"))
+    check("80 percent flushes once per cycle before 90 percent compaction", flushes.length === 1 && !!info?.compactionMemory && !info.compacted)
+    reportedUsage = undefined
+    await config.setDiscovered("fake", [])
+  }
+
+  console.log("count overflow waits for compaction before the next model request")
+  {
+    await config.setDiscovered("fake", [{ id: "m", name: "M", contextWindow: 10000, maxOutput: 1000, input: 0, output: 0 }])
+    reportedUsage = { prompt_tokens: 9000, completion_tokens: 5 }
+    const boundarySession = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
+    const file = path.join(project, "boundary-proof.txt")
+    await fs.writeFile(file, "boundary proof")
+    script = [[{ name: "read", input: { file_path: file } }]]
+    const original = OpenAICompatible.stream
+    let enter!: () => void
+    let release!: () => void
+    const entered = new Promise<void>((resolve) => { enter = resolve })
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    let holding = false
+    let unsafe = false
+    OpenAICompatible.stream = async (request, emit) => {
+      const last = request.history.at(-1)
+      if (last?.role === "user" && last.text.includes("You MUST use this format for your response")) {
+        holding = true
+        enter()
+        await gate
+        holding = false
+      } else if (holding) unsafe = true
+      return original(request, emit)
+    }
+    const from = requests.length
+    const finished = idle(boundarySession.id)
+    let deadline: ReturnType<typeof setTimeout> | undefined
+    try {
+      await runner.prompt({ sessionID: boundarySession.id, text: "read the boundary proof, then finish" })
+      await Promise.race([entered, new Promise<never>((_, reject) => { deadline = setTimeout(() => reject(new Error("count boundary never entered compaction")), 10000) })])
+      clearTimeout(deadline)
+      // Give an incorrectly detached caller an opportunity to issue its next request while the gate stays shut.
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      const during = await sessions.get(boundarySession.id)
+      check("a crossed tool step cannot send its next request while summary is blocked", !unsafe && requests.length - from === 1 && !during?.compacted)
+      release()
+      await finished
+      const sent = requests.slice(from).map((body) => JSON.parse(body))
+      const after = await sessions.get(boundarySession.id)
+      check("the next request follows committed compaction and contains rebuilt history", sent.length === 3 && JSON.stringify(sent[1]).includes("You MUST use this format for your response") && JSON.stringify(sent[2]).includes("<session-rebuild") && after?.compacted?.trigger === "provider-overflow" && after.compacted.rebuildDelivered === true)
+    } finally {
+      clearTimeout(deadline)
+      release()
+      OpenAICompatible.stream = original
+      reportedUsage = undefined
+      await config.setDiscovered("fake", [])
+    }
+  }
+
   console.log("a model with a known window is compacted by count")
   {
     // A 10,000 window leaves MiMo's 90%, 9,000, usable, and the fake reports
@@ -903,7 +996,7 @@ async function main(): Promise<void> {
     await next
     const nextAfter = await sessions.get(counted.id)
     check("the next turn starts with an automatic compaction", nextAfter?.compacted?.trigger === "automatic", JSON.stringify(nextAfter?.compacted ?? null))
-    check("in three requests: the answer, the summary, the next answer", requests.length - before === 3, String(requests.length - before))
+    check("in four requests: answer, memory flush, summary, next answer", requests.length - before === 4, String(requests.length - before))
 
     /*
      * The same crossing, but the model will not summarise. The next turn's
@@ -1704,6 +1797,7 @@ async function main(): Promise<void> {
         model: { provider: "chatgpt", model: "gpt-5-codex" },
         system: "",
         history,
+        developer: "rebuild snapshot",
         tools: [],
         effort: "high",
         signal: new AbortController().signal,
@@ -1713,6 +1807,7 @@ async function main(): Promise<void> {
     )
 
     const sent = JSON.parse(codexBody) as { input: { type: string; output?: string }[] }
+    check("Responses receives a developer rebuild before history", (sent.input[0] as { role?: string })?.role === "developer" && JSON.stringify(sent.input[0]).includes("rebuild snapshot"))
     const result = sent.input.find((item) => item.type === "function_call_output")
     check("the failed call is still paired with a result", Boolean(result))
     check("the model is told the command failed", (result?.output ?? "").includes("timed out"))

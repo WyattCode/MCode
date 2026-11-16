@@ -55,6 +55,8 @@ export interface TurnRequest {
   system: string
   /** memory: system text for this conversation alone, sent after the prefix and never marked for caching. */
   systemTail?: string
+  /** Structured state to rebuild at a compaction boundary; developer priority. */
+  developer?: string
   history: Message[]
   tools: ToolDefinition[]
   /**

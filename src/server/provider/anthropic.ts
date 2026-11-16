@@ -315,7 +315,7 @@ export function messagesRequest(request: TurnRequest): MessagesBody {
     model: request.model.model,
     max_tokens: maxTokens,
     // The conversation's own tail follows the marked prefix unmarked, so the prefix reads from one cache across conversations.
-    system: [{ type: "text", text: request.system, cache_control: mark }, ...(request.systemTail ? [{ type: "text" as const, text: request.systemTail }] : [])],
+    system: [{ type: "text", text: request.system, cache_control: mark }, ...(request.systemTail ? [{ type: "text" as const, text: request.systemTail }] : []), ...(request.developer ? [{ type: "text" as const, text: request.developer }] : [])],
     tools,
     ...(request.toolChoice && tools.length ? { tool_choice: { type: request.toolChoice } } : {}),
     messages,

@@ -269,7 +269,7 @@ async function streamResponses(
     body: JSON.stringify({
       model: request.model.model,
       instructions: systemText(request),
-      input: toInput(request.history, request.inputs, request.model),
+      input: [...(request.developer ? [{ role: "developer", content: [{ type: "input_text", text: request.developer }] }] : []), ...toInput(request.history, request.inputs, request.model)],
       include: INCLUDE_ENCRYPTED_REASONING,
       tools: toolSchemas(request.tools, request.model),
       tool_choice: request.toolChoice ?? "auto",
