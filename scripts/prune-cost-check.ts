@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import type { Message, ToolPart } from '../src/shared/protocol'
-import { requestHistory } from '../src/server/provider/history'
+import { pruneToolOutputs, TOOL_OUTPUT_BUDGET, requestHistory } from '../src/server/provider/history'
 import { toMessages } from '../src/server/provider/openai'
 
 export function checkPruneCost() {
@@ -28,6 +28,22 @@ export function checkPruneCost() {
   assert.equal(JSON.stringify(stored), snapshot, 'stored output remains FULL')
   assert.deepEqual(outputs(sent).slice(-4), outputs(stored).slice(-4), 'recent four results remain full')
   assert.deepEqual(outputs(sent).map(p => ({ ...p, output: undefined })), outputs(stored).map(p => ({ ...p, output: undefined })), 'only output text changes')
+  assert.deepEqual(requestHistory(sent), sent, 'assembly is idempotent')
+  const protectedHistory = fixture(3, 20_000)
+  assert.deepEqual(requestHistory(protectedHistory), protectedHistory, 'unconsumed assistant window survives above budget')
+  const boundary = fixture(20, 6000)
+  const boundaryTools = outputs(boundary)
+  boundaryTools[0]!.output = 'x'.repeat(TOOL_OUTPUT_BUDGET.floor)
+  boundaryTools[1]!.status = 'error'
+  boundaryTools[1]!.error = 'diagnostic'.repeat(1000)
+  boundaryTools[2]!.status = 'running'
+  const boundarySent = outputs(pruneToolOutputs(boundary))
+  for (const i of [0, 1, 2]) assert.equal(boundarySent[i], boundaryTools[i], 'small, failed and unfinished outputs retained')
+  const batch = fixture(1, 1)
+  const last = batch[1]!
+  assert(last.role === 'assistant')
+  last.parts = outputs(fixture(10, 6000))
+  assert.deepEqual(requestHistory(batch), batch, 'all results in recent assistant message remain full')
   const wire = toMessages('', stored) as Array<Record<string, any>>
   const calls = wire.flatMap(m => m.tool_calls?.map((c: any) => c.id) ?? [])
   const results = wire.filter(m => m.role === 'tool').map(m => m.tool_call_id)
