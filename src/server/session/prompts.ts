@@ -22,7 +22,7 @@
  * working tree. What moves rides on the message instead (session/context.ts).
  */
 
-import { schedulingOffered } from "../tool/registry"
+import { schedulingOffered, toolsForTurn } from "../tool/registry"
 import { leanMode } from "./lean"
 import { verifyLoopMax } from "./verify-loop"
 
@@ -322,25 +322,37 @@ Left / risks: <one line, or (none)>`
  * it without a circular import.
  */
 
-/** The sections a lean prompt leaves out, each from its heading up to the next kept one. */
-const LEAN_CUTS: [string, string][] = [
-  ["## Visual explanations", "## Asking clarifying questions"],
-  ["### Images and video", "### Web pages"],
-  ["### Office documents and PDF", "## Tools on this machine"],
-  ["## Web page work", ""],
-]
+/** Coding turns retain behavioral guidance without the desktop's rendering tutorial.
+ * Tool-specific guidance follows the actual offered names; desktop turns keep desktop().
+ */
+function lean(toolNames?: readonly string[]): string {
+  const names = new Set(toolNames ?? toolsForTurn("build", { voiceFeedback: true }).map(t => t.name))
+  const has = (name: string) => names.has(name)
+  return `# MCode desktop
 
-const LEAN_POINTER = "For diagrams, slide decks, documents, spreadsheets, PDFs, pictures and a web page's design, load the matching skill first (visualizer, pptx, docx, xlsx, pdf) and follow it."
+## Reply language
+Use the response language named in the turn context unless the user explicitly requests another.
 
-function lean(text: string): string {
-  let out = text
-  for (const [from, to] of LEAN_CUTS) {
-    const start = out.indexOf(from)
-    if (start < 0) continue
-    const end = to ? out.indexOf(to, start) : out.length
-    out = out.slice(0, start) + out.slice(end < 0 ? out.length : end)
-  }
-  return `${out.trimEnd()}\n\n${LEAN_POINTER}`
+## Tone and style
+Be concise; do not think aloud. No emoji unless asked. Use markdown and file_path:line_number references. Simple answers need no headings. Report changes, verification and risks.
+
+## Asking clarifying questions
+Ask only when missing information materially changes the result; group questions with the question tool when available.
+
+## Task management
+${has("task") ? "For three or more steps, use task. Start each before work and mark it done immediately after. Keep the list current; do not repeat it in replies." : "Track progress honestly; do not claim unfinished work is done."}
+
+## Desktop verification
+Run the repository's lint and type checks at the end. Commit only when explicitly asked.
+${has("app") ? "For interface changes, use app to click through the real UI, including edge cases; types and tests alone do not establish that the interface works. Do not write your own browser-driving scripts." : "If you cannot exercise a changed interface, say so."}
+
+## Tools on this machine
+One bare command failing does not prove a tool is missing. Check PATH and installed locations: Get-Command/where.exe on Windows, bash -lc/command -v elsewhere.
+${has("present_files") ? "\n## Files you produce\nExplain in the reply unless a file is requested. Write deliverables in the requested location or working folder; avoid spare copies. After verification, call present_files once, main file first, excluding scratch files and dependencies." : ""}
+${has("skill") ? "\nFor diagrams, widgets, slide decks, documents, spreadsheets, PDFs, images, video and web design, load the matching listed skill first and follow its creation, rendering and verification guidance." : ""}
+${has("get_desktop_settings") || has("set_desktop_setting") ? "\nUse desktop settings tools for app preferences; do not invent configuration keys." : ""}
+${has("cron") || has("automation_update") ? "\nUse the offered scheduling tools for scheduled work; never substitute a timer, background loop or a promise." : ""}
+${has("speak") ? "\nUse speak only when voice feedback is appropriate to the user's request." : ""}`
 }
 
 export function promptFamily(modelID?: string): PromptFamily {
@@ -351,11 +363,11 @@ export function promptFamily(modelID?: string): PromptFamily {
 }
 
 /** The agent prompt every model reads, in every mode. */
-export function agentPrompt(agent?: string, options?: { local?: boolean; modelID?: string }): string {
+export function agentPrompt(agent?: string, options?: { local?: boolean; modelID?: string; toolNames?: readonly string[] }): string {
   // MiMo's consolidation agents carry their own prompt in place of the general one.
   if (agent === "dream") return DREAM
   if (agent === "distill") return DISTILL
-  return [CORE, leanMode(options?.local) ? lean(desktop()) + "\n\n" + codingProtocol(promptFamily(options?.modelID)) : desktop()].join("\n\n")
+  return [CORE, leanMode(options?.local) ? lean(options?.toolNames) + "\n\n" + codingProtocol(promptFamily(options?.modelID)) : desktop()].join("\n\n")
 }
 
 /**

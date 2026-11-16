@@ -1493,10 +1493,10 @@ export class SessionRunner {
       initial,
       local,
       promptFamily(session.model.model),
-      this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.directory).map((tool) => tool.name),
+      this.offeredTools(session).map((tool) => tool.name),
     ])
     const frozen = this.prefixes.get(session.id)
-    const base = frozen?.key === key ? frozen.system : systemPromptFrom(session.agent, initial, undefined, { local, modelID: session.model.model })
+    const base = frozen?.key === key ? frozen.system : systemPromptFrom(session.agent, initial, undefined, { local, modelID: session.model.model, toolNames: this.offeredTools(session).map(tool => tool.name) })
     this.prefixes.set(session.id, { key, system: base })
     // subagents: a subagent is told what it is, after what its agent would be told anyway.
     const outputSchema = session.subagent?.outputSchema
