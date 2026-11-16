@@ -34,6 +34,8 @@ async function main(): Promise<void> {
   const sibling = path.join(root, "projectile")
   const outside = path.join(root, "outside")
   await fs.mkdir(project, { recursive: true })
+  // Keep in-worktree test fixtures from inheriting the checkout containing TMPDIR.
+  await fs.mkdir(path.join(project, ".git"))
   await fs.mkdir(sibling, { recursive: true })
   await fs.mkdir(outside, { recursive: true })
   await fs.writeFile(path.join(sibling, "secret.txt"), "next door", "utf8")

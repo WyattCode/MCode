@@ -203,7 +203,7 @@ export async function roundFortyFourChecks(check: Check, section: (name: string)
     try {
       const history = [
         { id: "u1", sessionID: "s", role: "user", text: "first", attachments: [], time: { created: 1 } },
-        { id: "a1", sessionID: "s", role: "assistant", parts: [{ type: "text", text: "answer" }], time: { created: 2 } },
+        { id: "a1", sessionID: "s", role: "assistant", model: { provider: "dashscope", model: "qwen3-coder-plus" }, parts: [{ type: "text", text: "answer" }], time: { created: 2 } },
         { id: "u2", sessionID: "s", role: "user", text: "second", attachments: [], time: { created: 3 } },
       ]
       await OpenAICompatible.stream(

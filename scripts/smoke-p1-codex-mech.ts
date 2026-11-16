@@ -126,7 +126,7 @@ check("task tool exposes explanation", TaskTool.parameters.properties?.operation
 async function main() {
   const directory = mkdtempSync(join(tmpdir(), "mcode-smoke-p1-"))
   try {
-    const command = `node -e "process.stdout.write('x'.repeat(200000))"`
+    const command = `node -e "process.stdout.write('x'.repeat(200000))" # raw`
 
     const baseContext = {
       sessionID: "session",

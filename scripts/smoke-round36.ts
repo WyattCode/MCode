@@ -33,7 +33,7 @@ function contextFor(sessionID: string, asked: string[]): ToolContext {
     messageID: "msg",
     callID: "call",
     directory: os.tmpdir(),
-    permissions: { ask: async (request: { subject: string }) => void asked.push(request.subject) } as unknown as ToolContext["permissions"],
+    permissions: { ask: async (request: { subject: string }) => void asked.push(request.subject), waive: () => undefined } as unknown as ToolContext["permissions"],
     questions: {} as ToolContext["questions"],
     signal: new AbortController().signal,
     progress: () => undefined,
@@ -61,7 +61,7 @@ export async function roundThirtySixChecks(check: Check, section: (name: string)
   section("Round 36: the app tool - offered to the model, and how it reads a page")
   {
     // P1's lsp, fanout and verify_page are appended after it; app still follows every earlier tool.
-    check("offered after every earlier tool, so no cached prefix moves", TOOLS.slice(-4).map((tool) => tool.name).join() === "app,lsp,fanout,verify_page")
+    check("offered after every earlier tool, so no cached prefix moves", TOOLS.slice(TOOLS.findIndex(tool => tool.name === "app"), TOOLS.findIndex(tool => tool.name === "app") + 4).map((tool) => tool.name).join() === "app,lsp,fanout,verify_page")
     check("asked about like a command, and treated as able to change anything", AppTool.permission === "bash" && reachOf("app") === "opaque")
     const description = AppTool.description
     check("its description tells the model to batch its steps", /one do/.test(description) && /fast/.test(description))

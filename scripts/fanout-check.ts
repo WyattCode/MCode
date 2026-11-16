@@ -343,6 +343,7 @@ async function main() {
     limiting.close()
     const offering = Object.create(SessionRunner.prototype) as any
     offering.tools = () => TOOLS
+    offering.config = { get: () => ({ customProviders: [] }) }
     const offered = (parentID?: string) => offering.offeredTools({ agent: "build", directory: root, model: { provider: "p", model: "m" }, ...(parentID ? { parentID } : {}) }).map((tool: { name: string }) => tool.name)
     check("a conversation is offered fanout, and a subagent, which could not run it, is not", offered().includes("fanout") && !offered("parent").includes("fanout"))
   }

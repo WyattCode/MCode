@@ -343,7 +343,7 @@ export async function roundThirtyOneChecks(check: Check, section: (name: string)
         }
         const before = run.bodies.length
         await run.runner.compact(session.id)
-        const asked = run.bodies[before] ?? ""
+        const asked = run.bodies.slice(before).find(body => body.includes("You MUST use this format for your response")) ?? ""
         check("the summary request carries the older exchanges", asked.includes("FIRST question") && asked.includes("SECOND question"))
         check("but not the newest, which is kept rather than summarised", !asked.includes("THIRD question"))
         check("and asks for a first summary, not an update", asked.includes("You MUST summarize the conversation above") && !asked.includes("Update the existing checkpoint"))
@@ -363,7 +363,7 @@ export async function roundThirtyOneChecks(check: Check, section: (name: string)
         await run.settled(session.id)
         const again = run.bodies.length
         await run.runner.compact(session.id)
-        const updated = run.bodies[again] ?? ""
+        const updated = run.bodies.slice(again).find(body => body.includes("You MUST use this format for your response")) ?? ""
         check("a second compaction asks to update the checkpoint", updated.includes("Update the existing checkpoint"))
         check("with that checkpoint in the request, its kept exchange now among what is summarised", updated.includes("<conversation-checkpoint>") && updated.includes("THIRD question"))
         check("and not the legacy rewrite, for a checkpoint already in v2's format", !updated.includes("earlier format"))
@@ -384,7 +384,7 @@ export async function roundThirtyOneChecks(check: Check, section: (name: string)
         // Caught and reported, so a compaction that throws fails these checks instead of skipping them.
         const refused = await nudged.runner.compact(session.id).then(() => "", (error: Error) => error.message)
         check("the compaction is not refused", refused === "", refused)
-        const second = nudged.bodies[before + 1] ?? ""
+        const second = nudged.bodies.slice(before).find(body => body.includes(SUMMARY_NUDGE)) ?? ""
         check("a reply that skipped the template gets v2's reminder", second.includes(SUMMARY_NUDGE), second.slice(-400))
         check("and the summary written after it is taken", (await nudged.store.get(session.id))?.compacted?.summary.startsWith("## Objective") === true)
       } finally {
@@ -984,7 +984,7 @@ export async function roundThirtyOneChecks(check: Check, section: (name: string)
 
         // Offered after every earlier tool, and not at all once turned off.
         // R36's app tool, P1's lsp, fanout and verify_page came after it; websearch is still after everything that came before it.
-        check("websearch comes after every earlier tool, so every cached order stays", TOOLS.slice(-5).map((tool) => tool.name).join() === "websearch,app,lsp,fanout,verify_page")
+        check("websearch comes after every earlier tool, so every cached order stays", TOOLS.slice(TOOLS.findIndex(tool => tool.name === "websearch"), TOOLS.findIndex(tool => tool.name === "websearch") + 5).map((tool) => tool.name).join() === "websearch,app,lsp,fanout,verify_page")
         const offered = (webSearch?: boolean) => toolsForTurn("build", { voiceFeedback: false, webSearch }).map((tool) => tool.name)
         check("it is offered until the user turns it off", offered(undefined).includes("websearch") && offered(true).includes("websearch") && !offered(false).includes("websearch"))
         check("it counts as a tool that only reads", reachOf("websearch") === "reads")

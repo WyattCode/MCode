@@ -617,7 +617,7 @@ export async function roundNineProviderChecks(check: Check, section: (name: stri
 
     const claude = (messagesRequest({ ...base, effort: "high", model: { provider: "anthropic", model: "claude-sonnet-5" } }).tools?.[0] as any)?.input_schema
     check("a Claude model is sent the schema untouched", JSON.stringify(claude) === JSON.stringify(awkward))
-    check("and so is an id that only says Gemini in capitals", JSON.stringify((messagesRequest({ ...base, effort: "high", model: { provider: "x", model: "Gemini-Pro" } }).tools?.[0] as any)?.input_schema) === JSON.stringify(awkward))
+    check("a Gemini id is shaped case-insensitively", JSON.stringify((messagesRequest({ ...base, effort: "high", model: { provider: "x", model: "Gemini-Pro" } }).tools?.[0] as any)?.input_schema) === JSON.stringify(shaped))
 
     const e = await engine()
     try {

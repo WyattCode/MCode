@@ -27,7 +27,7 @@ export async function roundFortyNineChecks(check: Check, section: (name: string)
   const reports: (string | undefined)[] = []
   const context = {
     sessionID: id, messageID: "review", callID: "review", directory: process.cwd(),
-    permissions: { ask: async () => undefined }, questions: {}, signal: new AbortController().signal,
+    permissions: { ask: async () => undefined, waive: () => undefined }, questions: {}, signal: new AbortController().signal,
     progress: () => {}, snapshot: async () => {}, reportOperation: (kind) => { reports.push(kind) },
   } as ToolContext
   try {

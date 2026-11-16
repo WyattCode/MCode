@@ -81,7 +81,7 @@ export async function roundThirtyNineChecks(check: Check, section: (name: string
       page,
       "<!doctype html><title>R39</title><button id=b onclick=\"this.textContent='clicked '+(++window.n||(window.n=1))\">press</button><a href=\"#\">link</a><div id=spin style=\"width:10px;height:10px;background:red\"></div><script>setInterval(function(){document.getElementById('spin').style.transform='rotate('+Date.now()%360+'deg)'},16)</script>",
     )
-    const context = { sessionID: "r39-web", messageID: "m", callID: "c", directory: work, permissions: { ask: async () => undefined }, questions: {}, signal: new AbortController().signal, progress: () => undefined, snapshot: async () => undefined } as unknown as ToolContext
+    const context = { sessionID: "r39-web", messageID: "m", callID: "c", directory: work, permissions: { ask: async () => undefined, waive: () => undefined }, questions: {}, signal: new AbortController().signal, progress: () => undefined, snapshot: async () => undefined } as unknown as ToolContext
     const run = (input: Record<string, unknown>) => AppTool.execute(input, context)
     try {
       const opened = await run({ action: "open", url: pathToFileURL(page).href })

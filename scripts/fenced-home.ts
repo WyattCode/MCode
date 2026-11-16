@@ -20,6 +20,7 @@
  */
 import fs from "node:fs"
 import os from "node:os"
+import fsp from "node:fs/promises"
 import path from "node:path"
 
 const fenced = fs.mkdtempSync(path.join(os.tmpdir(), "mcode-check-home-"))
@@ -28,3 +29,23 @@ const fenced = fs.mkdtempSync(path.join(os.tmpdir(), "mcode-check-home-"))
 export const FENCED_HOME = fenced
 
 os.homedir = () => fenced
+
+// Tests may keep TMPDIR inside the checkout. Their synthetic repositories must
+// not inherit its .git: hide only ancestor markers, never a fixture's own marker.
+const ancestorMarkers = new Set<string>()
+for (let at = path.resolve(os.tmpdir()); ; at = path.dirname(at)) {
+  ancestorMarkers.add(path.join(at, ".git"))
+  if (path.dirname(at) === at) break
+}
+const hiddenMarker = (target: unknown) => typeof target === "string" && ancestorMarkers.has(path.resolve(target))
+const absentMarker = () => Object.assign(new Error("No such fixture path"), { code: "ENOENT" })
+const statSync = fs.statSync
+fs.statSync = ((target: unknown, ...args: unknown[]) => {
+  if (hiddenMarker(target)) throw absentMarker()
+  return (statSync as Function)(target, ...args)
+}) as typeof fs.statSync
+const stat = fsp.stat
+fsp.stat = (async (target: unknown, ...args: unknown[]) => {
+  if (hiddenMarker(target)) throw absentMarker()
+  return (stat as Function)(target, ...args)
+}) as typeof fsp.stat

@@ -151,7 +151,7 @@ export async function roundSevenChecks(check: Check, section: (name: string) => 
       messageID: "msg_1",
       callID: "call_1",
       directory: root,
-      permissions: { ask: async () => undefined },
+      permissions: { ask: async () => undefined, waive: () => undefined },
       questions: { ask: async () => undefined },
       signal: new AbortController().signal,
       progress: () => {},
@@ -974,7 +974,7 @@ export async function roundSevenModelChecks(check: Check, section: (name: string
       check("the turn's own request is the one being read, not whatever was last on the wire", mine !== undefined, e.bodies.slice(from).map((body) => (Array.isArray(body.tools) ? body.tools.length : "no tools")))
       const tools = (mine?.tools ?? []) as { function?: { name?: string; description?: string } }[]
       const sent = tools.find((tool) => tool.function?.name === "bash")?.function?.description ?? ""
-      check("the provider receives the long bash description, not a summary of it", sent.includes("Version control") && sent.length > 1_500, sent.length)
+      check("the coding provider receives concise bash guidance with shell and git constraints", sent.includes("command is handed to") && sent.includes("Never bypass hooks/signing") && sent.length > 500 && sent.length < 1_500, sent.length)
       const askedFor = tools.find((tool) => tool.function?.name === "question")?.function?.description ?? ""
       check("and the rewritten question description", askedFor.includes("multiple flag"), askedFor.length)
     } finally {

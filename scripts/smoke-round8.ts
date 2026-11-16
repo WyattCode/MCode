@@ -163,7 +163,7 @@ export async function roundEightChecks(check: Check, section: (name: string) => 
       await e.idle(session.id)
       const tools = (e.bodies.at(-1)?.tools ?? []) as { function?: { name?: string; description?: string } }[]
       const sent = tools.find((tool) => tool.function?.name === "edit")?.function?.description ?? ""
-      check("the provider receives the long edit description, not a summary of it", sent.includes("line-number prefix") && sent.length > 900, sent.length)
+      check("the coding provider receives concise edit guidance with matching and recovery rules", sent.includes("line-number prefixes") && sent.includes("unique match") && sent.includes("Re-read") && sent.length > 200 && sent.length < 900, sent.length)
     } finally {
       await e.close()
     }
