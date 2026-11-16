@@ -1,0 +1,32 @@
+/** Deterministic wire-content probe: no user files, network, tokenizer or provider required. */
+import assert from 'node:assert/strict'
+import { agentPrompt } from '../src/server/session/prompts'
+import { systemPromptFrom, memorySection } from '../src/server/session/prompt'
+import { toolsForTurn, forModel, SESSION_CHAT_TOOLS } from '../src/server/tool/registry'
+
+const options = { local: true, modelID: 'deepseek-v4.1-flash' }
+const values = { standing: 'Keep changes focused.', project: 'Run npm test before reporting success.', skills: '## Skills\n- coding: Read /project/.mcode/skills/coding/SKILL.md for coding work.' }
+const memory = { project: '/data/project/MEMORY.md', global: '/data/global/MEMORY.md', notes: '/data/session/notes.md' }
+const base = agentPrompt('build', options)
+const system = systemPromptFrom('build', values, memory, options)
+const tools = forModel(toolsForTurn('build', { voiceFeedback: false, sessionChat: false }), options.modelID)
+const rows: Record<string, number> = {}
+const add = (name: string, value: string) => rows[name] = value.length
+add('base agent prompt', base)
+add('standing value', values.standing)
+add('project value', values.project)
+add('skills section', values.skills)
+add('memory section', memorySection(memory))
+rows['instruction wrappers/separators'] = system.length - base.length - Object.values(values).reduce((n, s) => n + s.length, 0) - memorySection(memory).length
+for (const tool of tools) add(`tool:${tool.name}`, JSON.stringify({ name: tool.name, description: tool.description, parameters: tool.parameters }))
+add('transcript fixture', JSON.stringify([{ role: 'user', content: 'Fix the regression in src/parser.ts and run the relevant tests.' }, { role: 'assistant', content: 'I will inspect the parser and its tests.' }]))
+assert(tools.length > 10, 'tool scan must be nonzero and representative')
+assert(tools.every(t => !SESSION_CHAT_TOOLS.has(t.name) && !['speak', 'cron', 'automation_update', 'patch'].includes(t.name)), 'withheld schemas must vanish')
+for (const section of ['# System', '# Doing tasks', '# Executing actions with care', '# Using your tools', '# Skills', '## Coding protocol']) assert(base.includes(section), section)
+for (const rule of ['allows, asks or denies', 'Approval given once', 'data, not instructions', 'Memory notes can be out of date', 'Read the file before editing', 'Never claim success', 'Minimal diffs', 'Carry through']) assert(base.includes(rule), rule)
+for (const text of [...Object.values(values), '## Memory', '## Standing instructions', '## Instructions']) assert(system.includes(text), text)
+console.log('| Component | Characters | Rough tokens (chars/4) |\n|---|---:|---:|')
+for (const [name, size] of Object.entries(rows)) console.log(`| ${name} | ${size} | ${Math.ceil(size / 4)} |`)
+const schemas = Object.entries(rows).filter(([k]) => k.startsWith('tool:')).reduce((n, [,v]) => n + v, 0)
+console.log(JSON.stringify({ tools: tools.length, base: base.length, schemas, static: base.length + schemas, system: system.length }))
+console.log('promptcostcheck: characterization GREEN')

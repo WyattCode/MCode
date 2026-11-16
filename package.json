@@ -42,7 +42,8 @@
     "fanoutcheck": "esbuild scripts/fanout-check.ts --bundle --platform=node --format=esm --target=node22 --alias:@shared=./src/shared --packages=external --outfile=out/fanout-check.mjs && node out/fanout-check.mjs",
     "gencheck": "node scripts/gen-cockpit.mjs --check",
     "prebuild": "npm run gencheck",
-    "androidtheme": "esbuild scripts/android-theme-check.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/android-theme-check.mjs --packages=external && node out/android-theme-check.mjs"
+    "androidtheme": "esbuild scripts/android-theme-check.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/android-theme-check.mjs --packages=external && node out/android-theme-check.mjs",
+    "promptcostcheck": "esbuild scripts/prompt-cost.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/prompt-cost.mjs --alias:@shared=./src/shared --packages=external && node out/prompt-cost.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.117.1",
