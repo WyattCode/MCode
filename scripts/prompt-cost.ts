@@ -1,3 +1,4 @@
+import { checkPruneCost } from './prune-cost-check'
 import { checkPromptOutputs } from './prompt-output-check'
 import { codingSchemas } from '../src/server/tool/coding-schema'
 /** Deterministic wire-content probe: no user files, network, tokenizer or provider required. */
@@ -56,3 +57,5 @@ console.log(JSON.stringify({ tools: tools.length, base: base.length, schemas, st
 console.log('promptcostcheck: characterization GREEN')
 
 await checkPromptOutputs()
+
+checkPruneCost()
