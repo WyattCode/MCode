@@ -172,8 +172,9 @@ async function grepWithWalk(target: string, isFile: boolean, pattern: string, in
 }
 
 /** The files a glob matches through the JS walk, in the order they were found, at most `limit`. */
-async function globWithWalk(root: string, pattern: string, limit: number, signal: AbortSignal, deadline?: number): Promise<GlobOutcome> {
+async function globWithWalk(root: string, pattern: string, limit: number, signal: AbortSignal, deadline?: number, countAll = false): Promise<GlobOutcome> {
   const found: string[] = []
+  let total = 0
   let timedOut = false
   await walkFiles(
     root,
@@ -182,13 +183,14 @@ async function globWithWalk(root: string, pattern: string, limit: number, signal
         timedOut = true
         return true
       }
-      found.push(absolute)
-      return found.length >= limit
+      total++
+      if (found.length < limit) found.push(absolute)
+      return !countAll && found.length >= limit
     },
     signal,
     overrideMatcher(pattern),
   )
-  return { paths: found, ...(timedOut ? { timedOut } : {}) }
+  return { paths: found, total, ...(timedOut ? { timedOut } : {}) }
 }
 
 export interface GrepJob {
@@ -206,6 +208,7 @@ export interface GlobJob {
   root: string
   pattern: string
   limit: number
+  countAll?: boolean
   deadline?: number
 }
 
@@ -223,6 +226,7 @@ export interface GrepOutcome {
 
 export interface GlobOutcome {
   paths: string[]
+  total?: number
   timedOut?: boolean
 }
 
@@ -230,5 +234,5 @@ export function runFallbackJob(job: GrepJob, signal: AbortSignal): Promise<GrepO
 export function runFallbackJob(job: GlobJob, signal: AbortSignal): Promise<GlobOutcome>
 export function runFallbackJob(job: FallbackJob, signal: AbortSignal): Promise<GrepOutcome | GlobOutcome>
 export async function runFallbackJob(job: FallbackJob, signal: AbortSignal): Promise<GrepOutcome | GlobOutcome> {
-  return job.kind === "grep" ? grepWithWalk(job.target, job.isFile, job.pattern, job.include, signal, job.deadline) : globWithWalk(job.root, job.pattern, job.limit, signal, job.deadline)
+  return job.kind === "grep" ? grepWithWalk(job.target, job.isFile, job.pattern, job.include, signal, job.deadline) : globWithWalk(job.root, job.pattern, job.limit, signal, job.deadline, job.countAll)
 }

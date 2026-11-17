@@ -20,10 +20,10 @@ import {
   mediaTypeOf,
 } from "./read-media"
 
-/** MiMo's read limits: 2,000 lines unless the call says, lines cut at 2,000 characters, 50 KB of text in all. */
+/** MiMo's read limits: 2,000 lines unless the call says, lines cut at 2,000 characters, 24,000 bytes of numbered text by default. */
 const DEFAULT_LIMIT = 2000
 const MAX_LINE_LENGTH = 2000
-const MAX_BYTES = 50 * 1024
+const MAX_BYTES = 24_000
 /** How much of a file is looked at to decide whether it is text. */
 const SAMPLE_BYTES = 4096
 const PREVIEW_LINES = 20
@@ -255,7 +255,7 @@ async function readMedia(context: ToolContext, target: string, display: string, 
 }
 
 /** Lines from `offset` on, within the line and byte limits, and how many lines the file has as far as it was read. */
-async function linesOf(file: string, offset: number, limit: number) {
+async function linesOf(file: string, offset: number, limit: number, maxBytes = MAX_BYTES) {
   const stream = createReadStream(file, { encoding: "utf8" })
   const reader = createInterface({ input: stream, crlfDelay: Infinity })
   const raw: string[] = []
@@ -277,8 +277,8 @@ async function linesOf(file: string, offset: number, limit: number) {
         lineCut = true
         line = `${text.slice(0, MAX_LINE_LENGTH)}… (line cut at ${MAX_LINE_LENGTH} characters)`
       }
-      const size = Buffer.byteLength(line, "utf8") + (raw.length > 0 ? 1 : 0)
-      if (bytes + size > MAX_BYTES) {
+      const size = Buffer.byteLength(`${count}: ${line}\n`, "utf8")
+      if (bytes + size > maxBytes) {
         cut = true
         more = true
         break
@@ -293,7 +293,7 @@ async function linesOf(file: string, offset: number, limit: number) {
   return { raw, count, cut, more, lineCut }
 }
 
-export const ReadTool: ToolDefinition = {
+const UncappedReadTool: ToolDefinition = {
   name: "read",
   description: [
     "Read a file, or list a folder, from this machine.",
@@ -352,7 +352,14 @@ export const ReadTool: ToolDefinition = {
 
     if (stat.isDirectory()) {
       const entries = await entriesOf(target)
-      const shown = entries.slice(offset - 1, offset - 1 + limit)
+      const shown: string[] = []
+      let chars = 0
+      const budget = Number(input.max_output_chars ?? 25_000) - 1_000
+      for (const entry of entries.slice(offset - 1, offset - 1 + limit)) {
+        if (chars + entry.length + 1 > budget) break
+        shown.push(entry)
+        chars += entry.length + 1
+      }
       const more = offset - 1 + shown.length < entries.length
       const footer = more
         ? `(${shown.length} of ${entries.length} entries shown; read again with offset=${offset + shown.length} for the rest)`
@@ -397,7 +404,7 @@ export const ReadTool: ToolDefinition = {
 
     if (isBinary(target, sample)) throw new ToolError(`Cannot read binary file: ${display}`)
 
-    const { raw, count, cut, more, lineCut } = await linesOf(target, offset, limit)
+    const { raw, count, cut, more, lineCut } = await linesOf(target, offset, limit, Math.max(0, Number(input.max_output_chars ?? 25_000) - 1_000))
     if (count < offset && !(count === 0 && offset === 1)) {
       throw new ToolError(`Offset ${offset} is past the end of ${display}, which has ${count} lines`)
     }
@@ -405,7 +412,7 @@ export const ReadTool: ToolDefinition = {
     const loaded = await instructionsFor(context, target)
     const last = offset + raw.length - 1
     let output = `<path>${target}</path>\n<type>file</type>\n<content>\n${raw.map((line, index) => `${index + offset}: ${line}`).join("\n")}`
-    if (cut) output += `\n\n(Stopped at ${MAX_BYTES / 1024} KB, after lines ${offset}-${last}. Read again with offset=${last + 1} to continue.)`
+    if (cut) output += `\n\n(Stopped at the output limit, after lines ${offset}-${last}. Read again with offset=${last + 1} to continue.)`
     else if (more) output += `\n\n(Lines ${offset}-${last} of ${count}. Read again with offset=${last + 1} to continue.)`
     else output += `\n\n(End of file - ${count} lines in all)`
     output += "\n</content>"
@@ -481,4 +488,30 @@ async function missing(root: string, target: string, display: string): Promise<s
     .map((name) => relative(root, path.join(dir, name)))
   if (near.length === 0) return `File not found: ${display}`
   return `File not found: ${display}\nDid you mean one of these?\n${near.join("\n")}`
+}
+
+/** Bound the entire formatted result, including directory listings and instructions. */
+export const ReadTool: ToolDefinition = {
+  ...UncappedReadTool,
+  parameters: {
+    ...UncappedReadTool.parameters,
+    properties: {
+      ...(UncappedReadTool.parameters.properties as Record<string, unknown>),
+      max_output_chars: { type: "number", description: "Maximum returned characters, 25000 by default; increase to read larger pages" },
+    },
+  },
+  async execute(input, context) {
+    const cap = Number(input.max_output_chars ?? 25_000)
+    if (!Number.isSafeInteger(cap) || cap < 4_000) throw new ToolError("max_output_chars must be an integer of at least 4000")
+    const result = await UncappedReadTool.execute(input, context)
+    if (result.output.length <= cap) return result
+    const file = await context.toolOutputs?.save(result.output)
+    const prefix = result.output.slice(0, cap - 1_000)
+    const lastBreak = prefix.lastIndexOf("\n")
+    const kept = prefix.slice(0, Math.max(0, lastBreak))
+    const numbered = [...kept.matchAll(/^([0-9]+): /gm)]
+    const next = numbered.length ? Number(numbered.at(-1)![1]) + 1 : Number(input.offset ?? 1)
+    const note = `\n\n(Output truncated. Read again with offset=${next} to continue, or increase max_output_chars.${file ? ` Complete formatted output saved at ${file}` : ""})`
+    return { ...result, output: kept + note, metadata: { ...result.metadata, truncated: true, loaded: [] } }
+  },
 }

@@ -109,19 +109,20 @@ function stopped(error: unknown): never {
 }
 
 /** The files a glob matches, in the order they were found, at most `limit`. */
-async function globFiles(root: string, pattern: string, limit: number, signal: AbortSignal): Promise<{ files: string[]; timedOut?: boolean }> {
+async function globFiles(root: string, pattern: string, limit: number, signal: AbortSignal): Promise<{ files: string[]; total: number; timedOut?: boolean }> {
   const found: string[] = []
+  let total = 0
   const binary = ripgrepBinary()
   if (binary) {
     const { code, stderr } = await runRipgrep(binary, ["--no-config", "--files", "--hidden", `--glob=${pattern}`, NO_GIT, "."], root, signal, (line) => {
-      found.push(path.resolve(root, cleaned(line)))
-      return found.length >= limit
+      total++
+      if (found.length < limit) found.push(path.resolve(root, cleaned(line)))
     })
     if (code !== 0 && code !== 1 && !found.length) throw new ToolError(stderr.trim() || `ripgrep failed with code ${code}`)
-    return { files: found }
+    return { files: found, total }
   }
-  const outcome = await runFallback({ kind: "glob", root, pattern, limit }, signal)
-  return { files: outcome.paths, ...(outcome.timedOut ? { timedOut: true } : {}) }
+  const outcome = await runFallback({ kind: "glob", root, pattern, limit, countAll: true }, signal)
+  return { files: outcome.paths, total: outcome.total ?? outcome.paths.length, ...(outcome.timedOut ? { timedOut: true } : {}) }
 }
 
 export const GlobTool: ToolDefinition = {
@@ -149,10 +150,10 @@ export const GlobTool: ToolDefinition = {
     if (stat?.isFile()) throw new ToolError(`glob's path has to be a folder: ${root}`)
     if (!stat) throw noFolder(root)
 
-    // As MiMo's: the first 101 files the search finds, so it can say there were more, then the newest first.
-    const { files, timedOut } = await globFiles(root, String(input.pattern), LIMIT + 1, context.signal).catch(stopped)
+    // Count every match, retaining only the bounded page in memory.
+    const { files, total, timedOut } = await globFiles(root, String(input.pattern), LIMIT, context.signal).catch(stopped)
     const found = await Promise.all(files.map(async (file) => ({ path: file, mtime: (await mtimeOf(file)) ?? 0 })))
-    const truncated = found.length > LIMIT
+    const truncated = total > LIMIT
     if (truncated) found.length = LIMIT
     found.sort((a, b) => b.mtime - a.mtime)
 
@@ -160,7 +161,7 @@ export const GlobTool: ToolDefinition = {
       found.length === 0
         ? "No files found"
         : found.map((entry) => entry.path).join("\n") +
-          (truncated ? `\n\n(Only the first ${LIMIT} files found are listed. Narrow the path or the pattern to see the rest.)` : "") +
+          (truncated ? `\n\n(Found ${total} files; only the first ${LIMIT} are listed. Narrow the path or the pattern to see the rest.)` : "") +
           (timedOut ? `\n\n${RAN_OUT}` : "")
     return {
       output,

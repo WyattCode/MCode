@@ -8,6 +8,7 @@ import { GlobTool, GrepTool } from "../src/server/tool/search"
 import { ToolOutputs } from "../src/server/tool/truncate"
 import type { ToolContext } from "../src/server/tool/types"
 process.env.MCODE_BASH_RAW = "1"
+await fs.mkdir(path.resolve("tmp-local"), { recursive: true })
 const root = await fs.mkdtemp(path.resolve("tmp-local/cap-"))
 const context = {
   directory: root, sessionID: "cap", messageID: "cap", callID: "cap",
@@ -42,6 +43,20 @@ await test("read cap and offset continuation", async () => {
 const files = path.join(root, "files")
 await fs.mkdir(files)
 await Promise.all(Array.from({ length: 250 }, (_, i) => fs.writeFile(path.join(files, `${i}.txt`), "needle\n")))
+await test("read explicit larger cap and directory continuation", async () => {
+  const larger = await ReadTool.execute({ file_path: "large.txt", max_output_chars: 60_000 }, context)
+  assert.ok(larger.output.length > 25_000 && larger.output.length <= 60_000)
+  const listing = path.join(root, "listing")
+  await fs.mkdir(listing)
+  await Promise.all(Array.from({ length: 300 }, (_, i) => fs.writeFile(path.join(listing, `${String(i).padStart(4, "0")}-${"n".repeat(150)}`), "")))
+  const first = await ReadTool.execute({ file_path: listing }, context)
+  assert.ok(first.output.length <= 25_000)
+  const next = /offset=(\d+)/.exec(first.output)
+  assert.ok(next && Number(next[1]) > 1)
+  const rest = await ReadTool.execute({ file_path: listing, offset: Number(next[1]) }, context)
+  assert.ok(rest.output.length <= 25_000)
+  assert.match(rest.output, new RegExp(`${String(Number(next[1]) - 1).padStart(4, "0")}-`))
+})
 await test("glob count cap and narrowing marker", async () => {
   const result = await GlobTool.execute({ pattern: "*.txt", path: files }, context)
   assert.ok(result.output.split("\n").filter(line => line.startsWith(files)).length <= 100)
