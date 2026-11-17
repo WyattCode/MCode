@@ -32,7 +32,7 @@ export const INTERACTIVE_REFUSAL = [
   "请改用不需要输入的方式重试：带上自动确认参数（-y、--yes、-Force、-Confirm:$false），用管道把答案喂进去，或者换一条不需要人回答的等效命令。",
 ].join("")
 /** How much output comes back inline when the call does not say, in MiMo's approximate tokens of four bytes. */
-const DEFAULT_MAX_OUTPUT_TOKENS = 30_000
+const DEFAULT_MAX_OUTPUT_TOKENS = 6_000
 /** How much of the latest output the card shows while the command works. */
 export const PREVIEW_CHARS = 30_000
 /** How often the card's live output is refreshed at most, so a chatty command does not keep the main process busy. */
@@ -509,7 +509,8 @@ export const BashTool: ToolDefinition = {
       timeout: { type: "number", description: `Milliseconds before the command is stopped, ${DEFAULT_TIMEOUT} when left out` },
       max_output_tokens: {
         type: "integer",
-        description: `Roughly how many tokens of output come back in the result, ${DEFAULT_MAX_OUTPUT_TOKENS} when left out; past that the middle is left out and the whole output saved to a file`,
+        // Keep the existing schema text stable; the runtime default is independent.
+        description: `Roughly how many tokens of output come back in the result, ${30_000} when left out; past that the middle is left out and the whole output saved to a file`,
       },
       workdir: { type: "string", description: "Folder to run the command in, the project root when left out" },
       interactive: {
@@ -817,7 +818,7 @@ export const BashTool: ToolDefinition = {
         }
         // A merge or rebase this left stopped on conflicts: the note says to back out and hand the conflict over.
         output += await mergeConflictNotice(cwd, command, output)
-        if (cut && file) output += `\n\nThe whole output is saved at ${file}`
+        if (cut) output += file ? `\n\nThe whole output is saved at ${file}` : "\n\nRun again with a larger max_output_tokens to retrieve more output."
         try {
           noteShellRun(context.sessionID, cwd, command, raw, code)
         } catch {
