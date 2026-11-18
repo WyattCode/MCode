@@ -1,3 +1,4 @@
+import { registerMacOSControl } from "./macctl"
 import fs from "node:fs/promises"
 import { existsSync, readFileSync, renameSync } from "node:fs"
 import { execFile, execFileSync, spawnSync } from "node:child_process"
@@ -1037,6 +1038,7 @@ app.whenReady().then(async () => {
    * already being recorded by the time it happens.
    */
   wireProcessRecovery()
+  registerMacOSControl()
   /*
    * Early, so the macOS Local Network permission is settled while the user is
    * still setting the app up rather than on the click that connects a runtime

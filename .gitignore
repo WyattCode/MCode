@@ -59,3 +59,7 @@ CODEX_UI_DONE
 CODEX_UI2_DONE
 CODEX_*.log
 CODEX_*_DONE
+
+# The optional macOS coordinate-click helper built from Swift.
+/resources/macctl/mcode-cgevent
+/tmp-local/

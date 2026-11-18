@@ -16,6 +16,7 @@ const app = useApp()
 /** True from the moment a button is pressed until the server has the answer. */
 const busy = computed(() => app.responding === props.request.id)
 
+const isMacOSControl = computed(() => props.request.titleCode?.startsWith("perm.app.macos") ?? false)
 const isBash = computed(() => props.request.kind === "bash")
 const isDiff = computed(() => props.request.preview?.startsWith("--- a/") ?? false)
 
@@ -29,6 +30,7 @@ const VERBS: Record<string, string> = {
 }
 
 const verb = computed(() => {
+  if (isMacOSControl.value) return t(props.request.titleCode!)
   if (props.request.forced) return t("perm.verb.bashDelete")
   const key = VERBS[props.request.kind]
   return t(key ?? "perm.verb.fallback")
@@ -42,6 +44,7 @@ const verb = computed(() => {
 const chip = computed(() => {
   const { request } = props
   // The app tool asks in the command bucket about things that are not commands; its own words say what.
+  if (isMacOSControl.value) return ""
   if (request.titleCode?.startsWith("perm.app.")) return t(request.titleCode)
   if (isBash.value) return request.title && request.title !== "Run command" ? request.title : ""
   if (VERBS[request.kind]) return ""
@@ -64,7 +67,7 @@ const folded = computed(() => {
   return { text: first.length > 120 ? `${first.slice(0, 120)}…` : first, lossy }
 })
 
-const showFull = ref(false)
+const showFull = ref(isMacOSControl.value)
 const showDiff = ref(false)
 const reasoning = ref(false)
 const reason = ref("")
