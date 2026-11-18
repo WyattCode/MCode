@@ -187,8 +187,9 @@ export interface SessionInfo {
    * `initial` is what the system prompt is built from, fixed so the provider's
    * cached prefix survives the conversation; `current` is what the model was
    * last told. A change - a skill added, AGENTS.md edited - is told as a
-   * reminder on the message it happened before, and `initial` moves to
-   * `current` only when a compaction starts the prompt over anyway.
+   * reminder on the message it happened before. Compaction refreshes the
+   * baseline, and adding or removing the global AGENTS.md refreshes its
+   * project section immediately.
    */
   instructions?: { initial: Record<string, string>; current: Record<string, string> }
   /** Silent durable notes, scoped to the compaction cycle that produced them. */

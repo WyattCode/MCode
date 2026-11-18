@@ -2640,15 +2640,22 @@ export class SessionRunner {
     }
     const initial = { standing: "", project: "", skills: "", ...stored.initial } as InstructionValues
     const told = { standing: "", project: "", skills: "", ...stored.current } as InstructionValues
+    // A global file being enabled, disabled or deleted changes what the
+    // system prompt can carry. Ordinary edits still use instruction reminders.
+    const globalSource = `<instructions source="${this.globalAgents}">\n`
+    const rebaseProject = initial.project.includes(globalSource) !== values.project.includes(globalSource)
+    if (rebaseProject) initial.project = values.project
     const update = instructionUpdate(told, values)
-    if (!update) return initial
-    const messages = await this.store.messages(sessionID).catch((): Message[] => [])
-    const asked = messages.findLast((message): message is UserMessage => message.role === "user")
-    if (asked) {
-      asked.reminders = [...(asked.reminders ?? []), reminder(update)]
-      await this.store.saveMessage(asked)
+    if (!update && !rebaseProject) return initial
+    if (update) {
+      const messages = await this.store.messages(sessionID).catch((): Message[] => [])
+      const asked = messages.findLast((message): message is UserMessage => message.role === "user")
+      if (asked) {
+        asked.reminders = [...(asked.reminders ?? []), reminder(update)]
+        await this.store.saveMessage(asked)
+      }
     }
-    await this.store.update(sessionID, { instructions: { initial: stored.initial, current: values } }).catch(() => undefined)
+    await this.store.update(sessionID, { instructions: { initial, current: values } }).catch(() => undefined)
     return initial
   }
 

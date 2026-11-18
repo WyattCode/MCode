@@ -162,9 +162,11 @@ const configFile = computed(() => paths.value?.files.find((file) => file.name ==
  */
 const agents = ref<{ path: string; state: AgentsFileState }>()
 const confirmingAgentsDelete = ref(false)
+const deletingAgents = ref(false)
 
 function reasonText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err)
+  const message = err instanceof Error ? err.message : typeof err === "string" ? err : ""
+  return message.trim() ? message : t("error.chain.unknown")
 }
 
 /* MiMo 26.920's 复制路径 and 打开 on the config file row. */
@@ -183,8 +185,12 @@ async function openConfigFile() {
   const target = configFile.value?.path
   if (!target) return
   const cut = Math.max(target.lastIndexOf("/"), target.lastIndexOf("\\"))
-  const failure = await window.mcode.openFile(target.slice(0, cut), target.slice(cut + 1))
-  if (failure) notifyFailure(failure)
+  try {
+    const failure = await window.mcode.openFile(target.slice(0, cut + 1), target.slice(cut + 1))
+    if (failure) notifyFailure(t("set.config.openFailed") + reasonText(failure))
+  } catch (err) {
+    notifyFailure(t("set.config.openFailed") + reasonText(err))
+  }
 }
 
 /*
@@ -200,7 +206,7 @@ const skillPathRows = computed(() => {
     ...(["agents", "claude", "codex", "opencode"] as const).map((id) => ({
       id,
       title: t(`set.skillPaths.${id}`),
-      global: `~/.${id}/skills`,
+      global: id === "opencode" ? "~/.config/opencode/skills · ~/.opencode/skills" : `~/.${id}/skills`,
       project: `.${id}/skills`,
       on: compat[id],
     })),
@@ -303,13 +309,13 @@ async function openAgents() {
 async function switchAgents(enabled: boolean) {
   const client = app.client
   if (!client) {
-    notifyFailure(t("set.agents.toggleFailed") + t("common.requestFailed"))
+    notifyFailure(t("set.agents.toggleFailed") + t("error.chain.unknown"))
     return
   }
   try {
     const result = await client.request({ type: "agents.setEnabled", enabled })
     if (!result) {
-      notifyFailure(t("set.agents.toggleFailed") + t("common.requestFailed"))
+      notifyFailure(t("set.agents.toggleFailed") + t("error.chain.unknown"))
       return
     }
     agents.value = result
@@ -319,11 +325,20 @@ async function switchAgents(enabled: boolean) {
 }
 
 async function removeAgents() {
+  if (!confirmingAgentsDelete.value || deletingAgents.value) return
+  deletingAgents.value = true
   try {
-    agents.value = await app.client?.request({ type: "agents.delete" })
+    const result = await app.client?.request({ type: "agents.delete" })
+    if (!result) {
+      notifyFailure(t("set.agents.deleteFailed") + t("error.chain.unknown"))
+      return
+    }
+    agents.value = result
     confirmingAgentsDelete.value = false
   } catch (err) {
     notifyFailure(t("set.agents.deleteFailed") + reasonText(err))
+  } finally {
+    deletingAgents.value = false
   }
 }
 
@@ -2578,8 +2593,8 @@ onBeforeUnmount(() => {
                 <div class="line-sub mcp-path" data-config-path :title="configFile?.path">{{ configFile ? homePath(configFile.path, paths?.home) : "" }}</div>
               </div>
               <div class="mcp-ctrl">
-                <button type="button" class="ctl-btn" data-config-copy-path :disabled="!configFile" @click="copyConfigPath">{{ t("set.config.copyPath") }}</button>
                 <button type="button" class="ctl-btn" data-config-open :disabled="!configFile" @click="openConfigFile">{{ t("files.open") }}</button>
+                <button type="button" class="ctl-btn" data-config-copy-path :disabled="!configFile" @click="copyConfigPath">{{ t("set.config.copyPath") }}</button>
               </div>
             </div>
             <div class="line" data-agents-row>
