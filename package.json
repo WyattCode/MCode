@@ -22,6 +22,7 @@
     "package:linux": "node scripts/package.mjs --linux",
     "smoke": "esbuild src/server/tool/search-worker.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/search-worker.mjs --packages=external && esbuild scripts/smoke.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/smoke.mjs --alias:@shared=./src/shared --packages=external && node out/smoke.mjs",
     "icons": "esbuild scripts/gen-provider-icons.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/gen-icons.mjs --packages=external && node out/gen-icons.mjs",
+    "test:cli-plugins": "esbuild scripts/cli-plugin-test.ts --bundle --platform=node --format=esm --target=node22 --alias:@shared=./src/shared --packages=external --outfile=out/cli-plugin-test.mjs && node --test out/cli-plugin-test.mjs",
     "themecheck": "esbuild scripts/theme-check.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/theme-check.mjs --packages=external && node out/theme-check.mjs",
     "mcpcheck": "esbuild scripts/mcp-check.ts --bundle --platform=node --format=esm --target=node22 --alias:@shared=./src/shared --outfile=out/mcp-check.mjs --packages=external && node out/mcp-check.mjs",
     "i18ncheck": "esbuild scripts/i18n-check.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/i18n-check.mjs --packages=external && node out/i18n-check.mjs",

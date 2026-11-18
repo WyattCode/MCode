@@ -1575,7 +1575,15 @@ export interface McpToolInfo {
 export type WebSearchProviderID = "exa" | "firecrawl" | "parallel" | "tavily" | "tinyfish"
 export type WebSearchSelection = "auto" | WebSearchProviderID | false
 
+export interface CliPlugin {
+  id: string
+  name: string
+  binary?: string
+  enabled: boolean
+}
+
 export interface AppConfig {
+  cliPlugins?: { version: 1; entries: CliPlugin[] }
   /**
    * Which build's idea of this document it is.
    *
@@ -2465,6 +2473,9 @@ export type Request =
   /** Everything a shell has printed so far, to redraw a pane that went away. */
   | { type: "shell.attach"; shellID: string }
   | { type: "workspace.list"; directory: string }
+  | { type: "cliPlugin.list" }
+  | { type: "cliPlugin.install"; operationID: string; name: string; command: string; binary?: string }
+  | { type: "cliPlugin.set"; id: string; action: boolean | "delete" }
   | { type: "mcp.list" }
   /** N11-27: apply a saved MCP change now rather than at the next conversation, when nothing is running. */
   | { type: "mcp.applyNow" }
@@ -2732,6 +2743,9 @@ export interface ResponseMap {
   "mcp.tools": { tools?: McpToolInfo[]; error?: string }
   "mcp.authenticate": { servers: McpServerState[] }
   "mcp.register": { servers: McpServerState[] }
+  "cliPlugin.list": { plugins: (CliPlugin & { available: boolean })[] }
+  "cliPlugin.install": { plugin: CliPlugin }
+  "cliPlugin.set": Record<string, never>
   "mcp.importScan": { items: McpImportItem[] }
   /** The names actually added. */
   "mcp.importApply": { imported: string[] }
@@ -2749,6 +2763,7 @@ export interface ResponseMap {
 // ---------------------------------------------------------------------------
 
 export type ServerEvent =
+  | { type: "cliPlugin.output"; operationID: string; output: string }
   | { type: "session.updated"; session: SessionInfo }
   | { type: "session.deleted"; sessionID: string }
   | { type: "session.idle"; sessionID: string }

@@ -66,6 +66,7 @@ import { COMPACTION_TRIGGER_RATIO, SUMMARY_OUTPUT_MAX, fitOutput, isOverflowByCo
 import { pruneLevelFor, prunedHistory, type PruneLevel } from "./prune"
 import { estimateTokens } from "./estimate"
 import { SHRINK_STEPS, SUMMARY_NUDGE, UNKNOWN_WINDOW, compactedText, continueNote, extractSummary, flattenOldest, isCheckpoint, isSummary, legacySummary, messagesTokens, nextRequestEstimate, requestTokens, shrinkLargeToolResults, splitConversation, summaryPrompt, touchedFiles, type CompactionTrigger } from "./summary"
+import { pluginPrompt } from "../cli-plugins"
 import { fetchInstruction, instructionUpdate, instructionValues, memorySection, systemPromptFrom, type InstructionValues } from "./prompt"
 // plan: the plan file, what planning may write, and what each planning turn is told.
 import { GOAL_GUARD, JUDGE_SYSTEM, MAX_GOAL_REACT, cleanGoal, goalReminder, judgeQuestion, judgeTranscript, parseVerdict, sameGoal, type GoalVerdict } from "./goal"
@@ -1485,11 +1486,12 @@ export class SessionRunner {
     ])
     const frozen = this.prefixes.get(session.id)
     const base = frozen?.key === key ? frozen.system : systemPromptFrom(session.agent, initial, undefined, { local, modelID: session.model.model, toolNames: this.offeredTools(session).map(tool => tool.name) })
+    const system = [base, pluginPrompt(this.config.get())].filter(Boolean).join("\n\n")
     this.prefixes.set(session.id, { key, system: base })
     // subagents: a subagent is told what it is, after what its agent would be told anyway.
     const outputSchema = session.subagent?.outputSchema
     if (session.parentID) {
-      return { system: [base, SUBAGENT_NOTE, ...(outputSchema ? [STRUCTURED_NOTE] : session.subagent?.type === "general" ? [RETURN_NOTE] : [])].join("\n\n") }
+      return { system: [system, SUBAGENT_NOTE, ...(outputSchema ? [STRUCTURED_NOTE] : session.subagent?.type === "general" ? [RETURN_NOTE] : [])].join("\n\n") }
     }
     const memory = memoryFilesFor(session.directory, session.id)
     /*
@@ -1502,7 +1504,7 @@ export class SessionRunner {
      */
     const pursuing = session.goal && !session.goal.done && session.agent !== "plan" ? [GOAL_GUARD] : []
     const tail = [...(memory ? [memorySection(memory)] : []), ...pursuing]
-    return tail.length ? { system: base, systemTail: tail.join("\n\n") } : { system: base }
+    return tail.length ? { system, systemTail: tail.join("\n\n") } : { system }
   }
 
   /**
