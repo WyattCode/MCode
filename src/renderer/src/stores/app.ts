@@ -1,3 +1,4 @@
+import type { ProviderPreset, ProviderProtocol } from "@shared/custom-endpoint"
 import { defineStore } from "pinia"
 import { computed, reactive, ref, shallowRef, watch } from "vue"
 import type { Attachment, AgentName,
@@ -2359,7 +2360,8 @@ export const useApp = defineStore("app", () => {
     apiKey: string
     headers?: Record<string, string>
     models: CustomModel[]
-    protocol?: CustomProvider["protocol"]
+    preset?: ProviderPreset
+    protocol?: CustomProvider["protocol"] | ProviderProtocol
   }) {
     providers.value = (await api().request({ type: "provider.addCustom", ...entry })).providers
     await ensureUsableModel()
@@ -2383,7 +2385,8 @@ export const useApp = defineStore("app", () => {
     apiKey: string
     headers?: Record<string, string>
     models: CustomModel[]
-    protocol?: CustomProvider["protocol"]
+    preset?: ProviderPreset
+    protocol?: CustomProvider["protocol"] | ProviderProtocol
   }) {
     providers.value = (await api().request({ type: "provider.updateCustom", ...entry })).providers
     await ensureUsableModel()
@@ -2402,7 +2405,7 @@ export const useApp = defineStore("app", () => {
     apiKey: string
     provider?: string
     headers?: Record<string, string>
-    protocol?: CustomProvider["protocol"]
+    protocol?: CustomProvider["protocol"] | ProviderProtocol
   }) {
     return api().request({ type: "provider.probe", ...entry })
   }

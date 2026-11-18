@@ -197,7 +197,7 @@ export async function roundTwentyOneLaneFTwoChecks(check: Check, section: (name:
     check("nothing on the page is monospaced any more, and a read-only id is not greyed", !/cp-in mono/.test(form) && !/\.cp-in\.mono/.test(formStyle) && !/\.cp-in\[readonly\]/.test(formStyle))
     check("the clone dialog matches, with MiMo's placeholder", /placeholder="my-provider-copy"/.test(clone) && !/font-family: var\(--font-mono\);/.test(clone))
 
-    check("the picker is filled from the test's results and the catalogue", /for \(const id of probe\.value\.models\) merged\.set\(id, known\(id\)\?\.name \?\? ""\)/.test(form) && /for \(const model of provider\.models\) if \(!merged\.has\(model\.id\)\) merged\.set\(model\.id, model\.name\)/.test(form))
+    check("the picker is filled from the test's results and the catalogue", /for \(const id of probe\.value\.modelIds\) merged\.set\(id, known\(id\)\?\.name \?\? ""\)/.test(form) && /for \(const model of provider\.models\) if \(!merged\.has\(model\.id\)\) merged\.set\(model\.id, model\.name\)/.test(form))
     check("a row draws the id and its display name", /<span class="cp-option-id">\{\{ choice\.id \}\}<\/span>/.test(form) && /data-model-combo-name/.test(form) && /max-width: 45%;/.test(rule(formStyle, ".cp-option-name")))
     check("the picker list is the tighter of the two menus", /padding: 4px;/.test(rule(formStyle, ".cp-menu.combo")) && /padding: 6px;/.test(rule(formStyle, ".cp-menu")))
     check("the menus take the elevated card under shadow-pop", /background: #fffefd;/.test(rule(formStyle, ".cp-menu")) && /box-shadow: 0 12px 40px #00000024;/.test(rule(formStyle, ".cp-menu")))
@@ -220,6 +220,6 @@ export async function roundTwentyOneLaneFTwoChecks(check: Check, section: (name:
     check("none of them is a wire drawing any more", !/class="nav-ico"[^>]*fill="none"/.test(template))
     check("models.intro says where a key is kept, as MiMo's does", /"set\.models\.intro": "自定义模型使用你自己的密钥：填入各家的 API Key 即可在聊天里选用，仅保存到本地引擎配置"/.test(i18n))
     check("the remove confirmation is MiMo's sentence", /"set\.models\.removeProviderBody": "将删除「\{name\}」及其全部模型，且不可恢复。"/.test(i18n))
-    check("the 名称 placeholder is MiMo's literal my-provider", /form\.providerID\.trim\(\) \|\| 'my-provider'/.test(form) && !/"provider\.custom\.field\.name\.placeholder"/.test(i18n))
+    check("the 名称 placeholder is MiMo's literal my-provider", /form\.providerId\.trim\(\) \|\| 'my-provider'/.test(form) && !/"provider\.custom\.field\.name\.placeholder"/.test(i18n))
   }
 }

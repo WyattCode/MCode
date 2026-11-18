@@ -45,7 +45,7 @@ import type { Catalog, CatalogModel } from "@shared/models-dev"
 import { conversational } from "./provider/discover"
 import { modelVariants } from "./provider/variants"
 import { menuEfforts, thinkingMenu, thinkingOf } from "@shared/effort-menu"
-import { normalizeBaseURL, normalizeModelId } from "@shared/custom-endpoint"
+import { modelLimitProblem, normalizeBaseURL, normalizeModelId } from "@shared/custom-endpoint"
 import type { OAuthTokens } from "./auth/oauth"
 import { parseJsonc, renderJsonc } from "./jsonc"
 import { ProjectLocations } from "./project-location"
@@ -450,24 +450,19 @@ function forgetDisabledCustom(config: AppConfig): boolean {
 
 type CustomModelEntry = NonNullable<CustomProvider["models"]>[number]
 
-/**
- * A custom model as it may be stored: its id stripped of every blank and its
- * name trimmed, as MiMo saves them, and MiMo's
- * 高级配置 checked. The image switch has three states (absent is the default),
- * and each limit is a positive whole number of tokens, with an output limit
- * allowed only beside an input limit. A limit that breaks those rules is
- * refused rather than quietly dropped, so a mistyped cap never passes as set.
- */
-export function customModelOf(model: CustomModelEntry): CustomModelEntry {
+/** Validate model edits while retaining untouched context-only limits from old configs. */
+export function customModelOf(model: CustomModelEntry, previous?: CustomModelEntry): CustomModelEntry {
   const out: CustomModelEntry = { id: normalizeModelId(String(model.id ?? "")), name: String(model.name ?? "").trim() }
+  if (!out.id) throw new CodedError("Enter a model ID", "set.models.modelIdRequired")
   if (typeof model.attachment === "boolean") out.attachment = model.attachment
-  const positive = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0
   const context = model.limit?.context
   const output = model.limit?.output
-  const invalid = "A model limit must be a positive whole number, and an output limit needs an input limit"
-  if (context !== undefined && !positive(context)) throw new CodedError(invalid, "provider.custom.limitInvalid")
-  if (output !== undefined && (!positive(output) || context === undefined)) throw new CodedError(invalid, "provider.custom.limitInvalid")
-  if (positive(context)) out.limit = positive(output) ? { context, output } : { context }
+  const positive = (value: unknown) => value === undefined || (typeof value === "number" && Number.isSafeInteger(value) && value > 0)
+  if (!positive(context) || !positive(output)) throw new CodedError("Enter a positive integer or leave it blank", "provider.custom.limitInvalid")
+  const problem = modelLimitProblem(String(context ?? ""), String(output ?? ""))
+  const legacy = context !== undefined && context === previous?.limit?.context && output === undefined && previous?.limit?.output === undefined
+  if (problem === "pair" && !legacy) throw new CodedError("Enter both model limits or leave both blank", "set.models.limitPair")
+  if (context !== undefined) out.limit = output === undefined ? { context } : { context, output }
   // MiMo's other model fields, kept when a config file states them.
   const inputs = Object.fromEntries((["pdf", "audio", "video"] as const).flatMap((key) => (typeof model.inputs?.[key] === "boolean" ? [[key, model.inputs[key]]] : [])))
   if (Object.keys(inputs).length) out.inputs = inputs

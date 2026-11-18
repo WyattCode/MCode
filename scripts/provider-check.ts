@@ -24,13 +24,14 @@
  */
 // First of all, so nothing here can read the person's own home directory.
 import "./fenced-home"
+import assert from "node:assert/strict"
 import fs from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
 import { COMMAND_SOURCES, EFFORTS, type AssistantMessage, type Attachment, type Effort, type UserMessage } from "@shared/protocol"
 import { Storage } from "../src/server/storage"
 import { Bus } from "../src/server/bus"
-import { Config } from "../src/server/config"
+import { Config, customModelOf } from "../src/server/config"
 import { modelVariants } from "../src/server/provider/variants"
 import { reasoningRequest as anthropicReasoning } from "../src/server/provider/anthropic"
 import { reasoningRequest as codexReasoning } from "../src/server/provider/chatgpt"
@@ -54,6 +55,64 @@ function section(title: string): void {
   console.log("")
   console.log(title)
 }
+
+section("Custom provider settings")
+const { providerIdProblem } = await import("../src/shared/provider-id")
+const { normalizeProviderProtocol, modelLimitProblem } = await import("../src/shared/custom-endpoint")
+const { probeModels } = await import("../src/server/provider/discover")
+note("provider ids distinguish reserved, taken, slash and empty",
+  providerIdProblem(" MiMoRouter ", []) === "reserved" && providerIdProblem("MIFY", []) === "reserved" &&
+  providerIdProblem("OpenAI", ["openai"]) === "exists" && providerIdProblem("a/b", []) === "slash" &&
+  providerIdProblem("  ", []) === "empty")
+for (const [input, expected] of [
+  ["", "chat-completions"], ["@ai-sdk/openai-compatible", "chat-completions"], ["chat-completions", "chat-completions"],
+  ["@ai-sdk/anthropic", "messages"], ["messages", "messages"], ["responses", "responses"],
+  ["@ai-sdk/openai", "responses"], ["@vendor/openai", "responses"],
+]) note(`protocol ${input || "(empty)"} maps to ${expected}`, normalizeProviderProtocol(input) === expected)
+note("model limits must be paired positive integers",
+  modelLimitProblem("", "") === undefined && modelLimitProblem("128000", "4096") === undefined &&
+  modelLimitProblem("128000", "") === "pair" && modelLimitProblem("", "4096") === "pair" &&
+  ["0", "-1", "1.5", "abc", "9007199254740992"].every((value) => modelLimitProblem(value, "4096") === "integer"))
+const legacyModel = { id: "legacy", name: "Legacy", limit: { context: 4096 } }
+assert.throws(() => customModelOf(legacyModel), { code: "set.models.limitPair" })
+assert.throws(() => customModelOf({ id: " ", name: "Blank" }), { code: "set.models.modelIdRequired" })
+note("a saved context-only limit survives an unrelated edit",
+  customModelOf({ ...legacyModel, name: "Edited" }, legacyModel).limit?.context === 4096)
+for (const protocol of ["chat-completions", "messages", "responses"] as const) {
+  let matched = false
+  const result = await probeModels({
+    baseURL: "https://example.invalid/v1/?region=cn", apiKey: "fixture-key", protocol,
+    fetcher: async (url, init) => {
+      const headers = new Headers(init?.headers)
+      matched = String(url) === "https://example.invalid/v1/models?region=cn" && init?.method === "GET" &&
+        (protocol === "messages"
+          ? !headers.has("authorization") && headers.get("x-api-key") === "fixture-key" && headers.get("anthropic-version") === "2023-06-01"
+          : headers.get("authorization") === "Bearer fixture-key" && !headers.has("x-api-key"))
+      return Response.json({ data: [{ id: "one" }, { id: "one" }, { id: "two" }] })
+    },
+  })
+  note(`${protocol} probes the models URL with the matching auth headers`, matched && result.ok && result.models.join(",") === "one,two")
+}
+const failedProbe = await probeModels({
+  baseURL: "https://example.invalid", apiKey: "fixture-key",
+  fetcher: async () => { throw new Error("unsafe diagnostic fixture-key") },
+})
+note("probe errors keep request secrets out of diagnostics", !JSON.stringify(failedProbe).includes("fixture-key"))
+
+const timedOutProbe = await probeModels({
+  baseURL: "https://example.invalid", apiKey: "fixture-key", timeout: 5,
+  fetcher: async (_url, init) => {
+    const body = new ReadableStream({ start(controller) {
+      const keepAlive = setTimeout(() => controller.close(), 200)
+      init?.signal?.addEventListener("abort", () => {
+        clearTimeout(keepAlive)
+        controller.error(init.signal?.reason)
+      }, { once: true })
+    } })
+    return new Response(body)
+  },
+})
+note("the probe deadline includes reading the response body", !timedOutProbe.ok && timedOutProbe.reason === "timeout")
 
 /** A 64k output limit, which is what the Anthropic adapter sends. */
 const MAX_TOKENS = 64_000

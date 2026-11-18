@@ -2,7 +2,7 @@
  * The pure rules of the models page's provider form (MiMo 26.920), shared by
  * the form and smoke.
  */
-import type { ProviderIdProblem } from "@shared/provider-id"
+import { providerIdMessageKey, type ProviderIdProblem } from "@shared/provider-id"
 import { t } from "./i18n"
 
 /* MiMo 26.920's limit menus: three sizes each, in tokens, and a custom field under them. */
@@ -19,14 +19,7 @@ export function limitLabel(value: number | undefined): string {
   return String(value)
 }
 
-/** A limit as typed: blank is the provider default; otherwise digits only, a positive safe integer. */
-export function limitOf(text: string): { ok: boolean; value?: number } {
-  const trimmed = text.trim()
-  if (!trimmed) return { ok: true }
-  if (!/^\d+$/.test(trimmed)) return { ok: false }
-  const value = Number(trimmed)
-  return Number.isSafeInteger(value) && value > 0 ? { ok: true, value } : { ok: false }
-}
+export { limitOf, validEndpoint } from "@shared/custom-endpoint"
 
 /**
  * What Enter in the models field adds: the suggestion the reader moved to,
@@ -35,16 +28,6 @@ export function limitOf(text: string): { ok: boolean; value?: number } {
  */
 export function comboEnterValue(highlight: number, choices: readonly string[], typed: string): string {
   return (highlight >= 0 ? choices[highlight] : undefined) ?? typed
-}
-
-/** MiMo's endpoint check: it parses as a URL, it is http or https, and it names a host. */
-export function validEndpoint(text: string): boolean {
-  try {
-    const url = new URL(text.trim())
-    return (url.protocol === "http:" || url.protocol === "https:") && Boolean(url.hostname)
-  } catch {
-    return false
-  }
 }
 
 /** The four inputs besides text a model's modalities menu offers, in MiMo's order. */
@@ -74,7 +57,5 @@ export function cloneId(source: string, taken: ReadonlySet<string>): string {
 
 /** What the form and the clone dialog say under a provider id that `providerIdProblem` refuses. */
 export function providerIdError(problem: ProviderIdProblem): string {
-  if (problem === "empty") return t("provider.custom.error.providerID.required")
-  if (problem === "slash") return t("set.models.providerIdSlash")
-  return t("provider.custom.error.providerID.exists")
+  return t(providerIdMessageKey(problem))
 }

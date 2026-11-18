@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import type { CustomModel, CustomProvider, Effort, ModelInfo } from "@shared/protocol"
 import { THINKING_LEVELS } from "@shared/effort-menu"
-import { normalizeBaseURL, normalizeModelId } from "@shared/custom-endpoint"
+import { modelLimitProblem, normalizeBaseURL, normalizeModelId, normalizeProviderProtocol, PROVIDER_PRESETS } from "@shared/custom-endpoint"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
 import { notice, notifyFailure } from "../lib/toast"
@@ -14,10 +14,8 @@ import { providerIdProblem } from "@shared/provider-id"
 
 /**
  * A custom provider, laid out as MiMo 26.920's models page lays one out: the
- * provider's fields in a card - id, name, endpoint, protocol, key and a
- * connection test - then 来自此供应商的模型, a field that picks from what the
- * test found or takes an id typed in, and a card per model with its display
- * name, its context and output limits and the inputs it reads.
+ * provider's connection fields, then a model picker and an editor per model.
+ * A preset supplies the provider identity, endpoint and protocol.
  *
  * Two hosts: the models page, which draws its own action bar and calls
  * `submit`, and the connect dialog's custom step, where the form keeps a save
@@ -32,6 +30,7 @@ import { providerIdProblem } from "@shared/provider-id"
 const props = defineProps<{
   /** The provider being edited: its id is locked, and the key field starts blank. */
   editing?: CustomProvider
+  preset?: keyof typeof PROVIDER_PRESETS
   /** In the connect dialog: a save button of its own, and the saved model is selected. */
   standalone?: boolean
   /** The id field takes the keys when the form opens. */
@@ -58,8 +57,8 @@ interface ModelRow {
   key: number
   id: string
   name: string
-  context?: number
-  output?: number
+  context: string
+  output: string
   mods: Mods
   thinking: Thinking
   /** Whether the inputs were chosen here; untouched, what was stored (or the catalog) decides. */
@@ -94,8 +93,8 @@ function storedRow(model: CustomModel): ModelRow {
     key: nextKey++,
     id: model.id,
     name: model.name === model.id ? "" : model.name,
-    context: model.limit?.context,
-    output: model.limit?.output,
+    context: String(model.limit?.context ?? ""),
+    output: String(model.limit?.output ?? ""),
     mods: {
       image: model.attachment ?? effective?.image ?? false,
       audio: model.inputs?.audio ?? effective?.audio ?? false,
@@ -112,12 +111,15 @@ function storedRow(model: CustomModel): ModelRow {
 
 function newRow(id: string): ModelRow {
   const hint = known(id)
+  const context = String(hint?.contextWindow || "")
+  const output = String(hint?.maxOutput || "")
+  const defaults = modelLimitProblem(context, output) === undefined
   return {
     key: nextKey++,
     id,
     name: hint && hint.name !== hint.id ? hint.name : "",
-    context: hint?.contextWindow || undefined,
-    output: hint?.maxOutput || undefined,
+    context: defaults ? context : "",
+    output: defaults ? output : "",
     mods: { image: hint?.inputs.image ?? false, audio: hint?.inputs.audio ?? false, video: hint?.inputs.video ?? false, pdf: hint?.inputs.pdf ?? false },
     thinking: blankThinking(),
     // A model the catalog knows arrives with its inputs stated; one it does not is left for the backend's catalog.
@@ -126,13 +128,41 @@ function newRow(id: string): ModelRow {
 }
 
 const editing = props.editing
+type Probe = { status: "idle" | "busy" | "ok" | "fail"; modelIds: string[]; text: string }
+const idleProbe = (): Probe => ({ status: "idle", modelIds: [], text: "" })
+const preset = computed(() => {
+  if (!editing) return props.preset ?? "custom"
+  return editing.preset && Object.hasOwn(PROVIDER_PRESETS, editing.preset) ? editing.preset : "custom"
+})
+const takenIds = computed(() => [
+  ...app.providers.map((entry) => entry.id),
+  ...(app.config?.customProviders ?? []).map((entry) => entry.id),
+  ...(app.config?.disabledProviders ?? []),
+])
+
+function presetDraft(key: keyof typeof PROVIDER_PRESETS) {
+  const entry = PROVIDER_PRESETS[key]
+  let providerId: string = key
+  if (key === "custom") providerId = ""
+  else {
+    for (let n = 1; providerIdProblem(providerId, takenIds.value); n++) {
+      providerId = n === 1 ? `${key}-custom` : `${key}-custom-${n}`
+    }
+  }
+  return { providerId, name: key === "custom" ? "" : entry.label, baseURL: entry.baseURL, protocol: entry.protocol }
+}
+
 const form = ref({
-  providerID: editing?.id ?? "",
-  name: editing?.name && editing.name !== editing.id ? editing.name : "",
-  baseURL: editing?.baseURL ?? "",
-  protocol: (editing?.protocol ?? "openai") as NonNullable<CustomProvider["protocol"]>,
+  ...presetDraft(preset.value),
+  ...(editing ? {
+    providerId: editing.id,
+    name: editing.name === editing.id ? "" : editing.name,
+    baseURL: editing.baseURL,
+    protocol: normalizeProviderProtocol(editing.protocol),
+  } : {}),
   apiKey: editing?.environment ? `{env:${editing.environment}}` : "",
   models: (editing?.models ?? []).map(storedRow),
+  probe: idleProbe(),
   headers: Object.keys(editing?.headers ?? {}).length
     ? Object.entries(editing?.headers ?? {}).map(([key, value]) => ({ ...headerRow(), key, value }))
     : [headerRow()],
@@ -142,17 +172,28 @@ const form = ref({
  * whether anything changed since: MiMo's save clears its dirty flag, and so
  * does a model removed, which is saved at once.
  */
-const pristine = ref(JSON.stringify(form.value))
-const dirty = computed(() => JSON.stringify(form.value) !== pristine.value)
+const snapshot = () => JSON.stringify(form.value, (key, value) => key === "probe" ? undefined : value)
+const pristine = ref(snapshot())
+const dirty = computed(() => snapshot() !== pristine.value)
 
 const protocolOptions = computed(() =>
-  (["openai", "anthropic", "responses"] as const).map((value) => ({ value, label: t(`provider.custom.protocol.${value}`) })),
+  (["chat-completions", "messages", "responses"] as const).map((value) => ({ value, label: t(`set.models.protocol.${value}`) })),
 )
 
 const busy = ref(false)
 const tried = ref(false)
+const idTouched = ref(false)
+const endpointTouched = ref(false)
 /* A variable name is only a name, so an edit shows it; a typed key starts hidden. */
 const keyShown = ref(Boolean(editing?.environment))
+
+watch(preset, (key) => {
+  if (editing) return
+  Object.assign(form.value, presetDraft(key), { apiKey: "", headers: [headerRow()] })
+  keyShown.value = false
+  idTouched.value = false
+  endpointTouched.value = false
+}, { flush: "sync" })
 
 /*
  * The eye. Hiding is free; showing a key is showing a secret, so when the
@@ -188,21 +229,31 @@ const idProblem = computed(() =>
   editing
     ? undefined
     : providerIdProblem(
-        form.value.providerID,
-        app.providers.map((entry) => entry.id),
+        form.value.providerId,
+        takenIds.value,
       ),
 )
 
 const idError = computed(() => {
   const problem = idProblem.value
-  if (!problem || (problem === "empty" && !tried.value)) return undefined
+  if (!problem || (problem === "empty" && !idTouched.value && !tried.value)) return undefined
   return providerIdError(problem)
 })
 
-const endpointBad = computed(() => Boolean(form.value.baseURL.trim()) && !validEndpoint(form.value.baseURL))
+const endpointBad = computed(() => preset.value === "custom" && (endpointTouched.value || tried.value || Boolean(form.value.baseURL.trim())) && !validEndpoint(form.value.baseURL))
 
-/* MiMo's rule, which the backend keeps too: an output limit only beside a context limit. */
-const limitBad = (row: ModelRow) => row.output !== undefined && row.context === undefined
+function limitProblem(row: ModelRow) {
+  const problem = modelLimitProblem(row.context, row.output)
+  const legacy = row.stored?.id === normalizeModelId(row.id) && row.stored.limit?.output === undefined &&
+    row.context === String(row.stored.limit?.context) && !row.output.trim()
+  return problem === "pair" && legacy ? undefined : problem
+}
+
+function modelIdError(row: ModelRow) {
+  const id = normalizeModelId(row.id)
+  if (!id) return t("set.models.modelIdRequired")
+  if (form.value.models.some((other) => other.key !== row.key && normalizeModelId(other.id) === id)) return t("set.models.modelExists")
+}
 
 const headerProblems = computed(() =>
   form.value.headers.map((row) => {
@@ -215,15 +266,19 @@ const headerProblems = computed(() =>
 
 const canSave = computed(() => {
   const value = form.value
-  if (idProblem.value || !value.providerID.trim() || !validEndpoint(value.baseURL)) return false
-  if (!value.models.length || value.models.some(limitBad)) return false
+  if (idProblem.value || !value.providerId.trim() || !validEndpoint(value.baseURL)) return false
+  if (!value.models.length || value.models.some((row) => limitProblem(row) || modelIdError(row))) return false
   return headerProblems.value.every((problem) => !problem.key && !problem.value)
 })
 
 /* ------------------------------------------------------------ 连接测试 */
 
-const probe = ref<{ status: "idle" | "busy" | "ok" | "fail"; models: string[]; text: string }>({ status: "idle", models: [], text: "" })
+const probe = computed(() => form.value.probe)
 let probeTurn = 0
+watch(() => [form.value.baseURL, form.value.apiKey, form.value.protocol, form.value.headers], () => {
+  probeTurn++
+  form.value.probe = idleProbe()
+}, { deep: true, flush: "sync" })
 
 function headersOf(): Record<string, string> {
   return Object.fromEntries(form.value.headers.map((row) => [row.key.trim(), row.value.trim()] as const).filter(([key, value]) => key && value))
@@ -231,13 +286,12 @@ function headersOf(): Record<string, string> {
 
 async function testConnection(quiet = false) {
   if (!validEndpoint(form.value.baseURL)) {
-    if (!quiet) probe.value = { status: "fail", models: [], text: t("model.endpointInvalid") }
+    if (!quiet) form.value.probe = { status: "fail", modelIds: [], text: t("set.models.probeNetwork", { message: t("model.endpointInvalid") }) }
     return
   }
   const turn = ++probeTurn
-  probe.value = { ...probe.value, status: "busy", text: t("set.models.probeBusy") }
+  form.value.probe = { ...probe.value, status: "busy", text: t("set.models.probeBusy") }
   try {
-    const started = Date.now()
     const result = await app.probeProvider({
       baseURL: normalizeBaseURL(form.value.baseURL),
       apiKey: form.value.apiKey.trim(),
@@ -246,12 +300,11 @@ async function testConnection(quiet = false) {
       protocol: form.value.protocol,
     })
     if (turn !== probeTurn) return
-    const ms = Math.max(0, Date.now() - started)
-    probe.value = result.ok
-      ? { status: "ok", models: result.models, text: t("set.models.probeOkMs", { n: result.models.length, ms }) }
+    form.value.probe = result.ok
+      ? { status: "ok", modelIds: result.modelIds, text: t("set.models.probeOk", { n: result.modelIds.length }) }
       : {
           status: "fail",
-          models: [],
+          modelIds: [],
           text:
             result.reason === "http"
               ? t("set.models.probeHttp", { status: result.status ?? 0 })
@@ -259,11 +312,11 @@ async function testConnection(quiet = false) {
                 ? t("set.models.probeJson")
                 : result.reason === "timeout"
                   ? t("set.models.probeTimeout")
-                  : t("set.models.probeNetwork", { message: result.message ?? "" }),
+                  : t("set.models.probeNetwork", { message: t("set.models.probeUnavailable") }),
         }
-  } catch (err) {
+  } catch {
     if (turn !== probeTurn) return
-    probe.value = { status: "fail", models: [], text: t("set.models.probeNetwork", { message: err instanceof Error ? err.message : String(err) }) }
+    form.value.probe = { status: "fail", modelIds: [], text: t("set.models.probeNetwork", { message: t("set.models.probeUnavailable") }) }
   }
 }
 
@@ -285,6 +338,9 @@ onMounted(() => {
 /* ------------------------------------------------------------ the model picker */
 
 const query = ref("")
+const queryError = ref(false)
+const expandedModel = ref<number>()
+watch(query, () => (queryError.value = false))
 const openMenu = ref<string>()
 /* The suggestion moved to; none until the arrows or the pointer pick one. */
 const highlight = ref(-1)
@@ -298,13 +354,13 @@ const highlight = ref(-1)
  */
 const choices = computed(() => {
   const merged = new Map<string, string>()
-  for (const id of probe.value.models) merged.set(id, known(id)?.name ?? "")
+  for (const id of probe.value.modelIds) merged.set(id, known(id)?.name ?? "")
   for (const provider of app.providers) {
     if (provider.id === props.editing?.id) continue
     for (const model of provider.models) if (!merged.has(model.id)) merged.set(model.id, model.name)
   }
   const needle = query.value.trim().toLowerCase()
-  const added = new Set(form.value.models.map((row) => row.id))
+  const added = new Set(form.value.models.map((row) => normalizeModelId(row.id)))
   return [...merged]
     .filter(([id, name]) => !added.has(id) && (!needle || id.toLowerCase().includes(needle) || name.toLowerCase().includes(needle)))
     .map(([id, name]) => ({ id, name: name === id ? "" : name }))
@@ -321,12 +377,17 @@ function revealHighlight() {
 
 function addModel(raw: string) {
   const id = normalizeModelId(raw)
-  if (!id) return
-  if (form.value.models.some((row) => row.id === id)) {
+  if (!id) {
+    queryError.value = true
+    return
+  }
+  if (form.value.models.some((row) => normalizeModelId(row.id) === id)) {
     notice.warning(t("set.models.modelExists"))
     return
   }
-  form.value.models.push(newRow(id))
+  const row = newRow(id)
+  form.value.models.push(row)
+  expandedModel.value = row.key
   query.value = ""
   openMenu.value = undefined
 }
@@ -350,26 +411,28 @@ function comboKey(event: KeyboardEvent) {
 
 /*
  * MiMo 26.920's 删除自定义模型: the trash button asks first, and on yes the
- * model leaves the saved provider straight away (the backend ignores one that
- * was never saved) before its card is dropped from the form.
+ * model leaves the saved provider straight away when other models remain.
+ * Replacing the last saved model takes effect with the next form save.
  */
 const removingModel = ref<ModelRow>()
 
 async function confirmRemoveModel() {
   const row = removingModel.value
   if (!row) return
-  if (editing) {
+  const saved = JSON.parse(pristine.value) as typeof form.value
+  const stored = row.stored
+  const removeNow = saved.models.length > 1
+  if (editing && stored && removeNow) {
     try {
-      await app.removeCustomModel(editing.id, row.id)
+      await app.removeCustomModel(editing.id, stored.id)
     } catch (err) {
       notice.danger((err instanceof Error ? err.message : String(err)) || t("set.models.removeFailed"))
       return
     }
   }
   form.value.models = form.value.models.filter((entry) => entry.key !== row.key)
-  if (editing) {
-    // Saved already: the model leaves the saved form too, and every other unsaved change stays unsaved.
-    const saved = JSON.parse(pristine.value) as typeof form.value
+  if (editing && stored && removeNow) {
+    // Keep the rest of the draft dirty after an immediate removal.
     saved.models = saved.models.filter((entry) => entry.key !== row.key)
     pristine.value = JSON.stringify(saved)
   }
@@ -377,17 +440,6 @@ async function confirmRemoveModel() {
 }
 
 /* ------------------------------------------------------------ limits and inputs */
-
-function setLimit(row: ModelRow, field: "context" | "output", value: number | undefined) {
-  row[field] = value
-}
-
-function typeLimit(row: ModelRow, field: "context" | "output", event: Event) {
-  const input = event.target as HTMLInputElement
-  const digits = input.value.replace(/\D/g, "")
-  if (digits !== input.value) input.value = digits
-  row[field] = limitOf(digits).value
-}
 
 function toggleMod(row: ModelRow, key: Modality, on: boolean) {
   row.mods[key] = on
@@ -398,17 +450,18 @@ function toggleMod(row: ModelRow, key: Modality, on: boolean) {
 
 const levelLabel = (level: Effort) => t(`effort.gpt.${level}`)
 
-function toggleLevel(row: ModelRow, level: Effort, input: HTMLInputElement) {
-  const on = input.checked
-  const kept = THINKING_LEVELS.filter((one) => (one === level ? on : row.thinking.efforts.includes(one)))
-  // A model that thinks takes at least one level: with none, the menu is empty and no level is ever sent, so it would not think at all.
-  if (!kept.length) {
-    input.checked = true
-    return
-  }
-  row.thinking.efforts = [...kept]
-  // A default that is no longer on offer goes back to "auto".
-  if (row.thinking.default && !kept.includes(row.thinking.default)) row.thinking.default = undefined
+const standardEfforts: Effort[] = ["low", "medium", "high"]
+
+function setEfforts(row: ModelRow, efforts: readonly Effort[]) {
+  row.thinking.on = efforts.length > 0
+  if (!efforts.length) return
+  row.thinking.efforts = [...efforts]
+  if (row.thinking.default && !efforts.includes(row.thinking.default)) row.thinking.default = undefined
+}
+
+function toggleLevel(row: ModelRow, level: Effort) {
+  const efforts = THINKING_LEVELS.filter((one) => (one === level) !== row.thinking.efforts.includes(one))
+  if (efforts.length) setEfforts(row, efforts)
 }
 
 /* "Thinking only" and "may be turned off" are the two ends of one switch: the model either can be told not to think or cannot. */
@@ -468,8 +521,11 @@ function removeHeader(at: number) {
 /* ------------------------------------------------------------ saving */
 
 function modelOf(row: ModelRow): CustomModel {
-  const model: CustomModel = { id: row.id, name: row.name.trim() || row.id }
-  if (row.context !== undefined) model.limit = row.output !== undefined ? { context: row.context, output: row.output } : { context: row.context }
+  const id = normalizeModelId(row.id)
+  const model: CustomModel = { id, name: row.name.trim() || id }
+  const context = limitOf(row.context).value
+  const output = limitOf(row.output).value
+  if (context !== undefined) model.limit = output === undefined ? { context } : { context, output }
   if (row.touched) {
     model.attachment = row.mods.image
     model.inputs = { audio: row.mods.audio, video: row.mods.video, pdf: row.mods.pdf }
@@ -502,7 +558,7 @@ async function submit(): Promise<boolean> {
     return false
   }
   busy.value = true
-  const id = form.value.providerID.trim()
+  const id = form.value.providerId.trim()
   const entry = {
     id,
     name: form.value.name.trim() || id,
@@ -511,12 +567,17 @@ async function submit(): Promise<boolean> {
     headers: headersOf(),
     models: form.value.models.map(modelOf),
     protocol: form.value.protocol,
+    ...(preset.value !== "custom" ? { preset: preset.value } : {}),
   }
   const target = app.currentID
   try {
     if (editing) await app.updateCustomProvider(entry)
     else await app.addCustomProvider(entry)
-    pristine.value = JSON.stringify(form.value)
+    form.value.models.forEach((row, index) => {
+      row.id = entry.models[index].id
+      row.stored = entry.models[index]
+    })
+    pristine.value = snapshot()
     if (props.standalone) {
       const model = { provider: id, model: entry.models[0].id }
       if (target) await app.setModel(model, target)
@@ -539,14 +600,14 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
 </script>
 
 <template>
-  <form class="cp" data-custom-provider-form @submit.prevent="submit">
+  <form class="cp" :inert="busy" data-custom-provider-form @submit.prevent="submit">
     <div class="cp-card">
-      <div class="cp-row">
+      <div v-if="preset === 'custom'" class="cp-row">
         <label class="cp-label" for="cp-provider-id">{{ t("provider.custom.field.providerID.label") }}</label>
         <div class="cp-control">
           <input
             id="cp-provider-id"
-            v-model="form.providerID"
+            v-model="form.providerId"
             class="cp-in"
             :class="{ bad: idError }"
             ref="providerIdEl"
@@ -555,19 +616,20 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
             spellcheck="false"
             autocomplete="off"
             data-provider-id
+            @blur="idTouched = true"
           />
           <div v-if="idError" class="cp-error" data-provider-id-error>{{ idError }}</div>
         </div>
       </div>
 
-      <div class="cp-row">
+      <div v-if="preset === 'custom'" class="cp-row">
         <label class="cp-label" for="cp-name">{{ t("provider.custom.field.name.label") }}</label>
         <div class="cp-control">
           <input
             id="cp-name"
             v-model="form.name"
             class="cp-in"
-            :placeholder="form.providerID.trim() || 'my-provider'"
+            :placeholder="form.providerId.trim() || 'my-provider'"
             spellcheck="false"
             data-provider-name
           />
@@ -575,25 +637,25 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
       </div>
 
       <!-- The hint always under it, replaced by the red line while the URL is not valid. -->
-      <div class="cp-row">
-        <label class="cp-label" for="cp-base-url">{{ t("model.endpoint") }}</label>
+      <div v-if="preset === 'custom'" class="cp-row">
+        <label class="cp-label" for="cp-base-url">{{ t("provider.custom.field.baseURL.label") }}</label>
         <div class="cp-control">
           <input
             id="cp-base-url"
             v-model="form.baseURL"
             class="cp-in"
             :class="{ bad: endpointBad }"
-            placeholder="https://api.example.com/v1"
+            :placeholder="t('set.models.endpointPlaceholder')"
             spellcheck="false"
             autocomplete="off"
             data-custom-endpoint
-            @blur="form.baseURL = normalizeBaseURL(form.baseURL)"
+            @blur="endpointTouched = true; form.baseURL = normalizeBaseURL(form.baseURL)"
           />
           <div v-if="endpointBad" class="cp-error" data-endpoint-invalid>{{ t("model.endpointInvalid") }}</div>
         </div>
       </div>
 
-      <div class="cp-row">
+      <div v-if="preset === 'custom'" class="cp-row">
         <label class="cp-label" for="cp-protocol">{{ t("provider.custom.field.protocol.label") }}</label>
         <div class="cp-control">
           <!-- Drawn in-app: a native select pops the OS list (system blue, grey, square) over this card. -->
@@ -651,13 +713,13 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
           <!-- The light repeats the words beside it; a reader hears those, not "ok" or "busy". -->
           <span class="cp-light" :class="probe.status" data-probe-light aria-hidden="true" />
           <button type="button" class="cp-btn" data-provider-probe :disabled="probe.status === 'busy'" @click="testConnection()">
-            {{ t("set.models.probe") }}
+            {{ t(probe.status === "busy" ? "set.models.probeBusy" : "set.models.probe") }}
           </button>
         </div>
       </div>
     </div>
 
-    <div class="cp-section">{{ t("set.models.fromProvider") }}</div>
+    <div class="cp-section">{{ t("set.models.modelList") }}</div>
     <div class="cp-combo" data-menu-anchor="combo">
       <input
         v-model="query"
@@ -666,6 +728,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
         :aria-expanded="openMenu === 'combo'"
         :aria-label="t('set.models.comboPlaceholder')"
         :aria-controls="openMenu === 'combo' ? 'cp-combo-menu' : undefined"
+        :aria-activedescendant="openMenu === 'combo' && choices[highlight] ? `cp-combo-option-${highlight}` : undefined"
         aria-autocomplete="list"
         :placeholder="t('set.models.comboPlaceholder')"
         spellcheck="false"
@@ -675,12 +738,13 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
         @input="openMenu = 'combo'"
         @keydown="comboKey"
       />
-      <button type="button" class="cp-btn" data-model-add :disabled="!query.trim()" @click="addModel(query)">{{ t("provider.custom.models.add") }}</button>
+      <button type="button" class="cp-btn" data-model-add @click="addModel(query)">{{ t("provider.custom.models.add") }}</button>
       <div v-if="openMenu === 'combo'" id="cp-combo-menu" ref="comboMenuEl" class="cp-menu combo" role="listbox" data-model-combo-menu>
         <div v-if="!choices.length" class="cp-menu-empty" data-model-combo-empty>{{ t("set.models.comboEmpty") }}</div>
         <button
           v-for="(choice, at) in choices"
           :key="choice.id"
+          :id="`cp-combo-option-${at}`"
           type="button"
           role="option"
           class="cp-option"
@@ -695,6 +759,8 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
         </button>
       </div>
     </div>
+    <div v-if="queryError" class="cp-error" role="alert">{{ t("set.models.modelIdRequired") }}</div>
+    <div v-if="!form.models.length" class="cp-menu-empty">{{ t("set.models.modelEmpty") }}</div>
     <div v-if="tried && !form.models.length" class="cp-error" data-model-needed>{{ t("set.models.needModel") }}</div>
 
     <div v-for="row in form.models" :key="row.key" class="cp-model" :data-model-card="row.id">
@@ -710,156 +776,169 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
           <path d="M3 3.6h8M5.6 3.6V2.4h2.8v1.2M4.2 3.6l.5 7.4h4.6l.5-7.4" stroke="currentColor" stroke-width="1.1" fill="none" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
       </button>
-      <div class="cp-model-names">
-        <input class="cp-in small" :value="row.id" readonly :aria-label="t('provider.custom.models.id.label')" :data-model-id="row.id" />
-        <input
-          v-model="row.name"
-          class="cp-in small"
-          :placeholder="t('provider.custom.models.name.placeholder')"
-          :aria-label="t('provider.custom.models.name.label')"
-          spellcheck="false"
-          :data-model-name="row.id"
-        />
+      <div class="cp-model-heading">
+        <span>{{ row.name.trim() || row.id }}</span>
+        <button type="button" class="cp-btn" :aria-expanded="expandedModel === row.key" @click="expandedModel = expandedModel === row.key ? undefined : row.key">
+          {{ t("set.models.editModel") }}
+        </button>
       </div>
-      <div class="cp-model-options">
-        <div v-for="field in (['context', 'output'] as const)" :key="field" class="cp-pick" :data-menu-anchor="`${field}:${row.key}`">
-          <button type="button" class="cp-pick-btn" :data-model-limit="field" :aria-expanded="openMenu === `${field}:${row.key}`" aria-haspopup="menu" @click="toggleMenu(`${field}:${row.key}`)">
-            <span class="cp-pick-label">{{ t(field === "context" ? "set.models.limitContext" : "set.models.limitOutput") }}</span>
-            <span class="cp-pick-value">
-              {{ limitLabel(row[field]) }}
-              <svg class="cp-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="m6 9.5 6 6 6-6" />
-              </svg>
-            </span>
-          </button>
-          <div v-if="openMenu === `${field}:${row.key}`" class="cp-menu" role="menu" :data-model-limit-menu="field">
-            <button
-              v-for="value in LIMIT_PRESETS[field]"
-              :key="value"
-              type="button"
-              role="menuitemradio"
-              class="cp-option"
-              :aria-checked="row[field] === value"
-              :data-model-limit-option="`${field}-${value}`"
-              @click="setLimit(row, field, value), (openMenu = undefined)"
-            >
-              <span>{{ value }} ({{ limitLabel(value) }})</span>
-              <span v-if="row[field] === value" class="cp-check">✓</span>
+      <template v-if="expandedModel === row.key">
+        <div class="cp-model-names">
+          <label class="cp-cell">
+            {{ t("set.models.modelId") }}
+            <input v-model="row.id" class="cp-in small" spellcheck="false" :data-model-id="row.id" />
+          </label>
+          <label class="cp-cell">
+            {{ t("set.models.displayName") }}
+            <input v-model="row.name" class="cp-in small" :placeholder="row.id" spellcheck="false" :data-model-name="row.id" />
+          </label>
+        </div>
+        <div class="cp-model-options">
+          <div v-for="field in (['context', 'output'] as const)" :key="field" class="cp-pick" :data-menu-anchor="`${field}:${row.key}`">
+            <button type="button" class="cp-pick-btn" :data-model-limit="field" :aria-expanded="openMenu === `${field}:${row.key}`" aria-haspopup="menu" @click="toggleMenu(`${field}:${row.key}`)">
+              <span class="cp-pick-label">{{ t(field === "context" ? "set.models.limitContext" : "set.models.limitOutput") }}</span>
+              <span class="cp-pick-value">
+                {{ limitLabel(limitOf(row[field]).value) }}
+                <svg class="cp-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="m6 9.5 6 6 6-6" />
+                </svg>
+              </span>
             </button>
-            <!-- The number itself, preset or not, as MiMo's field shows it: typing 128000 never blanks it. -->
-            <div class="cp-menu-custom">
-              <input
-                class="cp-in tiny"
-                inputmode="numeric"
-                :value="row[field] !== undefined ? String(row[field]) : ''"
-                :placeholder="t('set.models.limitCustom')"
-                :aria-label="t('set.models.limitCustom')"
-                :data-model-limit-custom="field"
-                @input="typeLimit(row, field, $event)"
-              />
+            <div v-if="openMenu === `${field}:${row.key}`" class="cp-menu" role="menu" :data-model-limit-menu="field">
+              <button
+                v-for="value in LIMIT_PRESETS[field]"
+                :key="value"
+                type="button"
+                role="menuitemradio"
+                class="cp-option"
+                :aria-checked="row[field] === String(value)"
+                :data-model-limit-option="`${field}-${value}`"
+                @click="(row[field] = String(value)), (openMenu = undefined)"
+              >
+                <span>{{ value }} ({{ limitLabel(value) }})</span>
+                <span v-if="row[field] === String(value)" class="cp-check">✓</span>
+              </button>
+              <!-- The number itself, preset or not, as MiMo's field shows it: typing 128000 never blanks it. -->
+              <div class="cp-menu-custom">
+                <input
+                  class="cp-in tiny"
+                  inputmode="numeric"
+                  v-model="row[field]"
+                  :placeholder="t('set.models.limitCustom')"
+                  :aria-label="t('set.models.limitCustom')"
+                  :data-model-limit-custom="field"
+                />
+              </div>
             </div>
           </div>
-        </div>
-        <div class="cp-pick" :data-menu-anchor="`mods:${row.key}`">
-          <button type="button" class="cp-pick-btn wide" data-model-modality-menu :aria-expanded="openMenu === `mods:${row.key}`" aria-haspopup="menu" @click="toggleMenu(`mods:${row.key}`)">
-            <span class="cp-pick-label">{{ t("set.models.modalities") }}</span>
-            <span class="cp-pick-value">
-              <span data-model-modality-summary>{{ modalitySummary(row.mods, modLabel) }}</span>
-              <svg class="cp-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="m6 9.5 6 6 6-6" />
-              </svg>
-            </span>
-          </button>
-          <div v-if="openMenu === `mods:${row.key}`" class="cp-menu" role="menu" data-model-modality-panel>
-            <label v-for="key in MODALITIES" :key="key" class="cp-option">
-              <input type="checkbox" :checked="row.mods[key]" :data-model-modality="key" @change="toggleMod(row, key, ($event.target as HTMLInputElement).checked)" />
-              {{ modLabel(key) }}
-            </label>
-          </div>
-        </div>
-      </div>
-      <!-- WB's layout: the switches in a row, the default as a drop-down, the levels in three columns - all in the card, not behind a button. -->
-      <div class="cp-think" data-model-thinking-block>
-        <div class="cp-think-switches">
-          <label class="cp-tick">
-            <input v-model="row.thinking.on" type="checkbox" data-model-thinking="on" />
-            {{ t("set.models.thinkingOn") }}
-          </label>
-          <template v-if="row.thinking.on">
-            <label class="cp-tick">
-              <input type="checkbox" :checked="!row.thinking.canOff" data-model-thinking="only" @change="setCanOff(row, !($event.target as HTMLInputElement).checked)" />
-              {{ t("set.models.thinkingOnly") }}
-            </label>
-            <label class="cp-tick">
-              <input type="checkbox" :checked="row.thinking.canOff" data-model-thinking="canOff" @change="setCanOff(row, ($event.target as HTMLInputElement).checked)" />
-              {{ t("set.models.thinkingCanOff") }}
-            </label>
-          </template>
-        </div>
-        <template v-if="row.thinking.on">
-          <div class="cp-think-field">
-            <div class="cp-think-label">{{ t("set.models.thinkingDefault") }}</div>
-            <SelectMenu
-              class="cp-select"
-              :model-value="row.thinking.default ?? 'auto'"
-              :options="defaultOptions(row)"
-              match-width
-              :data-model-effort-default="row.id"
-              @update:model-value="row.thinking.default = $event === 'auto' ? undefined : ($event as Effort)"
-            />
-          </div>
-          <div class="cp-think-field">
-            <div class="cp-think-label">{{ t("set.models.thinkingEfforts") }}</div>
-            <div class="cp-think-grid">
-              <label v-for="level in THINKING_LEVELS" :key="level" class="cp-tick">
-                <input type="checkbox" :checked="row.thinking.efforts.includes(level)" :disabled="row.thinking.efforts.length === 1 && row.thinking.efforts.includes(level)" :data-model-effort="level" @change="toggleLevel(row, level, $event.target as HTMLInputElement)" />
-                {{ levelLabel(level) }}
+          <div class="cp-pick" :data-menu-anchor="`mods:${row.key}`">
+            <button type="button" class="cp-pick-btn wide" data-model-modality-menu :aria-expanded="openMenu === `mods:${row.key}`" aria-haspopup="menu" @click="toggleMenu(`mods:${row.key}`)">
+              <span class="cp-pick-label">{{ t("set.models.modalities") }}</span>
+              <span class="cp-pick-value">
+                <span data-model-modality-summary>{{ modalitySummary(row.mods, modLabel) }}</span>
+                <svg class="cp-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="m6 9.5 6 6 6-6" />
+                </svg>
+              </span>
+            </button>
+            <div v-if="openMenu === `mods:${row.key}`" class="cp-menu" role="menu" data-model-modality-panel>
+              <label v-for="key in MODALITIES" :key="key" class="cp-option">
+                <input type="checkbox" :checked="row.mods[key]" :data-model-modality="key" @change="toggleMod(row, key, ($event.target as HTMLInputElement).checked)" />
+                {{ modLabel(key) }}
               </label>
             </div>
           </div>
-        </template>
-      </div>
-      <div v-if="limitBad(row)" class="cp-error" data-model-limit-error>{{ t("provider.custom.limitInvalid") }}</div>
+        </div>
+        <!-- WB's layout: the switches in a row, the default as a drop-down, the levels in three columns - all in the card, not behind a button. -->
+        <div class="cp-think" data-model-thinking-block>
+          <div class="cp-think-switches">
+            <button type="button" class="cp-chip" :aria-pressed="!row.thinking.on" @click="setEfforts(row, [])">{{ t("set.models.reasoningNone") }}</button>
+            <button type="button" class="cp-chip" :aria-pressed="row.thinking.on && row.thinking.efforts.join() === standardEfforts.join()" @click="setEfforts(row, standardEfforts)">low·medium·high</button>
+            <button type="button" class="cp-chip" :aria-pressed="row.thinking.on && row.thinking.efforts.join() === THINKING_LEVELS.join()" @click="setEfforts(row, THINKING_LEVELS)">{{ t("set.models.reasoningAll") }}</button>
+          </div>
+          <div class="cp-think-switches">
+            <label class="cp-tick">
+              <input v-model="row.thinking.on" type="checkbox" data-model-thinking="on" />
+              {{ t("set.models.thinkingOn") }}
+            </label>
+            <template v-if="row.thinking.on">
+              <label class="cp-tick">
+                <input type="checkbox" :checked="!row.thinking.canOff" data-model-thinking="only" @change="setCanOff(row, !($event.target as HTMLInputElement).checked)" />
+                {{ t("set.models.thinkingOnly") }}
+              </label>
+              <label class="cp-tick">
+                <input type="checkbox" :checked="row.thinking.canOff" data-model-thinking="canOff" @change="setCanOff(row, ($event.target as HTMLInputElement).checked)" />
+                {{ t("set.models.thinkingCanOff") }}
+              </label>
+            </template>
+          </div>
+          <template v-if="row.thinking.on">
+            <div class="cp-think-field">
+              <div class="cp-think-label">{{ t("set.models.thinkingDefault") }}</div>
+              <SelectMenu
+                class="cp-select"
+                :model-value="row.thinking.default ?? 'auto'"
+                :options="defaultOptions(row)"
+                match-width
+                :data-model-effort-default="row.id"
+                @update:model-value="row.thinking.default = $event === 'auto' ? undefined : ($event as Effort)"
+              />
+            </div>
+            <div class="cp-think-field">
+              <div class="cp-think-label">{{ t("set.models.thinkingEfforts") }}</div>
+              <div class="cp-think-grid">
+                <button v-for="level in THINKING_LEVELS" :key="level" type="button" class="cp-chip" :aria-pressed="row.thinking.efforts.includes(level)" :disabled="row.thinking.efforts.length === 1 && row.thinking.efforts.includes(level)" :data-model-effort="level" @click="toggleLevel(row, level)">
+                  {{ levelLabel(level) }}
+                </button>
+              </div>
+            </div>
+          </template>
+        </div>
+      </template>
+      <div v-if="modelIdError(row)" class="cp-error" role="alert">{{ modelIdError(row) }}</div>
+      <div v-if="limitProblem(row)" class="cp-error" data-model-limit-error>{{ t(limitProblem(row) === "integer" ? "provider.custom.limitInvalid" : "set.models.limitPair") }}</div>
     </div>
 
-    <div class="cp-section">{{ t("provider.custom.headers.label") }}</div>
-    <div v-for="(row, at) in form.headers" :key="`header-${at}`" class="cp-header">
-      <div class="cp-cell">
-        <input
-          v-model="row.key"
-          class="cp-in small"
-          :aria-label="t('provider.custom.headers.key.label')"
-          :placeholder="t('provider.custom.headers.key.placeholder')"
-          spellcheck="false"
-          autocomplete="off"
-        />
-        <div v-if="headerProblems[at]?.key" class="cp-error">{{ headerProblems[at].key }}</div>
+    <details class="cp-headers" :open="preset === 'custom' || Boolean(editing?.headers)">
+      <summary class="cp-section">{{ t("provider.custom.headers.label") }}</summary>
+      <div v-for="(row, at) in form.headers" :key="`header-${at}`" class="cp-header">
+        <div class="cp-cell">
+          <input
+            v-model="row.key"
+            class="cp-in small"
+            :aria-label="t('provider.custom.headers.key.label')"
+            :placeholder="t('provider.custom.headers.key.placeholder')"
+            spellcheck="false"
+            autocomplete="off"
+          />
+          <div v-if="headerProblems[at]?.key" class="cp-error">{{ headerProblems[at].key }}</div>
+        </div>
+        <div class="cp-cell">
+          <input
+            v-model="row.value"
+            class="cp-in small"
+            :aria-label="t('provider.custom.headers.value.label')"
+            :placeholder="t('provider.custom.headers.value.placeholder')"
+            spellcheck="false"
+            autocomplete="off"
+          />
+          <div v-if="headerProblems[at]?.value" class="cp-error">{{ headerProblems[at].value }}</div>
+        </div>
+        <button
+          type="button"
+          class="cp-drop"
+          :disabled="form.headers.length <= 1"
+          :aria-label="t('provider.custom.headers.remove')"
+          :title="t('provider.custom.headers.remove')"
+          @click="removeHeader(at)"
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+            <path d="M3 3.6h8M5.6 3.6V2.4h2.8v1.2M4.2 3.6l.5 7.4h4.6l.5-7.4" stroke="currentColor" stroke-width="1.1" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
       </div>
-      <div class="cp-cell">
-        <input
-          v-model="row.value"
-          class="cp-in small"
-          :aria-label="t('provider.custom.headers.value.label')"
-          :placeholder="t('provider.custom.headers.value.placeholder')"
-          spellcheck="false"
-          autocomplete="off"
-        />
-        <div v-if="headerProblems[at]?.value" class="cp-error">{{ headerProblems[at].value }}</div>
-      </div>
-      <button
-        type="button"
-        class="cp-drop"
-        :disabled="form.headers.length <= 1"
-        :aria-label="t('provider.custom.headers.remove')"
-        :title="t('provider.custom.headers.remove')"
-        @click="removeHeader(at)"
-      >
-        <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
-          <path d="M3 3.6h8M5.6 3.6V2.4h2.8v1.2M4.2 3.6l.5 7.4h4.6l.5-7.4" stroke="currentColor" stroke-width="1.1" fill="none" stroke-linecap="round" stroke-linejoin="round" />
-        </svg>
-      </button>
-    </div>
-    <button type="button" class="cp-add" @click="addHeader">+ {{ t("provider.custom.headers.add") }}</button>
+      <button type="button" class="cp-add" @click="addHeader">+ {{ t("provider.custom.headers.add") }}</button>
+    </details>
 
     <button v-if="standalone" class="cp-submit" type="submit" :disabled="busy || !canSave || (editing && !dirty)" data-custom-save>
       {{ busy ? t("common.saving") : editing && !dirty ? t("common.saved") : t("common.save") }}
@@ -879,6 +958,34 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
 </template>
 
 <style scoped>
+.cp-headers > .cp-header,
+.cp-headers > .cp-add {
+  margin-top: 8px;
+}
+
+.cp-model-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+
+.cp-chip {
+  padding: 4px 8px;
+  border: 1px solid var(--text-weaker);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-base);
+  cursor: pointer;
+}
+
+.cp-chip[aria-pressed="true"] {
+  color: var(--text-strong);
+  border-color: var(--text-strong);
+  background: var(--surface-hover);
+}
+
 /* MiMo's page body: 16 between the blocks, 8 between one model card and the next. */
 .cp {
   display: flex;

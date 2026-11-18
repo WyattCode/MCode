@@ -52,7 +52,7 @@ export async function roundTwentyDeChecks(check: Check, section: (name: string) 
   {
     const form = await read("src/renderer/src/components/CustomProviderForm.vue")
     const field = /<input[^>]*data-model-limit-custom[^>]*\/>/.exec(form)?.[0] ?? ""
-    check("D-4: the field shows the limit itself, a preset included", /:value="row\[field\] !== undefined \? String\(row\[field\]\) : ''"/.test(field), field)
+    check("D-4: the field shows the limit itself, a preset included", /v-model="row\[field\]"/.test(field), field)
     check("D-4: no preset test blanks it while typing", !/LIMIT_PRESETS/.test(field), field)
   }
 
@@ -61,10 +61,10 @@ export async function roundTwentyDeChecks(check: Check, section: (name: string) 
     const form = await read("src/renderer/src/components/CustomProviderForm.vue")
     const submit = /async function submit\(\)[^{]*\{([\s\S]*?)\n\}/.exec(form)?.[1] ?? ""
     const remove = /async function confirmRemoveModel\(\) \{([\s\S]*?)\n\}/.exec(form)?.[1] ?? ""
-    check("D-6: the saved state can move", /const pristine = ref\(JSON\.stringify\(form\.value\)\)/.test(form) && /!== pristine\.value\)/.test(form))
+    check("D-6: the saved state can move", /const pristine = ref\(snapshot\(\)\)/.test(form) && /!== pristine\.value\)/.test(form))
     check(
       "D-6: a save makes the form as saved the clean one",
-      /await app\.addCustomProvider\(entry\)\n\s*pristine\.value = JSON\.stringify\(form\.value\)/.test(submit),
+      /await app\.addCustomProvider\(entry\)[\s\S]*?pristine\.value = snapshot\(\)/.test(submit),
       submit,
     )
     check("D-6: a removed model, saved at once, leaves the saved form too", /saved\.models = saved\.models\.filter\(\(entry\) => entry\.key !== row\.key\)/.test(remove) && /pristine\.value = JSON\.stringify\(saved\)/.test(remove), remove)

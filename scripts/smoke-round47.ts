@@ -117,5 +117,5 @@ export async function roundFortySevenChecks(check: Check, section: (name: string
   check("and saved on the model only when thinking is on", /if \(row\.thinking\.on\) \{\s*model\.thinking = \{/.test(form))
   check("'thinking only' and 'may be turned off' are one switch seen from both ends", form.includes("setCanOff(row, !(") && form.includes("setCanOff(row, ($event"))
   // A thinking model with no level has an empty menu and sends no effort - it silently stops thinking.
-  check("the last level cannot be unchecked, in the box or in the handler", /if \(!kept\.length\) \{\s*input\.checked = true\s*return/.test(form) && /:disabled="row\.thinking\.efforts\.length === 1 && row\.thinking\.efforts\.includes\(level\)"/.test(form))
+  check("the last level stays selected until the thinking preset or switch turns it off", /if \(efforts\.length\) setEfforts\(row, efforts\)/.test(form) && /:disabled="row\.thinking\.efforts\.length === 1 && row\.thinking\.efforts\.includes\(level\)"/.test(form))
 }
