@@ -6,6 +6,7 @@ import ModelsPage from "./ModelsPage.vue"
 import ContextMenu from "./ContextMenu.vue"
 import { SMART_THRESHOLD } from "@shared/smart"
 import type { ModelRef, ResponseMap } from "@shared/protocol"
+import LabEvolve from "./LabEvolve.vue"
 import { LANGUAGES, ago, compactTokens, dayLabel, language, sessionTitle, t, type Language } from "../lib/i18n"
 import { pickDirectory, pickProjectFolder } from "../lib/native-pick"
 import { wordMatch } from "../lib/word-match"
@@ -3621,14 +3622,9 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <!-- Archive -->
-        <!--
-          MiMo 26.920's lab, one card per switch. Only session chat is here:
-          its other two switches (Git version preview, the uncommitted-changes
-          reminder) ship off and MCode has neither behaviour behind them.
-        -->
         <template v-else-if="section === 'lab'">
           <h2>{{ t("set.nav.lab") }}</h2>
+          <LabEvolve />
           <div class="card" data-lab-session-chat>
             <div class="line">
               <div class="line-text">

@@ -1480,6 +1480,23 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     case "git.commit":
       return (await git.commit(request.directory, request.message, request.includeUnstaged)) satisfies Handled<"git.commit">
 
+    case "lab.state":
+    case "lab.start":
+    case "lab.stop":
+    case "lab.createPR": {
+      const lab = runtime.lab
+      if (!lab) throw Error("Lab is unavailable")
+      switch (request.type) {
+        case "lab.state": return (await lab.state(request.id)) satisfies Handled<"lab.state">
+        case "lab.stop": return lab.stop() satisfies Handled<"lab.stop">
+        case "lab.createPR": return (await lab.createPR(request.id)) satisfies Handled<"lab.createPR">
+        case "lab.start": {
+          const session = await runtime.sessions.require(request.sessionID)
+          if (session.scratch) throw Error("Open a session in the MCode repository")
+          return (await lab.start(session.id, session.directory, request)) satisfies Handled<"lab.start">
+        }
+      }
+    }
     case "git.push":
       return (await git.push(request.directory)) satisfies Handled<"git.push">
 

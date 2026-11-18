@@ -827,15 +827,35 @@ async function pushNow(directory: string): Promise<PushResult> {
     const upstream = (await git(root, ["rev-parse", "--abbrev-ref", "@{u}"]).catch(() => "")).trim()
     const refspec = `refs/heads/${branch}:refs/heads/${branch}`
     const args = upstream ? ["push", "origin", refspec] : ["push", "-u", "origin", refspec]
-    const env: NodeJS.ProcessEnv = { GIT_TERMINAL_PROMPT: "0" }
-    // Batch mode for ssh, unless the user already chose how git reaches ssh.
-    const sshCommand = (await git(root, ["config", "--get", "core.sshCommand"]).catch(() => "")).trim()
-    if (!process.env.GIT_SSH_COMMAND && !process.env.GIT_SSH && !sshCommand) env.GIT_SSH_COMMAND = "ssh -oBatchMode=yes"
-    await git(root, args, { timeout: PUSH_TIMEOUT_MS, env })
+    await pushToOrigin(root, args)
     return { ok: true }
   } catch (err) {
     return pushFailure(err)
   }
+}
+
+// Publish a verified object to a single remote branch without changing the checkout or its upstream.
+export async function pushRef(directory: string, branch: string, head: string): Promise<PushResult> {
+  const root = await toplevel(directory)
+  return serialisedWrite(root, directory, async () => {
+    try {
+      await pushToOrigin(root, [
+        "-c", "remote.origin.mirror=false", "push", "--no-follow-tags",
+        "--recurse-submodules=no", "origin", `${head}:refs/heads/${branch}`,
+      ])
+      return { ok: true }
+    } catch (error) {
+      return pushFailure(error)
+    }
+  })
+}
+
+async function pushToOrigin(root: string, args: string[]): Promise<void> {
+  const env: NodeJS.ProcessEnv = { GIT_TERMINAL_PROMPT: "0" }
+  // Batch mode for ssh, unless the user already chose how git reaches ssh.
+  const sshCommand = (await git(root, ["config", "--get", "core.sshCommand"]).catch(() => "")).trim()
+  if (!process.env.GIT_SSH_COMMAND && !process.env.GIT_SSH && !sshCommand) env.GIT_SSH_COMMAND = "ssh -oBatchMode=yes"
+  await git(root, args, { timeout: PUSH_TIMEOUT_MS, env })
 }
 
 // ------------------------------------------------------ commit message text
