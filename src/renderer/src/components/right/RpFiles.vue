@@ -19,7 +19,8 @@ import { crumbsFor, editCounts, fileCategory, rowIndent, saveFailureKey, treeRow
 import { centreRange, clearPaint, paintRanges, textRanges } from "../../lib/dom-find"
 import { notify, notifyFailure } from "../../lib/toast"
 import { t } from "../../lib/i18n"
-import { modHeld } from "../../lib/keys"
+import { chordOf } from "../../lib/keys"
+import { boundShortcut, FIND_SHORTCUT_DEFAULT } from "@shared/chord"
 import { writeText } from "./../../lib/clipboard"
 
 /**
@@ -544,7 +545,8 @@ const findCount = computed(() =>
  * own shortcuts see it.
  */
 function onWindowKey(event: KeyboardEvent) {
-  if (!modHeld(event, app.platform) || event.altKey || event.shiftKey || event.key.toLowerCase() !== "f") return
+  const binding = boundShortcut({ id: "app.find", hint: FIND_SHORTCUT_DEFAULT }, app.config?.keybinds ?? {})
+  if (!binding || event.defaultPrevented || chordOf(event, app.platform) !== binding) return
   const element = wrapper.value
   if (!rp.open || !element || !element.offsetParent) return
   if (document.querySelector("[aria-modal='true']")) return

@@ -205,13 +205,10 @@ export async function roundTwentyThreeChecks(check: Check, section: (name: strin
   section("Round 23 (5): two renderer subscriptions that outlive the tab that made them")
   {
     const bridge = code(await read("src/renderer/src/lib/browser-bridge.ts"))
-    /*
-     * Installed from the first browser tab's onMounted, and Vue gives a watcher
-     * made inside a lifecycle hook to that component - so it was stopped when
-     * that tab unmounted, which a conversation switch does, while `installed`
-     * stayed true. From then on rebinding a shortcut never reached the pages.
-     */
-    check("the browser bridge's chord watcher is in a scope of its own, so a tab closing cannot stop it", /effectScope\(true\)\.run\(/.test(bridge))
+    const shell = code(await read("src/renderer/src/App.vue"))
+    check("the window publishes the current browser bindings independently of panel tabs",
+      /watch\([\s\S]{0,170}keyboardCommands\.value[\s\S]{0,170}window\.mcode\.browserKeys/.test(shell) &&
+      !/\bwatch\(/.test(bridge))
     const settings = code(await read("src/renderer/src/components/SettingsDialog.vue"))
     check("the settings dialog follows a page asked for while it is already open", /watch\(\s*\(\) => props\.section,/.test(settings))
   }

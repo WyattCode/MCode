@@ -24,6 +24,8 @@ const CODE_KEYS: Record<string, string> = {
   Tab: "Tab",
   Enter: "Enter",
   NumpadEnter: "Enter",
+  NumpadAdd: "NumpadAdd",
+  NumpadSubtract: "NumpadSubtract",
   Escape: "Escape",
   Backspace: "Backspace",
   Delete: "Delete",

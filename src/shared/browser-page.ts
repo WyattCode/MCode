@@ -135,37 +135,6 @@ export interface PageKeyInput {
 }
 
 /**
- * The app's own chords, in the spelling `chordOf` in the renderer's keys.ts
- * writes: Ctrl (MiMo's `mod`), Alt, Shift, Meta (the other key), then the key
- * upper-cased.
- *
- * These are the chords App.vue's keydown handler answers. A page that has
- * focus swallows every key, so without this list none of them would work while
- * the reader is in a page. The smoke test reads App.vue's handler tables and
- * fails when a chord there is missing here.
- */
-export const APP_CHORDS: readonly string[] = [
-  ...["B", "P", "R", "A", "S", "U", "C", "L"].map((key) => `Ctrl+Alt+${key}`),
-  ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((digit) => `Ctrl+${digit}`),
-  ...["K", "P", "B", ",", "N", "T", "J", "O", "W", "L", ".", "[", "]"].map((key) => `Ctrl+${key}`),
-  ...["[", "]", "M", "C", "G", "L", "B", "?", "/"].map((key) => `Ctrl+Shift+${key}`),
-]
-
-/**
- * MiMo's `ctrl` chords - the terminal and the recent conversations - which are
- * the Control key on every system: stored as Meta on macOS, where Ctrl is the
- * command key, and as Ctrl elsewhere.
- */
-export function controlChords(platform: string): string[] {
-  return platform === "darwin" ? ["Meta+`", "Meta+Tab", "Shift+Meta+Tab"] : ["Ctrl+`", "Ctrl+Tab", "Ctrl+Shift+Tab"]
-}
-
-/** Every chord the window answers on a platform. */
-export function appChords(platform: string): string[] {
-  return [...APP_CHORDS, ...controlChords(platform)]
-}
-
-/**
  * Chords the page keeps even when the app has them: find, copy, select all and
  * paste belong to the text in the page (MiMo's `BQ`).
  */
@@ -175,6 +144,7 @@ export const PAGE_KEEPS: readonly string[] = ["Ctrl+F", "Ctrl+C", "Ctrl+A", "Ctr
 const CODE_CHAR: Record<string, string> = {
   Period: ".", Comma: ",", Slash: "/", Semicolon: ";", Quote: "'", Backquote: "`",
   BracketLeft: "[", BracketRight: "]", Minus: "-", Equal: "=", Backslash: "\\", Tab: "Tab",
+  NumpadAdd: "NumpadAdd", NumpadSubtract: "NumpadSubtract",
 }
 
 function mainKey(key: string): string {
@@ -208,29 +178,25 @@ export function chordsOfInput(input: PageKeyInput, platform = ""): string[] {
   const prefix = parts.length ? `${parts.join("+")}+` : ""
   const out = [`${prefix}${mainKey(input.key)}`]
   const byCode = codeKey(input.code)
-  if (byCode && !out.includes(`${prefix}${byCode}`)) out.push(`${prefix}${byCode}`)
+  if (byCode && !out.includes(`${prefix}${byCode}`)) out.unshift(`${prefix}${byCode}`)
   return out
 }
 
 export type PageKeyAction = { kind: "none" } | { kind: "reload"; force: boolean } | { kind: "forward" }
 
-/**
- * What a key pressed inside a page should do.
- *
- * Reload is answered for the page itself, which is the page the reader is in:
- * MiMo leaves Ctrl+R to the page, where an Electron view does nothing with it.
- * Any other chord the app answers - built in, or one the reader has bound - is
- * taken from the page and handed to the window.
- */
-export function pageKeyAction(input: PageKeyInput, bound: ReadonlySet<string> = new Set(), platform = ""): PageKeyAction {
+/** Dispatches using the owning window's effective shortcuts, with editing keys kept by the page. */
+export function pageKeyAction(input: PageKeyInput, bound: ReadonlyMap<string, string>, platform = ""): PageKeyAction {
   if (input.type !== "keyDown") return { kind: "none" }
-  if (!input.control && !input.meta && !input.alt) return { kind: "none" }
   const chords = chordsOfInput(input, platform)
-  if (!chords.length || chords.some((chord) => PAGE_KEEPS.includes(chord))) return { kind: "none" }
-  if (chords.includes("Ctrl+R")) return { kind: "reload", force: false }
-  if (chords.includes("Ctrl+Shift+R")) return { kind: "reload", force: true }
-  const answered = appChords(platform)
-  if (chords.some((chord) => answered.includes(chord) || bound.has(chord))) return { kind: "forward" }
+  if (chords.some((chord) => PAGE_KEEPS.includes(chord))) return { kind: "none" }
+  for (const chord of chords) {
+    const command = bound.get(chord)
+    if (!command) continue
+    if (command === "browser.reload" || command === "browser.forceReload") {
+      return { kind: "reload", force: command === "browser.forceReload" }
+    }
+    return { kind: "forward" }
+  }
   return { kind: "none" }
 }
 

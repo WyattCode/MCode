@@ -1,3 +1,4 @@
+import { boundShortcut } from "@shared/chord"
 import type { RightTabType, RightTool } from "../stores/right-panel"
 
 /*
@@ -106,7 +107,7 @@ export const LAUNCH_HINTED: RightTool[] = ["files", "browser"]
  * names nothing.
  */
 export function boundChord(id: string, builtIn: string | undefined, binds: Record<string, string>): string | undefined {
-  return (id in binds ? binds[id] : builtIn) || undefined
+  return boundShortcut({ id, hint: builtIn }, binds) || undefined
 }
 
 /** Each tool's shortcut as bound now, so a rebinding shows in the launcher and the plus menu. */

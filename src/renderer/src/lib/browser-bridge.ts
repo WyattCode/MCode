@@ -1,6 +1,4 @@
-import { effectScope, watch } from "vue"
 import { browserTabFace } from "@shared/browser-page"
-import { useApp } from "../stores/app"
 import { useRightPanel } from "../stores/right-panel"
 
 /**
@@ -19,7 +17,6 @@ export function installBrowserBridge(): void {
   if (installed || !window.mcode) return
   installed = true
   const rp = useRightPanel()
-  const app = useApp()
 
   /* MiMo's new tab for a popup: the page is already made, the tab takes it and shows it. */
   window.mcode.onBrowserOpenTab((pageId) => {
@@ -53,27 +50,4 @@ export function installBrowserBridge(): void {
     const target = document.activeElement instanceof HTMLElement ? document.activeElement : document.body
     target.dispatchEvent(new KeyboardEvent("keydown", { ...key, bubbles: true, cancelable: true }))
   })
-
-  /*
-   * The reader's own chords, so a rebound command is reachable from inside a page too.
-   *
-   * In a scope of its own, because this runs from the first browser tab's
-   * `onMounted`, and Vue gives any watcher created inside a lifecycle hook to
-   * that component - so this one was stopped the moment that tab unmounted,
-   * which a conversation switch does. The three subscriptions above survived,
-   * `installed` stayed true, and nothing made it again: from then on rebinding
-   * a shortcut never reached the pages, and chords pressed inside one kept
-   * whatever bindings had been in force at that moment. Detached, it lives as
-   * long as the window, which is what the note at the top promises.
-   */
-  effectScope(true).run(() =>
-    watch(
-      () =>
-        Object.values(app.config?.keybinds ?? {})
-          .filter((chord): chord is string => typeof chord === "string" && chord.length > 0)
-          .join("\n"),
-      (joined) => window.mcode.browserKeys(joined ? joined.split("\n") : []),
-      { immediate: true },
-    ),
-  )
 }

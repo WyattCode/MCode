@@ -3,11 +3,25 @@ import { label } from "./labels"
 import { applyZoom } from "./zoom"
 import { toggleMaximize } from "./window-state"
 import { APP_NAME, quitPress } from "./desktop-rules"
+import { beginIntentionalQuit } from "./recovery"
 import pkg from "../../package.json"
 import { menuAccelerator, type MenuCommand, type MenuKeys } from "./menu-keys"
 
 /* When the first Cmd+Q was pressed, while it is still waiting for a second. */
 let quitArmedAt: number | undefined
+
+export function requestAppQuit(fromShortcut = false): void {
+  if (fromShortcut && process.platform === "darwin") {
+    const press = quitPress(quitArmedAt, Date.now())
+    quitArmedAt = press.armedAt
+    if (!press.quit) {
+      BrowserWindow.getFocusedWindow()?.webContents.send("mcode:quit-hint")
+      return
+    }
+  }
+  beginIntentionalQuit()
+  app.quit()
+}
 
 /**
  * MiMo's 关于 box: a native message box naming the app, its version and the
@@ -91,7 +105,10 @@ function toggleFocusedMaximize(): void {
 
 /** Rebuilds the menu; new bindings (and whether one is being recorded) replace the last ones. */
 export function buildMenu(next?: MenuKeys): void {
-  if (next) keys = next
+  if (next) {
+    if (next.binds["app.quit"] !== keys.binds["app.quit"]) quitArmedAt = undefined
+    keys = next
+  }
   /** The translated label, or the English written here as the fallback. */
   const L = label
 
@@ -121,23 +138,11 @@ export function buildMenu(next?: MenuKeys): void {
             ] as MenuItemConstructorOptions[])
           : []),
         separator,
-        isMac
-          ? {
-              /*
-               * MiMo's macOS quit: the chord only arms, and says so in the window;
-               * a second Cmd+Q within two seconds quits. Choosing the row quits at once.
-               */
-              label: L("menu.quitApp", "Quit MCode"),
-              accelerator: "CmdOrCtrl+Q",
-              click: (_item, _window, event) => {
-                if (!event.triggeredByAccelerator) return app.quit()
-                const press = quitPress(quitArmedAt, Date.now())
-                quitArmedAt = press.armedAt
-                if (press.quit) return app.quit()
-                BrowserWindow.getFocusedWindow()?.webContents.send("mcode:quit-hint")
-              },
-            }
-          : { role: "quit", label: L("menu.quitApp", "Quit MCode"), accelerator: "CmdOrCtrl+Q" },
+        {
+          label: L("menu.quitApp", "Quit MCode"),
+          ...command("quit"),
+          click: (_item, _window, event) => requestAppQuit(event.triggeredByAccelerator),
+        },
       ],
     },
     {
@@ -186,17 +191,9 @@ export function buildMenu(next?: MenuKeys): void {
         // knows nothing about the clamp in zoom.ts or the caption band that has
         // to be redrawn under a rescaled page. The renderer answers these keys
         // ahead of any dialog guard, so it still shows the zoom indicator.
-        { label: L("menu.resetZoom", "Actual Size"), ...shown("CmdOrCtrl+0"), click: zoom("reset") },
-        { label: L("menu.zoomIn", "Zoom In"), ...shown("CmdOrCtrl+Plus"), click: zoom("in") },
-        /*
-         * Cmd+= is the unshifted spelling of Cmd+plus, and macOS registers a
-         * menu accelerator whether or not the item is drawn - so this hidden
-         * twin is what answers that key there. On Windows it registers nothing
-         * and shows nothing; the renderer's keymap already knows both
-         * spellings, and the numpad's besides.
-         */
-        { label: L("menu.zoomIn", "Zoom In"), ...shown("CmdOrCtrl+="), visible: false, click: zoom("in") },
-        { label: L("menu.zoomOut", "Zoom Out"), ...shown("CmdOrCtrl+-"), click: zoom("out") },
+        { label: L("menu.resetZoom", "Actual Size"), ...command("zoomReset"), click: zoom("reset") },
+        { label: L("menu.zoomIn", "Zoom In"), ...command("zoomIn"), click: zoom("in") },
+        { label: L("menu.zoomOut", "Zoom Out"), ...command("zoomOut"), click: zoom("out") },
         /* macOS brings its own full screen item to the View menu. */
         ...(isMac
           ? []

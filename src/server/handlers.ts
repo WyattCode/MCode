@@ -1,3 +1,4 @@
+import { sameShortcutBindings } from "@shared/chord"
 import fs from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
@@ -886,6 +887,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
        */
       return {
         config: runtime.config.get(),
+        keybindsUnreadable: runtime.config.keybindsUnreadable,
         ...(runtime.config.unreadable ? { unreadable: runtime.config.unreadable } : {}),
         ...(runtime.config.fromNewerVersion ? { fromNewerVersion: true } : {}),
         // L12-2: saved keys that could not be read are said too, not left to look like a first run.
@@ -904,7 +906,15 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "config.set": {
       // The window was sent masked secrets; one it sends back unchanged keeps the stored value.
-      const config = await runtime.config.set(restoreMasked(runtime.config.get(), request.patch))
+      const config = await runtime.config.update((current) => {
+        const patch = restoreMasked(current, request.patch)
+        if (request.expectedKeybinds && patch.keybinds && !sameShortcutBindings(current.keybinds, request.expectedKeybinds)) {
+          // A retry after the response was lost is already saved.
+          if (sameShortcutBindings(current.keybinds, patch.keybinds)) return {}
+          throw new CodedError("Shortcuts changed in another window", "set.keys.saveFailed")
+        }
+        return patch
+      })
       if (request.patch.allowFullAccess === false) await runtime.sessions.dropFullAccess()
       return { config } satisfies Handled<"config.set">
     }

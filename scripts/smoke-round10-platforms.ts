@@ -27,7 +27,7 @@ import { searchFolder, searchTree } from "../src/server/handlers"
 import { packageTarget } from "./package-target.mjs"
 import { dataDirs, desktopId, entryIcon, linuxIconSync, type IconSyncHost } from "../src/main/linux-icon-sync"
 import sharp from "sharp"
-import { appChords, pageKeyAction, type PageKeyInput } from "../src/shared/browser-page"
+import { pageKeyAction, type PageKeyInput } from "../src/shared/browser-page"
 import { chordOf, controlChord, controlHeld, formatChord, modHeld } from "../src/renderer/src/lib/keys"
 
 /** Every .ts and .vue file under a folder, as text keyed by its path. */
@@ -119,22 +119,21 @@ export async function roundTenPlatformChecks(check: Check, section: (name: strin
 
     // Inside a browser tab the page is asked first; the same split decides what reaches the window.
     const press = (key: string, code: string, mods: Partial<PageKeyInput>): PageKeyInput => ({ type: "keyDown", key, code, control: false, shift: false, alt: false, meta: false, ...mods })
-    check("M10-2: in a page on a Mac, Control+K stays with the page", pageKeyAction(press("k", "KeyK", { control: true }), new Set(), "darwin").kind === "none")
-    check("M10-2: and Command+K reaches the window", pageKeyAction(press("k", "KeyK", { meta: true }), new Set(), "darwin").kind === "forward")
-    check("M10-2: Control+` and Control+Tab reach it, Command+` does not", pageKeyAction(press("`", "Backquote", { control: true }), new Set(), "darwin").kind === "forward" && pageKeyAction(press("Tab", "Tab", { control: true, shift: true }), new Set(), "darwin").kind === "forward" && pageKeyAction(press("`", "Backquote", { meta: true }), new Set(), "darwin").kind === "none")
-    check("M10-2: on Windows Ctrl+` and Ctrl+Tab still reach it, the Windows key does not", pageKeyAction(press("`", "Backquote", { control: true }), new Set(), "win32").kind === "forward" && pageKeyAction(press("Tab", "Tab", { control: true }), new Set(), "win32").kind === "forward" && pageKeyAction(press("k", "KeyK", { meta: true }), new Set(), "win32").kind === "none")
-    check("M10-2: the page's list names the terminal chord as the window stores it", appChords("darwin").includes(controlChord("`", "darwin")) && appChords("win32").includes(controlChord("`", "win32")) && appChords("darwin").includes(controlChord("Shift+Tab", "darwin")))
+    const mac = new Map([["Ctrl+K", "app.search"], ["Meta+`", "view.terminal"], ["Shift+Meta+Tab", "session.prevRecent"]])
+    const win = new Map([["Ctrl+K", "app.search"], ["Ctrl+`", "view.terminal"], ["Ctrl+Tab", "session.nextRecent"]])
+    check("M10-2: in a page on a Mac, Control+K stays with the page", pageKeyAction(press("k", "KeyK", { control: true }), mac, "darwin").kind === "none")
+    check("M10-2: and Command+K reaches the window", pageKeyAction(press("k", "KeyK", { meta: true }), mac, "darwin").kind === "forward")
+    check("M10-2: Control+` and Control+Tab reach it, Command+` does not", pageKeyAction(press("`", "Backquote", { control: true }), mac, "darwin").kind === "forward" && pageKeyAction(press("Tab", "Tab", { control: true, shift: true }), mac, "darwin").kind === "forward" && pageKeyAction(press("`", "Backquote", { meta: true }), mac, "darwin").kind === "none")
+    check("M10-2: on Windows Ctrl+` and Ctrl+Tab still reach it, the Windows key does not", pageKeyAction(press("`", "Backquote", { control: true }), win, "win32").kind === "forward" && pageKeyAction(press("Tab", "Tab", { control: true }), win, "win32").kind === "forward" && pageKeyAction(press("k", "KeyK", { meta: true }), win, "win32").kind === "none")
     const pageModule = await fs.readFile(path.join(root, "src/main/browser-page.ts"), "utf8")
     check("M10-2: the page asks with this system's platform", /pageKeyAction\(input, boundChords, process\.platform\)/.test(pageModule))
 
     const appVue = await fs.readFile(path.join(root, "src/renderer/src/App.vue"), "utf8")
     const handler = appVue.slice(appVue.indexOf("function onKeydown("), appVue.indexOf("const menuCommands"))
-    check("M10-2: the key handler never folds Command into Ctrl", handler.length > 1000 && !/ctrlKey\s*\|\|\s*event\.metaKey/.test(handler) && /modHeld\(event, platform\)/.test(handler))
-    check("M10-2: the key handler reads rebindings with the platform", /chordOf\(event, platform\)/.test(handler))
-    check("M10-2: the terminal is not in the Command table", !/"`":/.test(handler) && /controlHeld\(event\)[^\n]*Backquote/.test(handler))
+    check("M10-2: the key handler dispatches the platform chord through the binding table", /keyboardCommands\.value\.get\(chordOf\(event, app\.platform\)\)/.test(handler))
     check("M10-2: the terminal and recent-chat hints are MiMo's ctrl chords", /hint: controlChord\("`", app\.platform\)/.test(appVue) && /hint: controlChord\("Tab", app\.platform\)/.test(appVue) && /hint: controlChord\("Shift\+Tab", app\.platform\)/.test(appVue))
     const settings = await fs.readFile(path.join(root, "src/renderer/src/components/SettingsDialog.vue"), "utf8")
-    check("M10-2: recording a chord knows the platform", !/chordOf\(event\)/.test(settings) && /chordOf\(event, app\.platform\)/.test(settings))
+    check("M10-2: recording a chord knows the platform", /recordShortcutKey\(event, app\.platform\)/.test(settings))
     const shown: Array<[string, RegExp]> = [
       ["src/renderer/src/lib/tip.ts", /shownChord\(tip\.hint\)/],
       ["src/renderer/src/components/ContextMenu.vue", /shownChord\(item\.hint\)[\s\S]*shownChord\(child\.hint\)/],
@@ -333,15 +332,14 @@ export async function roundTenPlatformChecks(check: Check, section: (name: strin
       // The command's own entry, from its id to its run.
       const at = appVue.indexOf(`id: "${entry.id}"`)
       const body = at < 0 ? "" : appVue.slice(at, appVue.indexOf("run:", at))
-      const hint = /hint: "([^"]+)"/.exec(body)?.[1]
-      check(`M10-15: ${entry.id} has the same built-in chord in the window and the menu`, hint === entry.chord, hint)
+      check(`M10-15: ${entry.id} reads the same default as the menu`, body.includes(`hint: MENU_SHORTCUT_DEFAULTS["${entry.id}"]`))
     }
     check("M10-15: the IPC takes only strings and a boolean", readMenuKeys({ binds: { a: "Ctrl+A", b: 3 }, recording: true })?.binds.b === undefined && readMenuKeys({ binds: {}, recording: "yes" }) === undefined && readMenuKeys(null) === undefined)
     for (const item of ["settings", "newTask", "openFolder", "close"]) {
       check(`M10-15: the ${item} item takes its chord from the bindings`, new RegExp(`\\.\\.\\.command\\("${item}"\\)`).test(menu))
     }
     const settings = await fs.readFile(path.join(root, "src/renderer/src/components/SettingsDialog.vue"), "utf8")
-    check("M10-15: recording tells the menu, and so does stopping", /recordingChord\.value = true/.test(settings) && /recordingChord\.value = false/.test(settings))
+    check("M10-15: recording tells the menu, and so does stopping", /recordingChord\.value = true/.test(settings) && /recordingChord\.value = keySearch\.value/.test(settings))
     check("M10-15: the window sends the bindings to the menu", /window\.mcode\.menuKeys\?\.\(\{ binds: \{ \.\.\.\(binds \?\? \{\}\) \}, recording \}\)/.test(appVue))
   }
 
