@@ -22,8 +22,9 @@ import { parseFrontmatter } from "./frontmatter"
  *
  * MiMo 26.920 also reads other tools' folders (its 技能兼容路径): the open
  * `.agents` standard by default, and `.claude`, `.codex` and `.opencode` when
- * switched on. Each is `~/.<tool>/skills/**\/SKILL.md`, read after the shipped
- * skills, and `.<tool>/skills` in every folder from the repository root down
+ * switched on. Home roots are read after the shipped skills, with
+ * `~/.config/opencode/skills` following the legacy `~/.opencode/skills`.
+ * Then `.<tool>/skills` in every folder from the repository root down
  * to the conversation's, read before the app's own global folder - the order
  * MiMo's engine reads them in.
  */
@@ -147,7 +148,10 @@ export async function discoverSkills(input: {
   if (input.settings?.sessionChat === false && byName.get(SESSION_CHAT_SKILL)?.builtin) byName.delete(SESSION_CHAT_SKILL)
 
   const home = input.home ?? os.homedir()
-  const externalRoots = [...external.map((folder) => path.join(home, folder)), ...(await projectConfigDirs(input.directory, external))]
+  const homeRoots = external.flatMap((folder) =>
+    folder === ".opencode" ? [path.join(home, folder), path.join(home, ".config", "opencode")] : [path.join(home, folder)],
+  )
+  const externalRoots = [...homeRoots, ...(await projectConfigDirs(input.directory, external))]
   for (const root of externalRoots) {
     for (const file of await scan(path.join(root, "skills"), MAX_DEPTH, (name) => name === "SKILL.md")) {
       await add(byName, problems, file, false)
