@@ -1,5 +1,14 @@
 import fs from "node:fs/promises"
 import path from "node:path"
+import { runGit, type GitRunOptions } from "../git-process"
+
+export function addWorktree(root: string, args: readonly string[], options?: GitRunOptions): Promise<string> {
+  return runGit(root, ["worktree", "add", ...args], options)
+}
+
+export function removeWorktree(root: string, directory: string, force: boolean, options?: GitRunOptions): Promise<string> {
+  return runGit(root, ["worktree", "remove", ...(force ? ["--force"] : []), directory], options)
+}
 
 /**
  * Which git worktree a path is in, read off the file system the way MiMo reads

@@ -6,6 +6,8 @@ import { resolvePath } from "./fs-util"
 import { AppDriver, WAIT_CAP_MS, type Step } from "../appdrive/driver"
 import { WindowsDriver } from "../appdrive/windows"
 import { AndroidDriver } from "../appdrive/android"
+import { MacOSDriver, requireMacOSHost } from "../appdrive/macos"
+import { classifyMacOSAction } from "../appdrive/macos-risk"
 import { describeStep, type SteppingDriver } from "../appdrive/stepping"
 
 /**
@@ -47,16 +49,24 @@ const ACTIONS = ["click", "double_click", "type", "press", "select", "hover", "s
 /** The most steps one call runs; more is a sign the model is scripting blind rather than looking. */
 export const STEP_LIMIT = 40
 
+export function macOSActions(platform: NodeJS.Platform): "macos"[] {
+  return platform === "darwin" ? ["macos"] : []
+}
+
+const macOS = macOSActions(process.platform).length > 0
+const opening = ["open", "attach", "window", "launch", "android", ...macOSActions(process.platform)]
+
 export const AppTool: ToolDefinition = {
   name: "app",
   description: [
-    "Operate an app the way a person would - click, type, choose, press keys - to try out what you built: a web page, an Electron app, a native Windows program, or an Android app. The window is read as a numbered list of what can be acted on, plus its text; no screenshots are needed.",
+    "Operate an app the way a person would - click, type, choose, press keys - to try out what you built: a web page, an Electron app, a native Windows program, or an Android app. The window is read as a numbered list of what can be acted on, plus its text. macOS can also provide a desktop screenshot.",
     "",
     "Actions",
     "- open {url}: open a page (http, https, file, localhost) in a browser window of this tool's own.",
     "- window {target}: (Windows) take over a native app's window that is already open - WinForms, WPF, Win32, Qt - by part of its title or its program's name.",
     "- launch {program, args?, target?}: (Windows) start a native program and take over the window it shows; close ends it again. Start desktop programs this way, not with bash: a command that runs a window never finishes, and bash stops it when it times out.",
     "- android {target?, package?}: an Android phone or emulator through adb - target picks the device by serial or model when there are several; package (such as com.example.app) starts that app. Install a build first with adb install.",
+    ...(macOS ? ["- macos {app}: open a macOS desktop app by name or bundle ID. Enable Computer Control in Settings. Use click {x, y} in primary-display logical points or click {ref}. Use type {text, ref?, clear?, submit?} and press {key}. Opening and input require human approval."] : []),
     "- attach {port, target?}: connect to an Electron app or a Chromium started with --remote-debugging-port=<port>. Start it yourself first, in the background (electron-vite: `npx electron-vite dev --remoteDebuggingPort 9222`; plain Electron: `npx electron . --remote-debugging-port=9222`; a built app: `app.exe --remote-debugging-port=9222`). target picks a window by title or address.",
     "- snapshot {full?}: read the window again. After the first read only the changes are shown, unless full is true.",
     "- do {steps}: run several steps in one call - this is the fast way to work. They run in order, each waiting by itself until the page settles, and stop at the first that fails. The answer gives every step its own effect - the text it put on the page, a dialog it opened, or \"no visible change\" - and then everything that changed.",
@@ -84,12 +94,13 @@ export const AppTool: ToolDefinition = {
   parameters: {
     type: "object",
     properties: {
-      action: { type: "string", enum: ["open", "window", "launch", "android", "attach", "snapshot", "do", "tabs", "screenshot", "eval", "close"] },
+      action: { type: "string", enum: ["open", "window", "launch", "android", ...macOSActions(process.platform), "attach", "snapshot", "do", "tabs", "screenshot", "eval", "close"] },
       url: { type: "string", description: "open: the page to open" },
       port: { type: "integer", description: "attach: the app's DevTools port" },
       target: { type: "string", description: "window, launch, attach, tabs: a window or tab, by part of its title, its address or program name, or its id" },
       program: { type: "string", description: "launch: the program to start - a path to an .exe, or a command on PATH" },
       package: { type: "string", description: "android: the app to start, by package name" },
+      ...(macOS ? { app: { type: "string", description: "macos: desktop app name or bundle ID" } } : {}),
       args: { type: "array", items: { type: "string" }, description: "launch: its arguments" },
       steps: {
         type: "array",
@@ -105,6 +116,11 @@ export const AppTool: ToolDefinition = {
             url: { type: "string", description: "goto: the address" },
             ms: { type: "integer", description: "wait: how long, or the most to wait for text" },
             submit: { type: "boolean", description: "type: press Enter afterwards" },
+            ...(macOS ? {
+              x: { type: "number", description: "macos click: horizontal position in logical points" },
+              y: { type: "number", description: "macos click: vertical position in logical points" },
+              clear: { type: "boolean", description: "macos type: select existing text before typing" },
+            } : {}),
             dy: { type: "integer", description: "scroll: pixels down (negative for up)" },
           },
           required: ["action"],
@@ -127,10 +143,10 @@ export const AppTool: ToolDefinition = {
     const run = before.then(async () => {
       context.signal.throwIfAborted()
       const action = String(input.action)
-      // Only opening, attaching, or starting something asks; observing and driving what is already
-      // open does not, so those calls are recorded as consulting the gate without a question.
-      if (!["open", "attach", "window", "launch", "android"].includes(action)) context.permissions.waive(context.callID)
-      const surface = action === "open" ? "browser" : ["window", "launch", "android", "attach"].includes(action) ? "computer" : surfaces.get(context.sessionID)
+      // Native macOS batches consult their own approval gate after parsing the steps.
+      const nativeBatch = action === "do" && drivers.get(context.sessionID) instanceof MacOSDriver
+      if (!opening.includes(action) && !nativeBatch) context.permissions.waive(context.callID)
+      const surface = action === "open" ? "browser" : opening.includes(action) ? "computer" : surfaces.get(context.sessionID)
       await context.reportOperation?.(surface)
       context.signal.throwIfAborted()
       let result: ToolResult
@@ -167,6 +183,10 @@ async function perform(input: Record<string, unknown>, context: ToolContext): Pr
   if (action === "window") return nativeWindow(typeof input.target === "string" ? input.target.trim() : "", context)
   if (action === "launch") return launch(input, context)
   if (action === "android") return android(input, context)
+  if (action === "macos") {
+    if (!macOS) throw new ToolError("Native macOS desktop control requires macOS.")
+    return openMacOS(input, context)
+  }
   const driver = drivers.get(context.sessionID)
   if (action === "close") {
     if (!driver) return { output: "Nothing was open.", title: "close" }
@@ -175,7 +195,7 @@ async function perform(input: Record<string, unknown>, context: ToolContext): Pr
     return { output: `Closed ${driver.label}.`, title: "close" }
   }
   if (!driver || !driver.alive) {
-    drivers.delete(context.sessionID)
+    await closeAppOf(context.sessionID)
     throw new ToolError(driver ? "The app's window was closed. Open or attach again." : "Nothing is open yet. Use open with a URL, window or launch for a native app, android for a device, or attach to an app's DevTools port, first.")
   }
   switch (action) {
@@ -183,6 +203,16 @@ async function perform(input: Record<string, unknown>, context: ToolContext): Pr
       return { output: await driver.snapshot(input.full === true), title: "snapshot" }
     case "do": {
       const steps = stepsOf(input.steps)
+      if (driver instanceof MacOSDriver) {
+        // Any input can activate a sensitive surface inside an otherwise ordinary app.
+        if (steps.some((step) => step.action !== "wait")) {
+          await askMacOS(context, driver.label, steps)
+          context.signal.throwIfAborted()
+          if (drivers.get(context.sessionID) !== driver || !driver.alive) throw new ToolError("The desktop session changed. Open the app again.")
+          await driver.activate()
+          context.signal.throwIfAborted()
+        } else context.permissions.waive(context.callID)
+      }
       const { output, done } = await driver.run(steps, context.signal)
       return { output, title: stepsTitle(steps, done), metadata: { steps: steps.length, done } }
     }
@@ -305,6 +335,41 @@ async function android(input: Record<string, unknown>, context: ToolContext) {
   await askToOperate(context, "android", [target, packageName].filter(Boolean).join(" ") || "device", "*")
   const driver = await replace(context, () => AndroidDriver.connect(target, packageName))
   return { output: await driver.snapshot(true), title: packageName ?? driver.label, metadata: { device: driver.label } }
+}
+
+async function askMacOS(context: ToolContext, app: string, steps: Step[]) {
+  const risks = classifyMacOSAction(app, steps)
+  const details = steps.map((step) => JSON.stringify(step))
+  const subject = [app, ...details].join("\n")
+  // PermissionDialog caps its expanded subject at 3,000 characters.
+  if (subject.length > 3000) throw new ToolError("Split the desktop actions into shorter batches so the whole request fits in the approval card.")
+  const [titleCode, title] = risks.includes("destructive-text")
+    ? ["perm.app.macosDestructive", "Approve potentially destructive input"]
+    : risks.length
+      ? ["perm.app.macosSensitive", "Approve sensitive app control"]
+      : ["perm.app.macos", "Approve macOS controls"]
+  await context.permissions.ask({
+    sessionID: context.sessionID,
+    messageID: context.messageID,
+    callID: context.callID,
+    directory: context.directory,
+    kind: "bash",
+    title,
+    titleCode,
+    subject,
+    patterns: [`app: macos ${app}`, ...details.map((step) => `app: macos ${app} ${step}`)],
+    humanOnly: true,
+  })
+}
+
+async function openMacOS(input: Record<string, unknown>, context: ToolContext) {
+  const app = typeof input.app === "string" ? input.app.trim() : ""
+  if (!app || app.startsWith("-") || /[\/\\\x00-\x1f\x7f]/.test(app)) throw new ToolError("macos needs an installed desktop app name or bundle ID, such as TextEdit or com.apple.TextEdit.")
+  requireMacOSHost()
+  await askMacOS(context, app, [])
+  context.signal.throwIfAborted()
+  const driver = await replace(context, () => MacOSDriver.open(app))
+  return { output: await driver.snapshot(true), title: driver.label, metadata: { app } }
 }
 
 /** The longest title a row shows for a batch; the steps themselves are in its output. */

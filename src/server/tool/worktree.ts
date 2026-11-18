@@ -3,9 +3,8 @@ import path from "node:path"
 import type { ToolContext, ToolDefinition, ToolResult } from "./types"
 import { ToolError } from "./types"
 import { resolvePath, truePath } from "./fs-util"
-import { worktreeTop } from "../session/worktree"
+import { addWorktree, removeWorktree, worktreeTop } from "../session/worktree"
 import { branchNameProblem, branchState, worktrees } from "../git"
-import { runGit } from "../git-process"
 
 /**
  * Git worktrees as tools: the repository's other checkouts, made and removed
@@ -117,8 +116,8 @@ export const WorktreeCreateTool: ToolDefinition = {
     }
     const state = await branchState(root)
     try {
-      if (state.branches.includes(branch)) await runGit(root, ["worktree", "add", folder, branch])
-      else await runGit(root, ["worktree", "add", "-b", branch, folder])
+      if (state.branches.includes(branch)) await addWorktree(root, [folder, branch])
+      else await addWorktree(root, ["-b", branch, folder])
     } catch (err) {
       throw new ToolError(`git could not create the worktree: ${failure(err)}`)
     }
@@ -201,7 +200,7 @@ export const WorktreeRemoveTool: ToolDefinition = {
     if (entry.main) throw new ToolError(`Refused: ${target} is the repository's main checkout, not a worktree`)
     await disclosed(context, "Remove worktree", path.relative(context.directory, target) || target, entry.branch ?? "(detached)")
     try {
-      await runGit(root, ["worktree", "remove", ...(input.force === true ? ["--force"] : []), target])
+      await removeWorktree(root, target, input.force === true)
     } catch (err) {
       throw new ToolError(`git could not remove the worktree: ${failure(err)}`)
     }

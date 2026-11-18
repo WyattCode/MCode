@@ -55,7 +55,7 @@ export async function executeOnDevice(remote: RemoteCommand | undefined, tool: s
       // remote shell alias resolves to. Apply the existing forced bash gate.
       await context.permissions.ask({
         ...question, kind: "bash", title: "Run SSH command", subject: shell,
-        preview: `Device: ${target}\nWorking directory: ${String(input.workdir ?? ".")}\n${shell}`, forced: true, requireExplicitApproval: true, always: [],
+        preview: `Device: ${target}\nWorking directory: ${String(input.workdir ?? ".")}\n${shell}`, forced: true, humanOnly: true, always: [],
       })
       command = `cd ${fileArg(input.workdir)} && exec bash -c ${quote(shell)}`
       break

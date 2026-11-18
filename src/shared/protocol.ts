@@ -1,4 +1,5 @@
 import type { SshDevice, SshDeviceInput, SshTest } from "./ssh"
+import type { LabState } from "./lab"
 import type { SmartRoute } from "./smart"
 import type { ProviderPreset, ProviderProtocol } from "./custom-endpoint"
 
@@ -2408,6 +2409,10 @@ export type Request =
   | { type: "git.push"; directory: string }
   /* The current branch's pull request, asked of GitHub's public API; only for GitHub remotes. */
   | { type: "git.pullRequest"; directory: string }
+  | { type: "lab.state"; id?: string }
+  | { type: "lab.start"; sessionID: string; set: string; rounds: number; concurrency: number }
+  | { type: "lab.stop" }
+  | { type: "lab.createPR"; id: string }
   /* Which main repository each conversation folder belongs to, and which folders are gone: MiMo's repoRoots. */
   | { type: "git.repoRoots"; directories: string[] }
   /* A subject line for the pending changes, from the conversation's model; `update …` when it does not answer. */
@@ -2676,6 +2681,10 @@ export interface ResponseMap {
   "git.commit": CommitResult
   "git.push": PushResult
   "git.pullRequest": PullRequestState
+  "lab.state": LabState
+  "lab.start": void
+  "lab.stop": void
+  "lab.createPR": { branch: string; url?: string }
   "git.repoRoots": { roots: Record<string, string>; missing: string[] }
   "git.commitMessage": { message: string; generated: boolean }
   /* Folders first, then files, each by name; dot entries and the ignored folders left out. */

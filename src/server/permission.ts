@@ -220,7 +220,8 @@ interface Pending {
   /** The project its "always" would be kept for, and what it asks about. */
   key: string
   patterns: string[]
-  requireExplicitApproval?: boolean
+  /** Requires a current human response even at full access. */
+  humanOnly?: boolean
   /** What the user said when refusing, if anything. */
   reason?: string
   /** How it was closed, for the record the transcript keeps. */
@@ -495,8 +496,8 @@ export class Permissions {
     always?: string[]
     /** Asked every time and never remembered, whatever was said before; decided from the command when left out. */
     forced?: boolean
-    /** Keep the request pending even at full access. */
-    requireExplicitApproval?: boolean
+    /** Requires a current human response even at full access. */
+    humanOnly?: boolean
     /** A pattern rule asks for this call even where its bucket allows it - a `.env` read - except at full access. */
     patternAsks?: boolean
   }): Promise<void> {
@@ -514,7 +515,7 @@ export class Permissions {
      */
     let action = this.action(input.kind, level, patterns)
     const explicitAsk = patterns.some((pattern) => this.ruleFor(input.kind, pattern)?.effect === "ask")
-    if (input.patternAsks && action === "allow" && level !== "full") action = "ask"
+    if (action === "allow" && (input.humanOnly || (input.patternAsks && level !== "full"))) action = "ask"
     /*
      * Read first, before anything remembered. A bucket switched to Deny has to
      * beat an "always" granted earlier in the same session, or turning a tool
@@ -529,7 +530,7 @@ export class Permissions {
      * the middle level nor the model's review ever answers it.
      */
     const risk = input.kind === "bash" ? commandRisk(input.subject) : undefined
-    const forced = input.forced ?? (risk !== undefined && LOST_WORK.includes(risk))
+    const forced = input.humanOnly || (input.forced ?? (risk !== undefined && LOST_WORK.includes(risk)))
     /*
      * Except at full access. MiMo asks about a delete there too; the user chose
      * otherwise (2026-09-26): full access is the reader saying "do not ask me",
@@ -537,7 +538,7 @@ export class Permissions {
      * answered. A deliberate difference from MiMo - see HANDOFF. Every other
      * level, and "always allow commands" at any of them, still asks each time.
      */
-    if (!input.requireExplicitApproval) {
+    if (!input.humanOnly) {
       if (action === "allow" && (!forced || level === "full")) return
     }
     // MiMo's read-only allowlist: a command made only of reading pieces runs once without a question.
@@ -579,7 +580,7 @@ export class Permissions {
 
     let entry: Pending | undefined
     const response = await new Promise<PermissionResponse>((resolve) => {
-      entry = { request, resolve, key, patterns, requireExplicitApproval: input.requireExplicitApproval }
+      entry = { request, resolve, key, patterns, humanOnly: input.humanOnly }
       this.pending.set(request.id, entry)
       this.bus.publish({ type: "permission.requested", request })
     })
@@ -728,7 +729,7 @@ export class Permissions {
        * to "always allow" was answered "once" by the next unrelated update,
        * with nobody having pressed anything (R28-8).
        */
-      if (pending.request.forced && action === "allow" && (level !== "full" || pending.requireExplicitApproval)) continue
+      if (pending.request.forced && action === "allow" && (pending.humanOnly || level !== "full")) continue
       const auto = level === "auto"
       /*
        * The middle level switched on while a question was up - MiMo's 帮我审批 -
