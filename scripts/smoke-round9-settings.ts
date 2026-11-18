@@ -296,7 +296,7 @@ async function settingsChecks(check: Check, section: (name: string) => void): Pr
       check("an unknown app icon is the default one", got.appIcon === "classic")
       check("a retired chime moves to its nearest, as the round-five migration would", got.taskDoneSound === "vibes")
       check("an unknown access level is dropped, so the level is read off the map", !("accessLevel" in got))
-      check("a switch that is not a boolean is its default, an optional one is dropped", got.tray === true && got.spineSound === true && !("smart" in got))
+      check("a switch that is not a boolean is its default, an optional one is dropped", got.tray === false && got.spineSound === true && !("smart" in got))
       check("a size past its range is clamped and one that is not a number is the default", got.uiFontSize === 24 && got.codeFontSize === 12, [got.uiFontSize, got.codeFontSize])
       check("a step limit that is not a positive whole number is dropped", !("maxSteps" in got))
       check("a list keeps only its strings, and a non-list is the default", JSON.stringify(got.pinnedTabs) === '["a"]' && JSON.stringify(got.projects) === "[]")

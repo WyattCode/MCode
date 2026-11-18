@@ -1488,12 +1488,12 @@ const archived = computed(() =>
 )
 
 /* MiMo's row line: 已归档 · 项目「name」 · time, or without the project for a scratch task. */
-function archivedDescription(session: { directory: string; updated: number; scratch?: boolean; group?: string }): string {
+function archivedDescription(session: { directory: string; updated: number; archivedAt?: number; scratch?: boolean; group?: string }): string {
   const group = projectOf(session)
   const head = group
     ? t("set.archivedIn", { project: projectName(group, app.config?.projectNames) })
     : t("set.archivedPlain")
-  return `${head} · ${ago(session.updated)}`
+  return `${head} · ${ago(session.archivedAt ?? session.updated)}`
 }
 
 /*
@@ -1525,7 +1525,7 @@ function toggleAllPicked() {
 /* MiMo confirms a restore with one toast, and a batch with one counted toast rather than one each. */
 async function restoreOne(sessionID: string) {
   try {
-    await app.archive(sessionID, false)
+    if (!(await app.archive(sessionID, false))) return
   } catch (err) {
     notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
     return
@@ -1540,8 +1540,7 @@ async function restorePicked() {
   let err: unknown
   for (const sessionID of ids) {
     try {
-      await app.archive(sessionID, false)
-      restored++
+      if (await app.archive(sessionID, false)) restored++
     } catch (e) {
       failed = true
       err = e
@@ -1960,11 +1959,11 @@ onBeforeUnmount(() => {
               <button
                 type="button"
                 class="switch"
-                :class="{ on: app.config?.tray ?? true }"
+                :class="{ on: app.config?.tray ?? false }"
                 role="switch"
-                :aria-checked="app.config?.tray ?? true"
+                :aria-checked="app.config?.tray ?? false"
                 :aria-label="t(app.platform === 'darwin' ? 'set.trayMac' : 'set.tray')"
-                @click="app.patchConfig({ tray: !(app.config?.tray ?? true) })"
+                @click="app.patchConfig({ tray: !(app.config?.tray ?? false) })"
               >
                 <span class="knob" />
               </button>
@@ -3438,7 +3437,7 @@ onBeforeUnmount(() => {
           <div class="card" data-closed-projects>
             <div v-if="!closedProjects.length" class="line">
               <div class="line-text">
-                <div class="line-title">{{ t("set.archivedEmptyTitle") }}</div>
+                <div class="line-title">{{ t("set.noProjects") }}</div>
                 <div class="line-sub">{{ t("set.closedSub") }}</div>
               </div>
             </div>

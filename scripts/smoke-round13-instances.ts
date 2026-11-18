@@ -92,7 +92,7 @@ export async function roundThirteenInstanceChecks(check: Check, section: (name: 
     check("while quitting, a second launch is queued instead of raising the window the quit hid", /^\{\s*if \(closing\) return relaunchAfterQuit\(argv\)/.test(second), second.slice(0, 120))
     check("queued once, as app.relaunch with the handed-over arguments", /if \(relaunchQueued\) return/.test(queue) && /app\.relaunch\(\{ args: relaunchArgs\(argv\) \}\)/.test(queue), queue)
     check("a macOS link while quitting is queued the same way", /if \(closing\) return relaunchAfterQuit\(\[process\.execPath, url\]\)/.test(body(main, 'app.on("open-url", (event, url) => {')))
-    check("the tray's Open does nothing while quitting", /const open = \(\) => \{\s*if \(!closing\) activate\(raise\)/.test(main))
+    check("the tray's Open does nothing while quitting", /const open = \(\) => \{\s*if \(!closing\) activate\(\(window\) => \{\s*cancelPendingHide\(window\)\s*raise\(window\)/.test(main))
     check("nor does the Dock's activate", /^\{\s*if \(closing\) return/.test(body(main, 'app.on("activate", () => {')))
   }
 

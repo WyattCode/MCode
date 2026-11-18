@@ -58,6 +58,7 @@ const emit = defineEmits<{
   artifacts: []
   "toggle-priority": []
   "archive-all": []
+  "show-archived": []
   /* `nested` is a row listed under its project, whose menu MiMo draws without "show in folder". */
   menu: [sessionID: string, x: number, y: number, nested: boolean]
   projectMenu: [directory: string, x: number, y: number]
@@ -1844,6 +1845,10 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
+    <button type="button" class="archive-entry" @click="emit('show-archived')">
+      {{ t("set.group.archived") }}
+    </button>
+
     <div class="foot">
       <!--
         MiMo 26.920's account row: a 46px cell holding a 28px round avatar, then
@@ -2664,6 +2669,25 @@ button.section-head:focus-visible {
 .priority-head:hover .more,
 .priority-head .more:focus-visible {
   opacity: 1;
+}
+
+.archive-entry {
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin: 0 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  color: var(--text-weak);
+}
+
+.archive-entry:hover {
+  color: var(--text-strong);
+  background: var(--surface-hover);
+}
+
+.archive-entry:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 /*

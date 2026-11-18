@@ -1461,15 +1461,9 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     }
 
     case "session.archive": {
-      // Archiving stops the work too: a turn writing into a session the user
-      // has just put away is not something they asked for.
-      if (request.archived) runtime.runner.abort(request.sessionID)
-      // Stamped when put away and cleared when restored, so the archived list can order by it.
-      const session = await runtime.sessions.update(request.sessionID, {
-        archived: request.archived,
-        archivedAt: request.archived ? Date.now() : undefined,
-      })
-      return { session } satisfies Handled<"session.archive">
+      const result = await runtime.sessions.setArchived(request.sessionID, request.archived)
+      if (request.archived && result.changed) runtime.runner.abort(request.sessionID)
+      return result satisfies Handled<"session.archive">
     }
 
     case "git.status":

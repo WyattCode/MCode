@@ -1455,13 +1455,6 @@ export type VoiceEditFailure = "noModel" | "refused" | "unreadable"
 export type VoicePrecheckFailure = "unauthorized" | "asrUnavailable" | "chatUnavailable" | "unreachable" | "failed"
 
 /**
- * MiMo's close decision for a window.
- *
- * A quit in progress, or any other window still open, closes normally. The last
- * window is hidden instead of closed on macOS, or wherever the tray switch is on,
- * so the app keeps running behind its tray or menu bar icon; otherwise it closes.
- */
-/**
  * The conversation an event is only of use to, or nothing when every window
  * should have it (N11-4).
  *
@@ -1482,14 +1475,13 @@ export function narrowcastSession(event: ServerEvent): string | undefined {
   return undefined
 }
 
+/** Hide the last window when a tray is available and the app is staying open. */
 export function closeHidesToTray(state: {
   quitting: boolean
   otherWindows: number
-  platform: string
   trayEnabled: boolean
 }): boolean {
-  if (state.quitting || state.otherWindows > 0) return false
-  return state.platform === "darwin" || state.trayEnabled
+  return !state.quitting && state.otherWindows === 0 && state.trayEnabled
 }
 
 /** Usage gathered under one heading - a day, a model, or everything. */
@@ -2584,7 +2576,7 @@ export interface ResponseMap {
   "session.revertTurn": TurnRevertResult
   "session.watch": Record<string, never>
   "session.history": { history: HistoryDepth }
-  "session.archive": { session: SessionInfo }
+  "session.archive": { session?: SessionInfo; changed: boolean }
   "session.rename": { session: SessionInfo }
   "session.move": { session: SessionInfo }
   "session.moveOut": { session: SessionInfo }

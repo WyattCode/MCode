@@ -705,15 +705,43 @@ function refreshTray(enabled: boolean): void {
    * before the teardown takes it away (I13-2).
    */
   const open = () => {
-    if (!closing) activate(raise)
+    if (!closing) activate((window) => {
+      cancelPendingHide(window)
+      raise(window)
+    })
   }
+  const menu = Menu.buildFromTemplate([
+    { label: label("tray.open", "Show Main Window"), click: open },
+    {
+      label: label("tray.newConversation", "New Conversation"),
+      click: () => {
+        if (leaving()) return
+        open()
+        const window = currentWindow()
+        if (!window) return
+        const contents = window.webContents
+        const send = () => {
+          if (!leaving() && !contents.isDestroyed()) contents.send("menu:new-session")
+        }
+        if (readyWindow() === window) send()
+        else contents.once("did-finish-load", send)
+      },
+    },
+    { type: "separator" },
+    {
+      label: label("tray.quit", "Quit"),
+      click: () => {
+        beginIntentionalQuit()
+        app.quit()
+      },
+    },
+  ])
   if (!tray) {
     try {
       tray = new Tray(image)
       tray.on("click", open)
       tray.on("double-click", open)
     } catch (err) {
-      // Linux panels without StatusNotifier/AppIndicator throw here; leave tray off rather than crash refresh.
       console.error("[mcode] system tray unavailable:", err)
       tray = undefined
       return
@@ -721,21 +749,13 @@ function refreshTray(enabled: boolean): void {
   } else tray.setImage(image)
 
   tray.setToolTip(APP_NAME)
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      // MiMo 26.920's tray: open, a rule, quit - its 配置切换 is gone.
-      { label: label("tray.open", "Open MCode"), click: open },
-      { type: "separator" },
-      {
-        // A real quit, past the close-to-tray rule below.
-        label: label("menu.quitApp", "Quit MCode"),
-        click: () => {
-          beginIntentionalQuit()
-          app.quit()
-        },
-      },
-    ]),
-  )
+  if (process.platform === "darwin") {
+    // Keep the left-click action separate from the native context menu.
+    tray.removeAllListeners("right-click")
+    tray.on("right-click", () => tray?.popUpContextMenu(menu))
+  } else {
+    tray.setContextMenu(menu)
+  }
 }
 
 /**
@@ -926,10 +946,9 @@ function createWindow(show = true): BrowserWindow {
   })
 
   /*
-   * MiMo's close rule: the last window hides to the tray (always, on macOS)
-   * instead of closing, and the app keeps running. A quit in progress, or any
-   * other window still open, closes as usual. window-state's own close listener
-   * has already saved the bounds, and a hidden window keeps them for its next show.
+   * The last window hides when the tray is available. During quit, or with
+   * another window open, it closes normally. The window-state listener has
+   * already saved the bounds for the next show.
    */
   /*
    * MiMo's hidden bounds: a window hidden to the tray records exactly where it
@@ -960,7 +979,6 @@ function createWindow(show = true): BrowserWindow {
     const hide = closeHidesToTray({
       quitting: leaving(),
       otherWindows: others,
-      platform: process.platform,
       trayEnabled: Boolean(tray),
     })
     if (!hide) {
