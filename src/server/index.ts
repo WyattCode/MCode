@@ -416,6 +416,7 @@ export async function startBackend(dataDirectory: string, options: BackendOption
        * shell per terminal, running until the app quits.
        */
       shells.closeOwnedBy(socket)
+      runtime.runner.releaseQueueEdits(socket)
     })
 
     socket.on("message", async (raw) => {

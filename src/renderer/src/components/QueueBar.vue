@@ -1,23 +1,11 @@
 <script setup lang="ts">
-/**
- * OpenCode v2's queued follow-ups, above the composer.
- *
- * Messages sent with 排队 while a turn ran wait here, oldest first, and go out
- * one at a time as turns of their own once it ends. After Stop or a failure
- * they stay until the reader acts. Each can be sent now - into the running
- * turn, or as a new one when nothing runs - or taken back into the box.
- *
- * MiMo has no queue; the row is drawn as its goal bar is, so it sits in the
- * same place and the same way.
- */
-import { computed, onBeforeUnmount, ref } from "vue"
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue"
 import type { QueuedPrompt, SessionInfo } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
 import ConfirmDialog from "./ConfirmDialog.vue"
 
 const props = defineProps<{ sessionID: string }>()
-const emit = defineEmits<{ edit: [item: QueuedPrompt, sessionID: string] }>()
 const app = useApp()
 
 const session = computed(() => app.sessions.find((entry: SessionInfo) => entry.id === props.sessionID) ?? app.sideSessionOf(props.sessionID))
@@ -31,22 +19,58 @@ function line(item: QueuedPrompt): string {
   return t("composer.queue.attachments", { count: item.attachments?.length ?? 0 })
 }
 
-/*
- * Composer stays mounted across conversation switches; this bar is keyed per
- * session and remounts. A 撤回 that finishes after the switch must not paste
- * into the draft now on screen — remove still targets the held session, and
- * restore only while this instance is alive and Composer still owns it.
- */
+const paused = computed(() => Boolean(session.value?.queuePaused))
+const sending = computed(() => app.queueSending.get(props.sessionID))
+const editing = ref<string>()
+const editor = ref<HTMLTextAreaElement[]>()
+const draft = ref("")
+const pending = ref(false)
+const showParked = ref(false)
+watch(running, (active) => { if (active) showParked.value = false })
+const showCards = computed(() => running.value || !!sending.value || paused.value || !!editing.value || showParked.value)
 let alive = true
+
 onBeforeUnmount(() => {
   alive = false
+  if (editing.value) void app.editQueued(props.sessionID, editing.value, { action: "cancel" })
 })
 
 async function edit(item: QueuedPrompt) {
-  const held = props.sessionID
-  if (!(await app.removeQueued(held, item.id))) return
-  if (!alive || props.sessionID !== held) return
-  emit("edit", item, held)
+  if (pending.value || editing.value) return
+  pending.value = true
+  try {
+    if (!(await app.editQueued(props.sessionID, item.id, { action: "start" }))) return
+    if (!alive) {
+      await app.editQueued(props.sessionID, item.id, { action: "cancel" })
+      return
+    }
+    editing.value = item.id
+    draft.value = item.text
+    await nextTick()
+    editor.value?.[0]?.focus()
+  } finally {
+    pending.value = false
+  }
+}
+
+async function finishEdit(save: boolean) {
+  const id = editing.value
+  if (!id || pending.value) return
+  pending.value = true
+  try {
+    const ok = await app.editQueued(props.sessionID, id, save ? { action: "save", text: draft.value } : { action: "cancel" })
+    if (ok || !save) editing.value = undefined
+  } finally {
+    pending.value = false
+  }
+}
+
+function editKeys(event: KeyboardEvent) {
+  if (event.isComposing || event.keyCode === 229) return
+  if (event.key !== "Escape") return
+  event.stopPropagation()
+  event.preventDefault()
+  void finishEdit(false)
 }
 
 /* Clearing is asked first: it cannot be taken back, and sits beside the small remove marks. */
@@ -65,32 +89,43 @@ async function clearAll() {
 </script>
 
 <template>
-  <div v-if="queued.length" class="queue-bar" data-queue-bar>
+  <button v-if="queued.length && !showCards" class="queue-clear parked-toggle" type="button" aria-expanded="false" @click="showParked = true">
+    {{ t("composer.queue.title", { count: queued.length }) }}
+  </button>
+  <div v-else-if="queued.length" class="queue-bar" data-queue-bar>
     <div class="queue-head">
       <svg class="queue-mark" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
       <span class="queue-title" data-queue-count>{{ t("composer.queue.title", { count: queued.length }) }}</span>
-      <span class="queue-note">{{ running ? t("composer.queue.afterTurn") : t("composer.queue.parked") }}</span>
-      <button v-if="!running && queued.length > 1" class="queue-clear" type="button" data-queue-clear @click="confirmingClear = true">{{ t("composer.queue.clearAll") }}</button>
+      <span v-if="paused" class="queue-note" role="status">{{ t("composer.queue.paused") }}</span>
+      <span v-else-if="!running && !sending && !editing" class="queue-note">{{ t("composer.queue.parked") }}</span>
+      <button v-if="paused" class="queue-clear" type="button" :disabled="!!sending || !!editing" @click="app.sendQueued(sessionID, queued[0].id, 'send')">
+        {{ t("composer.queue.sendNow") }}
+      </button>
+      <button v-if="showParked && !running && !paused && !sending && !editing" class="queue-act" type="button" aria-expanded="true" :aria-label="t('common.close')" @click="showParked = false">×</button>
+      <button v-if="!running && queued.length > 1 && !sending && !editing" class="queue-clear" type="button" data-queue-clear @click="confirmingClear = true">{{ t("composer.queue.clearAll") }}</button>
     </div>
     <div class="queue-scroll">
-      <div v-for="item in queued" :key="item.id" class="queue-item" data-queue-item>
-        <span class="queue-text" :title="item.text">{{ line(item) }}</span>
-        <button class="queue-act" type="button" data-queue-edit :aria-label="t('composer.queue.edit')" v-tip="{ label: t('composer.queue.edit'), placement: 'top' }" @click="edit(item)">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>
-        </button>
-        <button
-          class="queue-act"
-          type="button"
-          data-queue-send
-          :aria-label="running ? t('composer.queue.steer') : t('composer.queue.sendNow')"
-          v-tip="{ label: running ? t('composer.queue.steer') : t('composer.queue.sendNow'), placement: 'top' }"
-          @click="app.sendQueued(props.sessionID, item.id)"
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-7 7 7-7 7 7" /></svg>
-        </button>
-        <button class="queue-act" type="button" data-queue-remove :aria-label="t('composer.queue.remove')" v-tip="{ label: t('composer.queue.remove'), placement: 'top' }" @click="app.removeQueued(props.sessionID, item.id)">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
-        </button>
+      <div v-for="item in queued" :key="item.id" class="queue-item" :class="{ editing: editing === item.id }" data-queue-item>
+        <template v-if="editing === item.id">
+          <label class="queue-editor-label">
+            <span>{{ t("composer.queue.editing") }}{{ t("composer.queue.draft") }}</span>
+            <textarea ref="editor" v-model="draft" rows="2" @keydown="editKeys" />
+          </label>
+          <div class="queue-editor-actions">
+            <button class="queue-act" type="button" :disabled="pending" @click="finishEdit(false)">{{ t("composer.queue.cancelEdit") }}</button>
+            <button class="queue-act" type="button" :disabled="pending" @click="finishEdit(true)">{{ t("common.save") }}</button>
+          </div>
+        </template>
+        <template v-else>
+          <span class="queue-text" :title="item.text">{{ line(item) }}</span>
+          <span v-if="sending === item.id" class="queue-note" role="status">{{ t("composer.queue.sending") }}</span>
+          <template v-else>
+            <button class="queue-act" type="button" data-queue-edit :disabled="pending || !!editing" @click="edit(item)">{{ t("composer.queue.edit") }}</button>
+            <button class="queue-act" type="button" data-queue-remove @click="app.removeQueued(sessionID, item.id)">{{ t("composer.queue.remove") }}</button>
+            <button v-if="running" class="queue-act" type="button" data-queue-steer :disabled="!!sending" @click="app.sendQueued(sessionID, item.id, 'steer')">{{ t("composer.queue.steer") }}</button>
+            <button class="queue-act" type="button" data-queue-send :disabled="!!sending" @click="app.sendQueued(sessionID, item.id, 'send')">{{ t("composer.queue.sendNow") }}</button>
+          </template>
+        </template>
       </div>
     </div>
     <Teleport to="body">
@@ -143,10 +178,7 @@ async function clearAll() {
 }
 
 .queue-note {
-  overflow: hidden;
   color: var(--text-weak);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* A long queue scrolls rather than pushing the composer up the window. */
@@ -160,6 +192,8 @@ async function clearAll() {
   gap: 4px;
   align-items: center;
   padding: 3px 0 3px 22px;
+  border-top: 1px solid var(--border-weak);
+  flex-wrap: wrap;
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
@@ -174,12 +208,10 @@ async function clearAll() {
 }
 
 .queue-act {
-  display: grid;
   flex: none;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
+  min-height: 24px;
+  padding: 2px 5px;
+  font: inherit;
   color: var(--text-weak);
   background: transparent;
   border: 0;
@@ -197,14 +229,33 @@ async function clearAll() {
   outline-offset: 1px;
 }
 
-.queue-act svg {
-  width: 13px;
-  height: 13px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.6;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+.queue-act:disabled,
+.queue-clear:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.queue-item.editing,
+.queue-editor-label {
+  display: grid;
+  gap: 4px;
+}
+
+.queue-editor-label textarea {
+  resize: vertical;
+  width: 100%;
+  padding: 6px;
+  border: 1px solid var(--border-weak);
+  border-radius: 6px;
+  background: var(--surface-base);
+  color: var(--text-base);
+  font: inherit;
+}
+
+.queue-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
 }
 
 .queue-clear {
@@ -219,6 +270,10 @@ async function clearAll() {
   cursor: pointer;
   font: inherit;
   font-size: calc(12px * var(--ui-font-scale, 1));
+}
+
+.parked-toggle {
+  margin: 0 0 4px;
 }
 
 .queue-clear:hover {

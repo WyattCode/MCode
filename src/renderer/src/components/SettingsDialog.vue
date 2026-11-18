@@ -42,6 +42,7 @@ const app = useApp()
 type Section =
   | "general"
   | "appearance"
+  | "composer"
   | "personal"
   | "keys"
   | "archive"
@@ -1077,6 +1078,7 @@ const NAV_LABELS: Record<Section, string> = {
   general: "set.nav.general",
   usage: "set.nav.usage",
   appearance: "set.appearance",
+  composer: "set.composer",
   files: "set.nav.files",
   models: "set.models",
   personal: "set.personal",
@@ -1093,6 +1095,7 @@ const NAV_KEYWORDS: Record<Section, string> = {
   general: "set.keywords.general",
   usage: "set.keywords.usage",
   appearance: "set.keywords.appearance",
+  composer: "set.keywords.composer",
   files: "set.keywords.files",
   models: "set.keywords.models",
   personal: "set.keywords.personal",
@@ -1758,7 +1761,7 @@ onBeforeUnmount(() => {
           at the default size they are already taller than the dialog.
         -->
         <div ref="navScrollEl" class="nav-scroll u-scrollbar-thin" data-settings-nav-scroll>
-          <div v-show="navShows('general') || navShows('usage') || navShows('appearance') || navShows('files') || navShows('models') || navShows('personal') || navShows('keys')" class="nav-group">{{ t("set.group.personal") }}</div>
+          <div v-show="navShows('general') || navShows('usage') || navShows('appearance') || navShows('composer') || navShows('files') || navShows('models') || navShows('personal') || navShows('keys')" class="nav-group">{{ t("set.group.personal") }}</div>
 
           <button v-show="navShows('general')" class="nav-item" :class="{ on: section === 'general' }" @click="section = 'general'">
             <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
@@ -1785,6 +1788,13 @@ onBeforeUnmount(() => {
               <path d="M10 2.6a7.4 7.4 0 1 1 0 14.8 7.4 7.4 0 0 1 0-14.8ZM10 4.2a5.8 5.8 0 0 0 0 11.6Z" />
             </svg>
             <span>{{ t("set.appearance") }}</span>
+          </button>
+
+          <button v-show="navShows('composer')" class="nav-item" :class="{ on: section === 'composer' }" @click="section = 'composer'">
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd" aria-hidden="true">
+              <path d="M4.5 4h11A2.5 2.5 0 0 1 18 6.5v7a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 2 13.5v-7A2.5 2.5 0 0 1 4.5 4ZM6 8a.75.75 0 0 0 0 1.5h8A.75.75 0 0 0 14 8H6Zm0 3a.75.75 0 0 0 0 1.5h4a.75.75 0 0 0 0-1.5H6Z" />
+            </svg>
+            <span>{{ t("set.composer") }}</span>
           </button>
 
           <button v-show="navShows('files')" class="nav-item" :class="{ on: section === 'files' }" @click="section = 'files'">
@@ -2297,6 +2307,24 @@ onBeforeUnmount(() => {
 
         <!-- Keyboard -->
         <!-- Appearance: a page of its own, as MiMo keeps it, rather than a group under General. -->
+        <template v-else-if="section === 'composer'">
+          <h2>{{ t("set.composer") }}</h2>
+          <div class="card">
+            <div class="line">
+              <div class="line-text">
+                <label class="line-title" for="running-send">{{ t("set.composer.runningSend") }}</label>
+                <div class="line-sub">{{ t("set.composer.runningSendSub") }}</div>
+              </div>
+              <SelectMenu
+                :model-value="app.config?.runningSend ?? 'queue'"
+                :options="[{ value: 'queue', label: t('set.composer.queue') }, { value: 'steer', label: t('set.composer.steer') }]"
+                id="running-send"
+                @update:model-value="app.patchConfig({ runningSend: $event as 'queue' | 'steer' })"
+              />
+            </div>
+          </div>
+        </template>
+
         <template v-else-if="section === 'appearance'">
           <h2>{{ t("set.appearance") }}</h2>
           <!-- MiMo's first card: 主题 alone - there is no palette to choose. -->

@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { applyVoiceResult, dropVoice, editCue, isClearCommand, micFailure, nextVoiceBox, precheckFailure, recorder, reportVoiceStatus, transcribeFailure, voiceOwner, voiceRun, voiceState, voiceStatus, type Recording, type VoiceCue, type VoiceFailure, type VoiceState } from "../lib/voice"
 import type { Ref } from "vue"
-import type { Attachment, CommandInfo, DirEntry, Effort, FileHit, Message, ModelInfo, QueuedPrompt, SessionInfo } from "@shared/protocol"
+import type { Attachment, CommandInfo, DirEntry, Effort, FileHit, Message, ModelInfo, SessionInfo } from "@shared/protocol"
 import { interruptedTurn } from "@shared/resume"
 import { textualName } from "@shared/attachment-kind"
 import { commandTitle } from "../lib/skill-display"
@@ -45,6 +45,7 @@ import FullAccessDialog from "./FullAccessDialog.vue"
 import ContextRing from "./ContextRing.vue"
 import GoalBar from "./GoalBar.vue"
 import QueueBar from "./QueueBar.vue"
+import { deliveryKeys, runningDelivery } from "../lib/composer-delivery"
 import { readContext } from "./session-context"
 import { compactTokens, t, language } from "../lib/i18n"
 
@@ -820,21 +821,24 @@ function addDroppedMentions(paths: { rel: string; file: boolean }[]) {
   })
 }
 
-/**
- * What the empty box invites.
- *
- * It no longer changes while the model is working. It used to read "Working -
- * Esc to stop", which was the box telling you it would not take anything, and
- * it will: a prompt sent now joins the turn that is running. Inviting the same
- * thing it always invites is the truthful version, and it is also what the
- * reference does - its placeholder does not know whether a turn is in flight.
- */
+const runningChat = computed(() => busyHere.value && mode.value !== "shell")
+const runningSend = computed(() => app.config?.runningSend ?? "queue")
+const runningKeys = computed(() => deliveryKeys(app.platform, runningSend.value))
+const queueLabel = computed(() => t("set.composer.queue"))
+const steerLabel = computed(() => t("set.composer.steer"))
+const sendLabel = computed(() => {
+  if (stopping.value) return t("composer.stop")
+  if (runningChat.value) return runningSend.value === "queue" ? queueLabel.value : steerLabel.value
+  return t("composer.send")
+})
+
 const placeholder = computed(() => {
   if (mode.value === "shell") return t("composer.shellPlaceholder")
   // MiMo 26.920's order: compacting, then sending, then a restricted conversation, then the mode's own line, then the everyday one. Attachments do not blank it.
   if (compactingHere.value) return t("composer.compacting")
   if (sending.value) return t("composer.sending")
   if (restrictedHere.value) return t("composer.reviewRestricted")
+  if (runningChat.value) return t("composer.runningPlaceholder", runningKeys.value)
   if (!props.side && agent.value === "plan") return t("composer.placeholderPlan")
   return t("composer.placeholder")
 })
@@ -2308,17 +2312,6 @@ function queuesMessage(event: KeyboardEvent): boolean {
   return busyHere.value && mode.value !== "shell" && sendChord.value.toLowerCase() !== "alt+enter"
 }
 
-/** 撤回 from the queue: the message back in the box to be changed, ahead of anything already typed. */
-function restoreQueued(item: QueuedPrompt) {
-  const draft = text.value.trim()
-  text.value = draft ? `${item.text}\n${draft}` : item.text
-  attachments.value = [...(item.attachments ?? []), ...attachments.value]
-  void nextTick(() => {
-    resize()
-    input.value?.focus()
-  })
-}
-
 /** Ctrl+Enter breaks the line only while no Enter combination is bound to sending. */
 function breaksLine(event: KeyboardEvent): boolean {
   if (event.key !== "Enter" || event.shiftKey || event.altKey || sendChord.value) return false
@@ -2398,6 +2391,13 @@ function onKeydown(event: KeyboardEvent) {
       dismissed.value = true
       return
     }
+  }
+
+  const delivery = runningChat.value ? runningDelivery(event, app.platform, runningSend.value) : undefined
+  if (delivery) {
+    handled(event)
+    if (!event.repeat) void submit(delivery === "queue" ? "queue" : undefined)
+    return
   }
 
   // MiMo's Ctrl+Enter (Cmd+Enter): a newline at the caret, in place of any selection.
@@ -3452,8 +3452,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
         never follows the composer to the next conversation.
       -->
       <GoalBar v-if="!side && sessionID" :key="sessionID" :session-i-d="sessionID" />
-      <!-- OpenCode v2's queued follow-ups, where the goal bar sits. -->
-      <QueueBar v-if="sessionID" :key="`queue:${sessionID}`" :session-i-d="sessionID" @edit="restoreQueued" />
+      <QueueBar v-if="sessionID" :key="`queue:${sessionID}`" :session-i-d="sessionID" />
       <!-- MiMo's cue drawer: tucked behind the box's top edge, it slides up with the command a recording was heard as. -->
       <div class="voice-cues" :class="{ on: cueOn }" data-voice-cues>
         <div class="voice-drawer" role="status">
@@ -4171,13 +4170,16 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             type="button"
             data-queue-button
             :disabled="restrictedHere"
-            :aria-label="t('composer.queue.button')"
-            v-tip="{ label: t('composer.queue.button'), hint: sendChord.toLowerCase() === 'alt+enter' ? undefined : 'Alt+Enter', placement: 'top' }"
-            @click="submit('queue')"
+            :aria-label="runningSend === 'queue' ? steerLabel : queueLabel"
+            v-tip="{ label: runningSend === 'queue' ? steerLabel : queueLabel, hint: runningSend === 'queue' ? runningKeys.steerKey : runningKeys.queueKey, placement: 'top' }"
+            @click="submit(runningSend === 'steer' ? 'queue' : undefined)"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <svg v-if="runningSend === 'steer'" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="2" />
               <path d="M12 7.5V12l3 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M13 3 5 14h6l-1 7 9-11h-7l1-7Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
             </svg>
           </button>
           <!--
@@ -4215,9 +4217,9 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             type="button"
             :class="{ empty: !stopping && !hasContent, ready: !stopping && hasContent, stop: stopping }"
             :disabled="restrictedHere"
-            :aria-label="stopping ? t('composer.stop') : t('composer.send')"
-            v-tip="{ label: stopping ? t('composer.stop') : t('composer.send') }"
-            @click="stopping ? app.abort(sessionID) : submit()"
+            :aria-label="sendLabel"
+            v-tip="{ label: sendLabel }"
+            @click="stopping ? app.abort(sessionID) : submit(runningChat && runningSend === 'queue' ? 'queue' : undefined)"
           >
             <svg v-if="stopping" width="9" height="9" viewBox="0 0 9 9" aria-hidden="true">
               <rect width="9" height="9" rx="1.5" fill="currentColor" />
@@ -4246,6 +4248,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
         </div>
       </div>
     </div>
+
+    <p v-if="runningChat" class="ai-note running-send-hint" data-running-send-hint>{{ t("composer.runningHint", runningKeys) }}</p>
 
     <!--
       Under a conversation's box, as MiMo has one: answers are generated and can
@@ -5796,7 +5800,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 }
 
 /* Not under the floating chat's box, as in MiMo. */
-#float-dock .ai-note {
+#float-dock .ai-note:not(.running-send-hint) {
   display: none;
 }
 

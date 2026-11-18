@@ -348,6 +348,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       return {
         sessions: await runtime.sessions.list(),
         running: runtime.runner.busySessions(),
+        queueSending: runtime.runner.sendingQueueItems(),
         compacting: runtime.runner.compactingSessions(),
         /*
          * Replayed rather than merely broadcast. A permission request goes out
@@ -746,8 +747,18 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       await runtime.runner.removeQueued(request.sessionID, request.id)
       return {} satisfies Handled<"session.queue.remove">
 
+    case "session.queue.edit":
+      if (owner) {
+        if (request.action === "start") await runtime.runner.beginQueueEdit(request.sessionID, request.id, owner)
+        else if (request.action === "save") await runtime.runner.updateQueued(request.sessionID, request.id, request.text, owner)
+        else runtime.runner.cancelQueueEdit(request.sessionID, request.id, owner)
+      } else if (request.action === "save") {
+        await runtime.runner.updateQueued(request.sessionID, request.id, request.text)
+      }
+      return {} satisfies Handled<"session.queue.edit">
+
     case "session.queue.send":
-      return { messageID: await runtime.runner.sendQueuedNow(request.sessionID, request.id) } satisfies Handled<"session.queue.send">
+      return { messageID: await runtime.runner.sendQueuedNow(request.sessionID, request.id, request.action) } satisfies Handled<"session.queue.send">
 
     /* subagents: a `subtask` slash command, run as a subagent in this conversation's turn. */
     case "session.subtask":

@@ -123,6 +123,7 @@ function defaults(): AppConfig {
     projectOrder: [],
     taskOrder: {},
     keybinds: {},
+    runningSend: "queue",
     updateFeed: "",
     taskDoneSound: "bloom",
     spineSound: true,

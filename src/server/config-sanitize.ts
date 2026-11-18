@@ -116,6 +116,8 @@ export function sanitizeConfig(doc: AppConfig, fallback: AppConfig): boolean {
   }
 
   // MiMo's shortcut store recovers rather than failing: only a chord written as text is a chord.
+  if (record.runningSend !== "queue" && record.runningSend !== "steer") put("runningSend", "queue")
+
   const binds = record.keybinds
   if (!isObject(binds)) put("keybinds", {})
   else if (!Object.values(binds).every((chord) => typeof chord === "string")) {
