@@ -1,3 +1,4 @@
+import { normalizeSmartThreshold } from "@shared/smart"
 import { KEYBINDS_VERSION } from "@shared/chord"
 import { APP_ICONS, DEFAULT_APP_ICON } from "@shared/app-icons"
 import { migrateChime } from "@shared/chime"
@@ -126,6 +127,10 @@ export function sanitizeConfig(doc: AppConfig, fallback: AppConfig): boolean {
   } else if (!isObject(binds) || !Object.values(binds).every((chord) => typeof chord === "string")) {
     put("keybinds", {})
   }
+
+  const threshold = normalizeSmartThreshold(record.smartThreshold)
+  if (threshold === undefined) drop("smartThreshold")
+  else put("smartThreshold", threshold)
 
   if (!isModel(record.model)) put("model", base.model)
   for (const key of ["smartFast", "smartMain", "titleModel", "voiceModel"]) {

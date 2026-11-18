@@ -1,3 +1,4 @@
+import { normalizeSmartThreshold } from "@shared/smart"
 import { KEYBINDS_VERSION } from "@shared/chord"
 import { DEFAULT_APP_ICON } from "@shared/app-icons"
 import { migrateChime } from "@shared/chime"
@@ -1260,6 +1261,11 @@ export class Config {
     const providersBefore = this.current.customProviders
     const projectsBefore = { projects: this.current.projects, closedProjects: this.current.closedProjects }
     this.current = { ...this.current, ...patch }
+    if (Object.hasOwn(patch, "smartThreshold")) {
+      const threshold = normalizeSmartThreshold(patch.smartThreshold)
+      if (threshold === undefined) delete this.current.smartThreshold
+      else this.current.smartThreshold = threshold
+    }
     if (Object.hasOwn(patch, "keybinds")) {
       this.current.keybindsVersion = KEYBINDS_VERSION
       this.held.delete("keybindsVersion")

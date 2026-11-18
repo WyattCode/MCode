@@ -29,6 +29,7 @@ import { projectName } from "../lib/project"
 import { hushSpeechOf } from "../lib/voice"
 import { knownFolder, listedProjects, projectsByRecency } from "@shared/projects"
 import type { GroupContext } from "@shared/session-group"
+import { smartEnabled } from "@shared/smart"
 import { availableModels, fallbackModel, modelAvailable } from "@shared/model-fallback"
 import type { AutomationTask, ChatLink, CustomProvider } from "@shared/protocol"
 import { notice, notify, notifyFailure, setToastScope, noticesHere } from "../lib/toast"
@@ -1150,7 +1151,7 @@ export const useApp = defineStore("app", () => {
 
     // A default left pointing at a provider whose key was since removed would
     // fail on the first prompt with no hint as to why.
-    await ensureUsableModel(undefined, { smartWhenNone: false })
+    await ensureUsableModel()
 
     // No session is opened on boot: the launcher is the entry point, and a
     // project is chosen there. Auto-creating one would skip past it.
@@ -1959,15 +1960,14 @@ export const useApp = defineStore("app", () => {
     if (!target) return
     await api().request({ type: "session.model", sessionID: target, model })
     // A side chat's model is its own; the default follows the open conversation.
-    if (!isSide(target)) await patchConfig({ model, smart: false })
+    if (!isSide(target)) await patchConfig({ model })
   }
 
-  /** Puts a conversation on Smart, and makes Smart the start for the next one. */
+  /** Clears the manual override for this conversation. */
   async function setSmart(to?: string) {
     const target = to ?? currentID.value
     if (!target) return
     await api().request({ type: "session.smart", sessionID: target })
-    if (!isSide(target)) await patchConfig({ smart: true })
   }
 
   /**
@@ -2052,7 +2052,7 @@ export const useApp = defineStore("app", () => {
   /** The model a conversation, a side chat or (without an id) the next task is on; Smart is its own pick. */
   function modelPick(to?: string): string {
     const session = to ? (isSide(to) ? sideSessionOf(to) : sessions.value.find((entry) => entry.id === to)) : undefined
-    const smart = session ? session.smart : config.value?.smart
+    const smart = smartEnabled(config.value, session)
     const model = session?.model ?? config.value?.model
     return smart ? "smart" : model ? `${model.provider}/${model.model}` : ""
   }
@@ -2208,7 +2208,7 @@ export const useApp = defineStore("app", () => {
    * shows the session's model, and that session was created against whatever
    * default was in place beforehand.
    */
-  async function ensureUsableModel(prefer?: string, options: { smartWhenNone?: boolean } = {}) {
+  async function ensureUsableModel(prefer?: string) {
     const chosen = config.value?.model
 
     // Nothing to do when the current pick still works and no move was asked for.
@@ -2218,31 +2218,13 @@ export const useApp = defineStore("app", () => {
     // Hold the open conversation across awaits: a mid-await switch must not retarget session.model onto a different chat.
     const openID = currentID.value
     const ref = fallbackModel(availableModels(providers.value), preferReady ? prefer : undefined)
-    if (!ref) {
-      // Not at launch: a profile with nothing connected yet is not one that just lost its models.
-      if (options.smartWhenNone !== false) await fallBackToSmart()
-      return
-    }
+    if (!ref) return
     await patchConfig({ model: ref })
-    // An open session keeps its own model, so it has to be moved explicitly; the others follow on their next turn.
+    // Keep the open session usable while preserving its routing preference.
     const open = openID ? sessions.value.find((entry) => entry.id === openID) : undefined
-    if (open && !modelAvailable(providers.value, open.model)) await api().request({ type: "session.model", sessionID: open.id, model: ref })
-    else if (open && preferReady) await api().request({ type: "session.model", sessionID: open.id, model: ref })
-  }
-
-  /**
-   * Every model is gone: the default and each conversation whose model went
-   * with them are put on 自动, rather than left naming one that can no longer
-   * be picked. A conversation that is already on it, or still has its model,
-   * is not touched.
-   */
-  async function fallBackToSmart() {
-    if (!config.value?.smart) await patchConfig({ smart: true })
-    await Promise.all(
-      sessions.value
-        .filter((entry) => !entry.smart && !modelAvailable(providers.value, entry.model))
-        .map((entry) => api().request({ type: "session.smart", sessionID: entry.id })),
-    )
+    if (open && (preferReady || !modelAvailable(providers.value, open.model))) {
+      await api().request({ type: "session.model", sessionID: open.id, model: ref, fallback: true })
+    }
   }
 
   /**

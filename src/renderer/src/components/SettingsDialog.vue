@@ -3,6 +3,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useApp } from "../stores/app"
 import { useOpenWith } from "../lib/open-with"
 import ModelsPage from "./ModelsPage.vue"
+import { SMART_THRESHOLD } from "@shared/smart"
+import type { ModelRef } from "@shared/protocol"
 import { LANGUAGES, ago, compactTokens, dayLabel, language, sessionTitle, t, type Language } from "../lib/i18n"
 import { pickDirectory, pickProjectFolder } from "../lib/native-pick"
 import { wordMatch } from "../lib/word-match"
@@ -52,6 +54,7 @@ type Section =
   | "usage"
   | "updates"
   | "models"
+  | "smart"
   | "mcp"
   | "lab"
 
@@ -932,6 +935,14 @@ async function enableVoiceSend() {
   }
 }
 
+const configuredModelOptions = computed(() => app.providers
+  .filter((provider) => provider.configured)
+  .flatMap((provider) => provider.models.map((model) => ({
+    value: `${provider.id}/${model.id}`,
+    label: `${provider.name} · ${model.name || model.id}`,
+  }))),
+)
+
 const voiceModelOptions = computed(() => [
   { value: "", label: t("set.voiceModelNone") },
   /*
@@ -942,15 +953,43 @@ const voiceModelOptions = computed(() => [
    * works, so it sits first.
    */
   { value: "local/base", label: t("set.voiceModelLocal") },
-  ...app.providers
-    .filter((provider) => provider.configured)
-    .flatMap((provider) =>
-      provider.models.map((model) => ({
-        value: `${provider.id}/${model.id}`,
-        label: `${provider.name} · ${model.name || model.id}`,
-      })),
-    ),
+  ...configuredModelOptions.value,
 ])
+
+const smartTiers = [
+  { key: "smartFast", label: "set.smartFast" },
+  { key: "smartMain", label: "set.smartMain" },
+] as const
+
+function smartModelValue(model?: ModelRef): string {
+  return model?.provider && model.model ? `${model.provider}/${model.model}` : ""
+}
+
+function setSmartModel(key: typeof smartTiers[number]["key"], value: string) {
+  const cut = value.indexOf("/")
+  const model = value ? { provider: value.slice(0, cut), model: value.slice(cut + 1) } : { provider: "", model: "" }
+  return app.patchConfig({ [key]: model })
+}
+
+const smartModelOptions = computed(() => [
+  { value: "", label: t("set.smartFallback") },
+  ...configuredModelOptions.value,
+])
+const smartThresholdDraft = ref<number>()
+const smartThreshold = computed(() => smartThresholdDraft.value ?? app.config?.smartThreshold ?? SMART_THRESHOLD)
+
+function previewSmartThreshold(event: Event) {
+  smartThresholdDraft.value = (event.target as HTMLInputElement).valueAsNumber
+}
+
+async function saveSmartThreshold(event: Event) {
+  const value = (event.target as HTMLInputElement).valueAsNumber
+  try {
+    await app.patchConfig({ smartThreshold: value })
+  } finally {
+    if (smartThresholdDraft.value === value) smartThresholdDraft.value = undefined
+  }
+}
 
 const voiceModelValue = computed(() => {
   const chosen = app.config?.voiceModel
@@ -1082,6 +1121,7 @@ const NAV_LABELS: Record<Section, string> = {
   composer: "set.composer",
   files: "set.nav.files",
   models: "set.models",
+  smart: "set.smart",
   personal: "set.personal",
   keys: "set.shortcuts",
   mcp: "set.nav.mcp",
@@ -1099,6 +1139,7 @@ const NAV_KEYWORDS: Record<Section, string> = {
   composer: "set.keywords.composer",
   files: "set.keywords.files",
   models: "set.keywords.models",
+  smart: "set.keywords.smart",
   personal: "set.keywords.personal",
   keys: "set.keywords.keys",
   mcp: "set.keywords.mcp",
@@ -1762,7 +1803,7 @@ onBeforeUnmount(() => {
           at the default size they are already taller than the dialog.
         -->
         <div ref="navScrollEl" class="nav-scroll u-scrollbar-thin" data-settings-nav-scroll>
-          <div v-show="navShows('general') || navShows('usage') || navShows('appearance') || navShows('composer') || navShows('files') || navShows('models') || navShows('personal') || navShows('keys')" class="nav-group">{{ t("set.group.personal") }}</div>
+          <div v-show="navShows('general') || navShows('usage') || navShows('appearance') || navShows('composer') || navShows('files') || navShows('models') || navShows('smart') || navShows('personal') || navShows('keys')" class="nav-group">{{ t("set.group.personal") }}</div>
 
           <button v-show="navShows('general')" class="nav-item" :class="{ on: section === 'general' }" @click="section = 'general'">
             <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
@@ -1810,6 +1851,13 @@ onBeforeUnmount(() => {
               <path d="M17.5 10C12.2917 10 10 12.2917 10 17.5 10 12.2917 7.70833 10 2.5 10 7.70833 10 10 7.70833 10 2.5c0 5.20833 2.2917 7.5 7.5 7.5Z" />
             </svg>
             {{ t("set.models") }}
+          </button>
+
+          <button v-show="navShows('smart')" class="nav-item" :class="{ on: section === 'smart' }" @click="section = 'smart'">
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path d="M3 9.25h4.65l4.4-5h2.6l-1.1-1.1 1.06-1.06L17.5 5l-2.89 2.91-1.06-1.06 1.1-1.1h-1.92L9 10l3.73 4.25h1.92l-1.1-1.1 1.06-1.06L17.5 15l-2.89 2.91-1.06-1.06 1.1-1.1h-2.6l-4.4-5H3a.75.75 0 0 1 0-1.5Z" />
+            </svg>
+            <span>{{ t("set.smart") }}</span>
           </button>
 
           <button v-show="navShows('personal')" class="nav-item" :class="{ on: section === 'personal' }" @click="section = 'personal'">
@@ -3473,6 +3521,37 @@ onBeforeUnmount(() => {
         </template>
 
         <!-- Models: MiMo 26.920's provider tabs and forms, a page of its own. -->
+        <template v-else-if="section === 'smart'">
+          <h2>{{ t("set.smart") }}</h2>
+          <div class="card">
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.smartEnable") }}</div>
+                <div class="line-sub">{{ t("set.smartEnableSub") }}</div>
+              </div>
+              <button class="switch" :class="{ on: app.config?.smart }" type="button" role="switch"
+                :aria-checked="app.config?.smart === true" :aria-label="t('set.smartEnable')"
+                @click="app.patchConfig({ smart: app.config?.smart !== true })">
+                <span class="knob" />
+              </button>
+            </div>
+            <div v-for="tier in smartTiers" :key="tier.key" class="line">
+              <label class="line-title" :for="tier.key">{{ t(tier.label) }}</label>
+              <SelectMenu :id="tier.key" :model-value="smartModelValue(app.config?.[tier.key])"
+                :options="smartModelOptions" @update:model-value="setSmartModel(tier.key, $event)" />
+            </div>
+            <div class="line">
+              <div class="line-text">
+                <label class="line-title" for="smart-threshold">{{ t("set.smartThreshold") }}</label>
+                <div id="smart-threshold-help" class="line-sub">{{ t("set.smartThresholdSub") }}</div>
+              </div>
+              <input id="smart-threshold" type="range" min="0" max="100" step="1"
+                :value="smartThreshold" aria-describedby="smart-threshold-help" @input="previewSmartThreshold" @change="saveSmartThreshold" />
+              <output for="smart-threshold">{{ smartThreshold }}</output>
+            </div>
+          </div>
+        </template>
+
         <ModelsPage v-else />
             </div>
     </div>

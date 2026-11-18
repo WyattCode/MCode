@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { applyVoiceResult, dropVoice, editCue, isClearCommand, micFailure, nextVoiceBox, precheckFailure, recorder, reportVoiceStatus, transcribeFailure, voiceOwner, voiceRun, voiceState, voiceStatus, type Recording, type VoiceCue, type VoiceFailure, type VoiceState } from "../lib/voice"
 import type { Ref } from "vue"
+import { smartEnabled } from "@shared/smart"
 import type { Attachment, CommandInfo, DirEntry, Effort, FileHit, Message, ModelInfo, SessionInfo } from "@shared/protocol"
 import { interruptedTurn } from "@shared/resume"
 import { textualName } from "@shared/attachment-kind"
@@ -205,7 +206,8 @@ function rewrite(value: string) {
  * slug there made the same model read two different ways on one screen.
  */
 /* Smart, for the open conversation or - on the home screen - for the next one. */
-const smartOn = computed(() => (session.value ? Boolean(session.value.smart) : Boolean(app.config?.smart)))
+const smartOn = computed(() => smartEnabled(app.config, session.value))
+const showSmartPick = computed(() => !session.value || app.config?.smart === true || session.value.smart === false)
 
 const modelName = computed(() => {
   /*
@@ -3049,7 +3051,7 @@ const currentKey = computed(() => {
  * configuring models.
  */
 const modelKeys = computed(() => [
-  SMART_KEY,
+  ...(showSmartPick.value ? [SMART_KEY] : []),
   ...primaryRows.value.map((row) => row.key),
   ...(moreRows.value.length ? [MORE_KEY] : []),
   ...customRows.value.map((row) => row.key),
@@ -3297,7 +3299,7 @@ async function chooseModel(provider: string, model: string) {
   if (sessionID.value === target) app.announceModel(before, { provider, model })
 }
 
-/* Smart: the model is picked from the conversation's first message. */
+/* Resume following the global Smart setting for this conversation. */
 async function chooseSmart() {
   menu.value = undefined
 
@@ -3316,7 +3318,7 @@ async function chooseSmart() {
   }
   // Held to the same conversation: a reader who left mid-await is not told
   // about a Smart switch they no longer see.
-  if (sessionID.value === target) app.announceModel(before, "smart")
+  if (sessionID.value === target && app.config?.smart) app.announceModel(before, "smart")
 }
 
 function onPointerDown(event: MouseEvent) {
@@ -3950,6 +3952,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             >
               <button
                 tabindex="-1"
+                v-if="showSmartPick"
                 class="item model-item smart"
                 :class="{ hot: activeKey === SMART_KEY, on: smartOn }"
                 :data-key="SMART_KEY"
@@ -3962,7 +3965,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                   </svg>
                 </span>
                 <span class="smart-text">
-                  <span class="item-name">{{ t("model.smart") }}</span>
+                  <span class="item-name">{{ session?.smart === false ? t("model.restoreSmart") : t("model.smart") }}</span>
                   <span class="item-desc">{{ t("model.smartDesc") }}</span>
                 </span>
                 <svg class="model-check" viewBox="0 0 16 16" fill="none" aria-hidden="true">

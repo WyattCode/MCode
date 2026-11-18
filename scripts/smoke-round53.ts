@@ -65,9 +65,9 @@ export async function roundFiftyThreeChecks(check: Check, section: (name: string
   const app = source("src/renderer/src/App.vue")
   check("the keyboard steps the open conversation's level", (app.match(/app\.current\?\.effort \?\? app\.config\?\.effort/g) ?? []).length === 2)
 
-  section("Round 53: with every model gone, 自动")
-  check("nothing left to pick puts the default and each stranded conversation on 自动", /if \(!ref\) \{[\s\S]{0,200}fallBackToSmart\(\)/.test(store) && /\.filter\(\(entry\) => !entry\.smart && !modelAvailable\(providers\.value, entry\.model\)\)/.test(store))
-  check("but not at launch, where nothing connected yet is not a loss", /ensureUsableModel\(undefined, \{ smartWhenNone: false \}\)/.test(store))
+  section("Round 53: provider loss preserves the Smart preference")
+  check("a missing fallback model leaves global Smart alone", /const ref = fallbackModel[^\n]+\n    if \(!ref\) return/.test(store))
+  check("the composer uses the global preference and session override together", /smartEnabled\(app\.config, session\.value\)/.test(composer))
 
   section("Round 53: a tool's picture is looked at once, so the server's prefix cache survives")
   /*

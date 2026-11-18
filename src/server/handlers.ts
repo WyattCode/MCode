@@ -476,7 +476,6 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         // same way the model is.
         agent: config.agent,
         goalMode: config.goalMode,
-        ...(config.smart ? { smart: true } : {}),
         // Its own level from the start: the app's last choice, then the conversation's to change.
         effort: config.effort,
         title: request.title,
@@ -675,14 +674,13 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       return {
         session: await runtime.sessions.update(request.sessionID, {
           model: request.model,
-          smart: undefined,
-          smartRoute: undefined,
+          ...(request.fallback ? {} : { smart: false, smartRoute: undefined }),
         }),
       }
 
     case "session.smart":
       return {
-        session: await runtime.sessions.update(request.sessionID, { smart: true, smartRoute: undefined }),
+        session: await runtime.sessions.update(request.sessionID, { smart: undefined, smartRoute: undefined }),
       } satisfies Handled<"session.smart">
 
 

@@ -25,6 +25,11 @@
 // First of all, so nothing here can read the person's own home directory.
 import "./fenced-home"
 import assert from "node:assert/strict"
+import { scoreComplexity, tierForScore } from "../src/shared/smart"
+import { SessionRunner } from "../src/server/session/runner"
+import { SessionStore } from "../src/server/session/store"
+import { Permissions } from "../src/server/permission"
+import { handle } from "../src/server/handlers"
 import fs from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
@@ -629,4 +634,108 @@ async function main(): Promise<void> {
   process.exit(0)
 }
 
+async function checkSmartRouting() {
+  const greeting = "你好"
+  const complex = "请重构架构 src/a.ts 和 src/b.ts\n```ts\nTypeError: broken\n    at main (src/a.ts:12:3)\n```"
+  const greetingScore = scoreComplexity(greeting)
+  const complexScore = scoreComplexity(complex)
+  note("Smart distinguishes a greeting from refactoring with a stack trace", greetingScore < 60 && complexScore >= 60)
+  note("Smart sends scores at the threshold to standard", tierForScore(59, 60) === "fast" && tierForScore(60, 60) === "main")
+  note("threshold endpoints are inclusive", tierForScore(0, 0) === "main" && tierForScore(99, 100) === "fast" && tierForScore(100, 100) === "main")
+  note("recent tools, references and failed retries add weight", scoreComplexity(greeting, { tools: 4, files: 2, retry: true }) === greetingScore + 40)
+
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-smart-check-"))
+  const project = path.join(root, "project")
+  await fs.mkdir(project)
+  const storage = new Storage(path.join(root, "data"))
+  const bus = new Bus()
+  const config = new Config(storage, bus, path.join(root, "credentials.json"))
+  const sessions = new SessionStore(storage, bus)
+  const runner = new SessionRunner(sessions, bus, config, new Permissions(bus, config), { accessToken: async () => undefined } as never, storage)
+  const model = (id: string) => ({ provider: "smart-fixture", model: id })
+  const requests: Array<{ model: string; authorization: string | null }> = []
+  let failNext = false
+  const fetch = globalThis.fetch
+  globalThis.fetch = async (input, init) => {
+    if (input !== "https://smart-fixture.invalid/v1/chat/completions") throw new Error(`Unexpected fixture URL: ${input}`)
+    requests.push({ model: JSON.parse(String(init?.body)).model, authorization: new Headers(init?.headers).get("authorization") })
+    if (failNext) {
+      failNext = false
+      return new Response(JSON.stringify({ error: { message: "fixture failure" } }), { status: 400 })
+    }
+    const events = [
+      { choices: [{ delta: { content: "ok" } }] },
+      { choices: [{ delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 10, completion_tokens: 5 } },
+    ]
+    return new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("") + "data: [DONE]\n\n", {
+      headers: { "content-type": "text/event-stream" },
+    })
+  }
+  try {
+    await config.load()
+    await config.set({
+      customProviders: [{ id: "smart-fixture", name: "Smart Fixture", baseURL: "https://smart-fixture.invalid/v1", models: ["manual", "fast", "main"].map((id) => ({ id, name: id })) }],
+      model: model("manual"), smartFast: model("fast"), smartMain: model("main"),
+    })
+    await config.setApiKey("smart-fixture", "fixture-key")
+    const session = await sessions.create({ directory: project, model: model("manual"), title: "Smart fixture", smart: true })
+
+    async function settled() {
+      const deadline = Date.now() + 5000
+      while (runner.busySessions().includes(session.id) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      return sessions.messages(session.id)
+    }
+    async function turn(text: string) {
+      const count = requests.length
+      const id = await runner.prompt({ sessionID: session.id, text })
+      const messages = await settled()
+      const user = messages.find((message) => message.role === "user" && message.id === id)
+      const reply = messages.filter((message) => message.role === "assistant").at(-1)
+      assert.ok(user?.role === "user" && reply, "the runner persisted the user message and reply")
+      note("turn sends one request with the selected model", requests.length === count + 1 && requests.at(-1)?.model === reply.model.model && requests.at(-1)?.authorization === "Bearer fixture-key", requests)
+      return { reply, route: user.route }
+    }
+
+    const off = await turn(greeting)
+    note("default-off Smart keeps the manual model and ordinary usage", off.reply.model.model === "manual" && off.reply.usage?.input === 10 && !off.reply.usage.route && !off.route)
+    await config.set({ smart: true, smartThreshold: 60 })
+    const light = await turn(greeting)
+    const standard = await turn(complex)
+    note("the same session routes lightweight and standard turns to their configured models",
+      light.reply.model.model === "fast" && standard.reply.model.model === "main" && (await sessions.require(session.id)).model.model === "manual")
+    note("route score and tier survive in transcript usage",
+      light.reply.usage?.route?.tier === "fast" && light.reply.usage.route.score === greetingScore
+        && standard.reply.usage?.route?.tier === "main" && standard.reply.usage.route.score === complexScore
+        && JSON.stringify(standard.reply.usage.route) === JSON.stringify(standard.route))
+    const runtime = { sessions } as Parameters<typeof handle>[0]
+    await handle(runtime, { type: "session.model", sessionID: session.id, model: model("manual") })
+    const reopened = new SessionStore(storage, new Bus())
+    note("manual selection persists a session-only override", (await reopened.require(session.id)).smart === false && config.get().smart === true)
+    const pinned = await turn(complex)
+    note("the session override bypasses routing", pinned.reply.model.model === "manual" && !pinned.reply.usage?.route)
+    await handle(runtime, { type: "session.smart", sessionID: session.id })
+    note("restoring Smart routes the next turn", (await turn(greeting)).reply.usage?.route?.tier === "fast")
+    await config.set({ smartThreshold: 20 })
+    failNext = true
+    const failed = await turn(greeting)
+    note("an unsuccessful first attempt still carries its routing decision", failed.reply.finish === "error" && failed.route?.tier === "fast")
+    await runner.resumeTurn(session.id)
+    const resumed = (await settled()).filter((message) => message.role === "assistant").at(-1)
+    note("an explicit retry is re-scored with retry weight", resumed?.model.model === "main" && resumed.usage?.route?.score === 20, resumed)
+    await config.set({ smartThreshold: 150 })
+    note("threshold patches persist within the allowed range", config.get().smartThreshold === 100)
+    const onDisk = (await reopened.messages(session.id)).filter((message) => message.role === "assistant").at(-1)
+    note("route usage survives opening the transcript from storage", onDisk?.usage?.route?.tier === "main" && onDisk.usage.route.score === 20)
+    await config.set({ smart: false })
+    note("turning Smart off after routing restores the manual model", (await turn(complex)).reply.model.model === "manual")
+    note("Smart routing produces no background model request", !(await runner.backgroundUsage.list()).some((entry) => entry.kind === "smart"))
+  } finally {
+    globalThis.fetch = fetch
+    await fs.rm(root, { recursive: true, force: true })
+  }
+}
+
+await checkSmartRouting()
 void main()
