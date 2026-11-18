@@ -55,3 +55,6 @@ android/.idea/
 .workbuddy/*.err
 .workbuddy/*.out
 .workbuddy/sweep/
+CODEX_UI_DONE
+CODEX_UI2_DONE
+CODEX_*.log
