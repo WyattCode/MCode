@@ -69,3 +69,17 @@ export function insideMemory(root: string, target: string): boolean {
   const relative = path.relative(projectKey(root), projectKey(target))
   return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative)
 }
+
+const pending = new Map<string, Promise<unknown>>()
+
+/** Orders reset, indexing and layout migration for the same memory directory. */
+export function withMemoryLock<T>(root: string, work: () => Promise<T>): Promise<T> {
+  const previous = pending.get(root) ?? Promise.resolve()
+  const next = previous.catch(() => undefined).then(work)
+  pending.set(root, next)
+  const release = () => {
+    if (pending.get(root) === next) pending.delete(root)
+  }
+  void next.then(release, release)
+  return next
+}

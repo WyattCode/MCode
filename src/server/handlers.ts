@@ -675,13 +675,13 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       return {
         session: await runtime.sessions.update(request.sessionID, {
           model: request.model,
-          ...(request.fallback ? {} : { smart: false, smartRoute: undefined }),
+          ...(request.fallback ? {} : { smart: false }),
         }),
       }
 
     case "session.smart":
       return {
-        session: await runtime.sessions.update(request.sessionID, { smart: undefined, smartRoute: undefined }),
+        session: await runtime.sessions.update(request.sessionID, { smart: undefined }),
       } satisfies Handled<"session.smart">
 
 
@@ -1790,6 +1790,13 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     case "agents.setEnabled": {
       const file = globalAgentsPath(runtime.storage.directory)
       return { path: file, state: await setAgentsEnabled(file, request.enabled) } satisfies Handled<"agents.setEnabled">
+    }
+
+    case "memory.reset": {
+      const history = historyService()
+      if (!history) throw new Error("The memory store is unavailable")
+      await history.memory.reset()
+      return { reset: true } satisfies Handled<"memory.reset">
     }
 
     case "agents.delete": {

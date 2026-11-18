@@ -2,7 +2,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import type { IndexDatabase } from "../history/database"
 import { ftsQuery, plainSnippet, searchColumn } from "../history/text"
-import { memoryLocation, type MemoryScope } from "./paths"
+import { memoryLocation, withMemoryLock, type MemoryScope } from "./paths"
 
 /**
  * memory: MiMo's memory search - BM25 over the memory markdown files, any of
@@ -61,8 +61,31 @@ export class MemoryIndex {
     return this.database.db
   }
 
+  /** Removes the memory files, the previous layout backups, and the derived search records. */
+  reset(): Promise<void> {
+    return withMemoryLock(this.root, async () => {
+      await fs.rm(this.root, { recursive: true, force: true })
+      await fs.mkdir(this.root, { recursive: true })
+      const backups = path.join(path.dirname(this.root), "backup")
+      const entries = await fs.readdir(backups).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return []
+        throw error
+      })
+      for (const entry of entries) {
+        if (/^memory-projects-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/.test(entry)) {
+          await fs.rm(path.join(backups, entry), { recursive: true, force: true })
+        }
+      }
+      await this.db.run("DELETE FROM memory_doc")
+    })
+  }
+
   /** Indexes new and changed files and drops the ones that are gone; returns how many of each. */
-  async reconcile(): Promise<{ indexed: number; pruned: number }> {
+  reconcile(): Promise<{ indexed: number; pruned: number }> {
+    return withMemoryLock(this.root, () => this.reconcileNow())
+  }
+
+  private async reconcileNow(): Promise<{ indexed: number; pruned: number }> {
     const files = await markdownFiles(this.root)
     const onDisk = new Set(files)
     const known = new Map((await this.db.all<{ path: string; fingerprint: string }>("SELECT path, fingerprint FROM memory_doc")).map((row) => [row.path, row.fingerprint]))
@@ -90,8 +113,12 @@ export class MemoryIndex {
     return { indexed, pruned }
   }
 
-  async search(input: MemorySearch): Promise<MemoryHit[]> {
-    await this.reconcile()
+  search(input: MemorySearch): Promise<MemoryHit[]> {
+    return withMemoryLock(this.root, () => this.searchNow(input))
+  }
+
+  private async searchNow(input: MemorySearch): Promise<MemoryHit[]> {
+    await this.reconcileNow()
     const expression = ftsQuery(input.query, "OR")
     if (!expression) return []
     const limit = Math.max(1, Math.floor(input.limit ?? MEMORY_DEFAULT_LIMIT))

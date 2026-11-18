@@ -25,7 +25,9 @@
 // First of all, so nothing here can read the person's own home directory.
 import "./fenced-home"
 import assert from "node:assert/strict"
-import { scoreComplexity, tierForScore } from "../src/shared/smart"
+import { IndexDatabase } from "../src/server/history/database"
+import { MemoryIndex } from "../src/server/memory/index"
+import { SMART_THRESHOLD, scoreComplexity, tierForScore } from "../src/shared/smart"
 import { SessionRunner } from "../src/server/session/runner"
 import { SessionStore } from "../src/server/session/store"
 import { Permissions } from "../src/server/permission"
@@ -639,10 +641,11 @@ async function checkSmartRouting() {
   const complex = "请重构架构 src/a.ts 和 src/b.ts\n```ts\nTypeError: broken\n    at main (src/a.ts:12:3)\n```"
   const greetingScore = scoreComplexity(greeting)
   const complexScore = scoreComplexity(complex)
-  note("Smart distinguishes a greeting from refactoring with a stack trace", greetingScore < 60 && complexScore >= 60)
-  note("Smart sends scores at the threshold to standard", tierForScore(59, 60) === "fast" && tierForScore(60, 60) === "main")
-  note("threshold endpoints are inclusive", tierForScore(0, 0) === "main" && tierForScore(99, 100) === "fast" && tierForScore(100, 100) === "main")
-  note("recent tools, references and failed retries add weight", scoreComplexity(greeting, { tools: 4, files: 2, retry: true }) === greetingScore + 40)
+  note("Smart defaults to confidence 0.90", SMART_THRESHOLD === 0.90)
+  note("confidence is normalized and higher on simpler prompts", greetingScore === 1 && complexScore >= 0 && complexScore < greetingScore)
+  note("confidence at the threshold uses lightweight", tierForScore(0.89) === "main" && tierForScore(0.90) === "fast")
+  note("threshold endpoints are inclusive", tierForScore(0, 0) === "fast" && tierForScore(0.99, 1) === "main" && tierForScore(1, 1) === "fast")
+  note("recent tools, references and failed retries lower confidence", scoreComplexity(greeting, { tools: 4, files: 2, retry: true }) === 0.60)
 
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-smart-check-"))
   const project = path.join(root, "project")
@@ -672,7 +675,18 @@ async function checkSmartRouting() {
     })
   }
   try {
+    const configFile = path.join(storage.directory, "config.json")
+    await fs.mkdir(storage.directory, { recursive: true })
+    await fs.writeFile(configFile, JSON.stringify({ schemaVersion: 1, smartThreshold: 60 }))
     await config.load()
+    const migrated = new Config(storage, new Bus(), path.join(root, "credentials.json"))
+    await migrated.load()
+    note("legacy 60/100 becomes 0.60 in memory and on disk",
+      config.get().smartThreshold === 0.60 && migrated.get().smartThreshold === 0.60
+        && JSON.parse(await fs.readFile(configFile, "utf8")).smartThreshold === 0.60)
+    await config.set({ smartThreshold: 1 })
+    await migrated.load()
+    note("a saved version 2 threshold of 1 stays 1 on reload", migrated.get().smartThreshold === 1)
     await config.set({
       customProviders: [{ id: "smart-fixture", name: "Smart Fixture", baseURL: "https://smart-fixture.invalid/v1", models: ["manual", "fast", "main"].map((id) => ({ id, name: id })) }],
       model: model("manual"), smartFast: model("fast"), smartMain: model("main"),
@@ -680,17 +694,17 @@ async function checkSmartRouting() {
     await config.setApiKey("smart-fixture", "fixture-key")
     const session = await sessions.create({ directory: project, model: model("manual"), title: "Smart fixture", smart: true })
 
-    async function settled() {
+    async function settled(target = session) {
       const deadline = Date.now() + 5000
-      while (runner.busySessions().includes(session.id) && Date.now() < deadline) {
+      while (runner.busySessions().includes(target.id) && Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 20))
       }
-      return sessions.messages(session.id)
+      return sessions.messages(target.id)
     }
-    async function turn(text: string) {
+    async function turn(text: string, target = session) {
       const count = requests.length
-      const id = await runner.prompt({ sessionID: session.id, text })
-      const messages = await settled()
+      const id = await runner.prompt({ sessionID: target.id, text })
+      const messages = await settled(target)
       const user = messages.find((message) => message.role === "user" && message.id === id)
       const reply = messages.filter((message) => message.role === "assistant").at(-1)
       assert.ok(user?.role === "user" && reply, "the runner persisted the user message and reply")
@@ -700,15 +714,22 @@ async function checkSmartRouting() {
 
     const off = await turn(greeting)
     note("default-off Smart keeps the manual model and ordinary usage", off.reply.model.model === "manual" && off.reply.usage?.input === 10 && !off.reply.usage.route && !off.route)
-    await config.set({ smart: true, smartThreshold: 60 })
+    await config.set({ smart: true, smartThreshold: SMART_THRESHOLD })
+    for (const [kind, prompt] of [["development", "Fix the bug"], ["research", "Research this topic"]]) {
+      const fresh = await sessions.create({ directory: project, model: model("manual"), title: "Task fixture" })
+      const standard = await turn(prompt!, fresh)
+      note(`${kind} is standard even with a simple prompt`, standard.reply.model.model === "main" && standard.route?.score === undefined)
+    }
     const light = await turn(greeting)
-    const standard = await turn(complex)
-    note("the same session routes lightweight and standard turns to their configured models",
-      light.reply.model.model === "fast" && standard.reply.model.model === "main" && (await sessions.require(session.id)).model.model === "manual")
-    note("route score and tier survive in transcript usage",
+    await config.set({ smartThreshold: 1 })
+    const continued = await turn(complex)
+    note("an assigned session keeps its tier despite a new task and threshold",
+      light.reply.model.model === "fast" && continued.reply.model.model === "fast"
+        && (await sessions.require(session.id)).model.model === "manual"
+        && (await new SessionStore(storage, new Bus()).require(session.id)).smartRoute === "fast")
+    note("confidence and tier survive in transcript usage",
       light.reply.usage?.route?.tier === "fast" && light.reply.usage.route.score === greetingScore
-        && standard.reply.usage?.route?.tier === "main" && standard.reply.usage.route.score === complexScore
-        && JSON.stringify(standard.reply.usage.route) === JSON.stringify(standard.route))
+        && JSON.stringify(continued.reply.usage?.route) === JSON.stringify(continued.route))
     const runtime = { sessions } as Parameters<typeof handle>[0]
     await handle(runtime, { type: "session.model", sessionID: session.id, model: model("manual") })
     const reopened = new SessionStore(storage, new Bus())
@@ -717,17 +738,16 @@ async function checkSmartRouting() {
     note("the session override bypasses routing", pinned.reply.model.model === "manual" && !pinned.reply.usage?.route)
     await handle(runtime, { type: "session.smart", sessionID: session.id })
     note("restoring Smart routes the next turn", (await turn(greeting)).reply.usage?.route?.tier === "fast")
-    await config.set({ smartThreshold: 20 })
     failNext = true
     const failed = await turn(greeting)
     note("an unsuccessful first attempt still carries its routing decision", failed.reply.finish === "error" && failed.route?.tier === "fast")
     await runner.resumeTurn(session.id)
     const resumed = (await settled()).filter((message) => message.role === "assistant").at(-1)
-    note("an explicit retry is re-scored with retry weight", resumed?.model.model === "main" && resumed.usage?.route?.score === 20, resumed)
+    note("an explicit retry preserves the assigned tier", resumed?.model.model === "fast" && resumed.usage?.route?.tier === "fast", resumed)
     await config.set({ smartThreshold: 150 })
-    note("threshold patches persist within the allowed range", config.get().smartThreshold === 100)
+    note("threshold patches persist within the allowed range", config.get().smartThreshold === 1)
     const onDisk = (await reopened.messages(session.id)).filter((message) => message.role === "assistant").at(-1)
-    note("route usage survives opening the transcript from storage", onDisk?.usage?.route?.tier === "main" && onDisk.usage.route.score === 20)
+    note("route usage survives opening the transcript from storage", onDisk?.usage?.route?.tier === "fast")
     await config.set({ smart: false })
     note("turning Smart off after routing restores the manual model", (await turn(complex)).reply.model.model === "manual")
     note("Smart routing produces no background model request", !(await runner.backgroundUsage.list()).some((entry) => entry.kind === "smart"))
@@ -737,5 +757,36 @@ async function checkSmartRouting() {
   }
 }
 
+async function checkMemoryReset() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-memory-reset-"))
+  const database = await IndexDatabase.open(path.join(root, "search.db"))
+  try {
+    const memory = new MemoryIndex(database, path.join(root, "memory"))
+    for (const entry of ["global/MEMORY.md", "projects/p/MEMORY.md", "sessions/s/notes.md", "sessions/s/checkpoint-1.md", "sessions/s/tasks/T1/progress.md"]) {
+      const file = path.join(memory.root, entry)
+      await fs.mkdir(path.dirname(file), { recursive: true })
+      await fs.writeFile(file, "resetfixture")
+    }
+    note("all memory scopes and checkpoints are searchable before reset", (await memory.search({ query: "resetfixture" })).length === 5)
+    const backup = path.join(root, "backup", "memory-projects-2026-11-18T00-00-00-000Z")
+    await fs.mkdir(backup, { recursive: true })
+    await fs.writeFile(path.join(backup, "old.md"), "backup")
+    await fs.writeFile(path.join(root, "backup", "other.json"), "{}")
+    try {
+      await memory.reset()
+      note("reset removes the memory migration backup only", JSON.stringify(await fs.readdir(path.dirname(backup))) === '["other.json"]')
+      note("reset immediately clears the persistent index", (await database.db.all("SELECT id FROM memory_doc")).length === 0)
+      note("reset empties the memory directory", (await fs.readdir(memory.root)).length === 0)
+      note("reset clears memory search results", (await memory.search({ query: "resetfixture" })).length === 0)
+    } catch (failure) {
+      note("reset empties the memory directory and clears search", false, failure)
+    }
+  } finally {
+    await database.close()
+    await fs.rm(root, { recursive: true, force: true })
+  }
+}
+
 await checkSmartRouting()
+await checkMemoryReset()
 void main()
