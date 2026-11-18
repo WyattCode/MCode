@@ -31,6 +31,8 @@ import { availableModels, fallbackModel, modelAvailable } from "@shared/model-fa
 import { requiresStandardTier, scoreComplexity, smartEnabled, tierForScore, type SmartRoute } from "@shared/smart"
 import type { Bus } from "../bus"
 import type { Config } from "../config"
+import { executeOnDevice, REMOTE_TOOLS, remoteToolDescriptions, sshAllowsTool } from "../ssh/tools"
+import type { SshPool } from "../ssh/pool"
 import type { Permissions } from "../permission"
 import { PermissionDenied, REVIEW_TIMEOUT_MS, VERDICT_TOOL_NAME, looksSecret, verdictApproves } from "../permission"
 import { processAlive, type Storage } from "../storage"
@@ -482,6 +484,7 @@ export class SessionRunner {
     private readonly permissions: Permissions,
     private readonly auth: AuthManager,
     storage: Storage,
+    private readonly ssh?: SshPool,
   ) {
     this.snapshots = new Snapshots(storage.folder("snapshot"))
     this.backgroundUsage = new BackgroundUsage(storage)
@@ -620,6 +623,10 @@ export class SessionRunner {
 
   /** The tools a conversation's request carries: its agent's, less what a subagent never gets. */
   private offeredTools(session: TurnSession): ToolDefinition[] {
+    if (session.sshDeviceId) {
+      const tools = this.tools(session.agent, session.directory).filter((tool) => sshAllowsTool(tool.name, session.agent))
+      return tools.map((tool) => ({ ...tool, description: remoteToolDescriptions[tool.name] }))
+    }
     // OpenCode v2: a GPT model edits with patch, every other with edit and write (registry `usesPatch`).
     return codingSchemas(forModel(this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.directory), session.model.model).filter(
       (tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name),
@@ -1456,7 +1463,7 @@ export class SessionRunner {
    */
   private async systemFor(session: TurnSession): Promise<{ system: string; systemTail?: string }> {
     const config = this.config.get()
-    const skills = await this.skillsFor(session.directory)
+    const skills = session.sshDeviceId ? undefined : await this.skillsFor(session.directory)
     /*
      * OpenCode v2's instruction deltas. What the instructions say now is read
      * on every turn - an AGENTS.md edited mid-conversation used to go unseen
@@ -1465,16 +1472,18 @@ export class SessionRunner {
      * a change is told to the model at the point it happened instead of
      * rewriting the prefix the provider has cached.
      */
-    const values = await instructionValues({
-      directory: session.directory,
-      agent: session.agent,
-      instructions: config.instructions,
-      globalAgentsFile: this.globalAgents,
-      instructionFiles: config.instructionFiles,
-      skills,
-      skillsFolder: path.join(this.dataRoot, "skills"),
-      fetchInstruction: (url) => this.fetchInstructionCached(url),
-    })
+    const values = session.sshDeviceId
+      ? { standing: config.instructions?.trim() ?? "", project: "", skills: "" }
+      : await instructionValues({
+          directory: session.directory,
+          agent: session.agent,
+          instructions: config.instructions,
+          globalAgentsFile: this.globalAgents,
+          instructionFiles: config.instructionFiles,
+          skills,
+          skillsFolder: path.join(this.dataRoot, "skills"),
+          fetchInstruction: (url) => this.fetchInstructionCached(url),
+        })
     const initial = await this.syncInstructions(session.id, values)
     const local = this.isLocal(session)
     const key = JSON.stringify([
@@ -1486,14 +1495,16 @@ export class SessionRunner {
     ])
     const frozen = this.prefixes.get(session.id)
     const base = frozen?.key === key ? frozen.system : systemPromptFrom(session.agent, initial, undefined, { local, modelID: session.model.model, toolNames: this.offeredTools(session).map(tool => tool.name) })
-    const system = [base, pluginPrompt(this.config.get())].filter(Boolean).join("\n\n")
+    const system = [base, session.sshDeviceId
+      ? "This session is bound to an SSH device. File and shell tools run there. Relative paths start in the remote login home. Local project and memory paths are separate from this filesystem."
+      : pluginPrompt(this.config.get())].filter(Boolean).join("\n\n")
     this.prefixes.set(session.id, { key, system: base })
     // subagents: a subagent is told what it is, after what its agent would be told anyway.
     const outputSchema = session.subagent?.outputSchema
     if (session.parentID) {
       return { system: [system, SUBAGENT_NOTE, ...(outputSchema ? [STRUCTURED_NOTE] : session.subagent?.type === "general" ? [RETURN_NOTE] : [])].join("\n\n") }
     }
-    const memory = memoryFilesFor(session.directory, session.id)
+    const memory = session.sshDeviceId ? undefined : memoryFilesFor(session.directory, session.id)
     /*
      * 追求目标: one line telling the model to work the goal to its end, beside
      * the memory note rather than inside the cached prefix - a goal set or met
@@ -2009,7 +2020,8 @@ export class SessionRunner {
    * and the steered messages open the next one, photographed afresh. News of
    * subagents does not split a turn; it was already counted in the running one.
    */
-  private async openSteeredTurn(sessionID: string, directory: string, delivered: string[], history: Message[]): Promise<void> {
+  private async openSteeredTurn(session: TurnSession, delivered: string[], history: Message[]): Promise<void> {
+    const { id: sessionID, directory } = session
     const byID = new Map(history.map((message) => [message.id, message]))
     const typed = delivered.filter((id) => {
       const message = byID.get(id)
@@ -2026,7 +2038,7 @@ export class SessionRunner {
     const next = this.turn(sessionID)
     next.messages = typed
     next.directory = directory
-    next.watching = this.snapshots.begin(directory)
+    if (!session.sshDeviceId) next.watching = this.snapshots.begin(directory)
   }
 
   private async routeSmart(
@@ -2133,7 +2145,7 @@ export class SessionRunner {
      */
     this.pending.delete(session.id)
     this.turn(session.id).directory = session.directory
-    this.turn(session.id).watching = this.snapshots.begin(session.directory)
+    if (!session.sshDeviceId) this.turn(session.id).watching = this.snapshots.begin(session.directory)
 
     // A subscription is authorised by stored tokens, so it has no API key to
     // check here - the bearer is resolved (and refreshed) at turn time.
@@ -2257,9 +2269,9 @@ export class SessionRunner {
     const runtime = runtimeContext({
       language: config.language,
       today: localDay(Date.now()),
-      ...(first ? { directory: session.directory } : {}),
+      ...(first && !session.sshDeviceId ? { directory: session.directory } : {}),
     })
-    if (!first) return [runtime]
+    if (!first || session.sshDeviceId) return [runtime]
     // The project's MCP servers, as the MCP layer has them for this directory.
     await this.mcp?.ready(session.directory)
     const names = this.mcp?.names(session.directory) ?? []
@@ -2578,7 +2590,7 @@ export class SessionRunner {
       // to reach this turn's recording, not the previous turn's.
       this.turn(sessionID).messages = stranded
       this.turn(sessionID).directory = session.directory
-      this.turn(sessionID).watching = this.snapshots.begin(session.directory)
+      if (!session.sshDeviceId) this.turn(sessionID).watching = this.snapshots.begin(session.directory)
       this.launch(sessionID, this.config.apiKey((route?.model ?? session.model).provider) ?? "", controller, false, undefined, route)
     } catch (failure) {
       this.running.delete(sessionID)
@@ -2631,7 +2643,7 @@ export class SessionRunner {
       // The turn answers the same question the broken one did, so a rollback to it reaches both.
       this.turn(sessionID).messages = [messageID]
       this.turn(sessionID).directory = session.directory
-      this.turn(sessionID).watching = this.snapshots.begin(session.directory)
+      if (!session.sshDeviceId) this.turn(sessionID).watching = this.snapshots.begin(session.directory)
       this.launch(sessionID, this.config.apiKey(provider) ?? "", controller, how, undefined, route)
       return messageID
     } catch (failure) {
@@ -3034,8 +3046,10 @@ export class SessionRunner {
     this.loopWatches.delete(sessionID)
     // The project's servers are connected (or have failed) before the turn is offered their tools, as MiMo's instance waits for them.
     this.workingIn.set(sessionID, session.directory)
-    await this.ensureMcpTrust(sessionID, session.directory, controller.signal)
-    await this.mcp?.ready(session.directory)
+    if (!session.sshDeviceId) {
+      await this.ensureMcpTrust(sessionID, session.directory, controller.signal)
+      await this.mcp?.ready(session.directory)
+    }
     const definition = this.config.definition(session.model.provider)
     if (!definition) throw new CodedError(`No provider called ${session.model.provider} is set up`, "error.noModel")
     const adapter: ProviderAdapter = adapterFor(definition.kind)
@@ -3081,7 +3095,7 @@ export class SessionRunner {
       }
       assistant.parts.push(part)
       await this.store.saveMessage(assistant)
-      await this.runTool({ part, assistant, session: { id: sessionID, directory: session.directory, model: session.model }, signal: controller.signal })
+      await this.runTool({ part, assistant, session, signal: controller.signal })
       assistant.time.completed = Date.now()
       if (controller.signal.aborted) assistant.finish = "aborted"
       await this.store.saveMessage(assistant)
@@ -3215,7 +3229,7 @@ export class SessionRunner {
       const stored = await this.store.messages(sessionID)
       session = await this.flushCompactionMemory(session, this.contextFor(session, stored), controller.signal)
       const delivered = this.markDelivered(sessionID, stored)
-      if (delivered.length) await this.openSteeredTurn(sessionID, session.directory, delivered, stored)
+      if (delivered.length) await this.openSteeredTurn(session, delivered, stored)
       /*
        * A cut reply is carried on only while it is still the last thing in the
        * conversation. Once the user's words have come in after it, the rest is
@@ -3737,7 +3751,7 @@ export class SessionRunner {
       const calls = new Semaphore(STEP_TOOL_LIMIT)
       await Promise.all(
         pending.map((part) =>
-          calls.run(() => this.runTool({ part, assistant, session: { id: sessionID, directory: session.directory, model: session.model }, signal: controller.signal })),
+          calls.run(() => this.runTool({ part, assistant, session, signal: controller.signal })),
         ),
       )
       // A turn that has been probing for a long while without changing the project is told to stop and think (loop-health.ts).
@@ -4139,7 +4153,7 @@ export class SessionRunner {
   private async runTool(input: {
     part: ToolPart
     assistant: AssistantMessage
-    session: { id: string; directory: string; model: ModelRef }
+    session: Pick<TurnSession, "id" | "directory" | "model" | "agent" | "sshDeviceId">
     signal: AbortSignal
   }): Promise<void> {
     const { part, assistant } = input
@@ -4262,7 +4276,7 @@ export class SessionRunner {
     publish()
 
     const reach = reachOf(part.name)
-    if (reach !== "reads") {
+    if (!input.session.sshDeviceId && reach !== "reads") {
       const turn = this.turn(owner)
       // A shell command and an MCP tool leave no account of themselves, so the
       // turn is only describable if the project can be compared afterwards.
@@ -4302,6 +4316,12 @@ export class SessionRunner {
        * consulted. Inside the try, so a refusal is caught below and written onto
        * the part as an error, which the model reads in this same turn.
        */
+      const deviceId = input.session.sshDeviceId
+      if (deviceId && !this.ssh) throw new ToolError("SSH sessions are unavailable.")
+      if (deviceId && !sshAllowsTool(tool.name, input.session.agent) && tool.name !== "invalid") {
+        throw new ToolError(`${tool.name} is unavailable in this SSH session mode.`)
+      }
+      const remote = deviceId && REMOTE_TOOLS.has(tool.name) ? await this.ssh!.bind(deviceId) : undefined
       await this.checkRepeated(part, assistant, input.session.id, input.signal)
       await this.permissions.check({
         sessionID: input.session.id,
@@ -4310,14 +4330,15 @@ export class SessionRunner {
         tool: tool.name,
         kind: tool.permission ?? "",
         arguments: part.input,
-        directory: input.session.directory,
+        directory: deviceId ? undefined : input.session.directory,
+        target: remote?.target,
       })
       /*
        * plan: only the tools that turn on the promise are told about it - the
        * three that write, and the one that asks to stop planning - so an
        * ordinary read costs no extra look at the conversation's record.
        */
-      const planControl = PLAN_AWARE.has(tool.name) ? await this.planControl(await this.store.require(input.session.id)) : undefined
+      const planControl = !deviceId && PLAN_AWARE.has(tool.name) ? await this.planControl(await this.store.require(input.session.id)) : undefined
       /*
        * The self-asking contract. A tool that declared it asks for itself has
        * to consult the gate during this call; one that ran without asking is
@@ -4325,7 +4346,7 @@ export class SessionRunner {
        * silently bypass the permission buckets.
        */
       const askedBefore = this.permissions.asked(part.callID)
-      const result = await tool.execute(part.input, {
+      const context: ToolContext = {
         sessionID: input.session.id,
         messageID: assistant.id,
         callID: part.callID,
@@ -4376,8 +4397,9 @@ export class SessionRunner {
         // plan: the write tools read it before they change anything; plan_exit ends planning through it.
         plan: planControl,
         // read: the model's inputs, a copy of what it attaches, and the instructions already given.
-        ...(tool.name === "read" ? this.readSupport(input.session.id) : {}),
-      })
+        ...(tool.name === "read" && !deviceId ? this.readSupport(input.session.id) : {}),
+      }
+      const result = await executeOnDevice(remote?.command, tool.name, part.input, context, remote?.target, () => tool.execute(part.input, context))
       if (selfAskViolated(tool, askedBefore, this.permissions.asked(part.callID))) {
         part.metadata = { ...(part.metadata ?? {}), selfAsk: { tool: tool.name, kind: tool.permission ?? null, missing: true } }
         throw new ToolError(

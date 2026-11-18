@@ -253,6 +253,7 @@ export class SessionStore {
 
   async create(input: {
     directory: string
+    sshDeviceId?: string
     model: ModelRef
     agent?: AgentName
     goalMode?: boolean
@@ -283,6 +284,7 @@ export class SessionStore {
       id: Identifier.session(),
       title: input.title ?? "New session",
       directory: input.directory,
+      ...(input.sshDeviceId ? { sshDeviceId: input.sshDeviceId } : {}),
       model: input.model,
       agent: input.agent ?? "build",
       // plan: fixed now, so every turn of this conversation finds the same plan file.
@@ -803,6 +805,7 @@ export class SessionStore {
 
     const session = await this.create({
       directory: origin.directory,
+      sshDeviceId: origin.sshDeviceId,
       model: origin.model,
       smart: origin.smart,
       agent: origin.agent,

@@ -275,6 +275,9 @@ export async function startRemoteGateway(runtime: Runtime, options: RemoteGatewa
       }
       try {
         const request: Request = frame.request
+        if (request.type.startsWith("ssh.") || (request.type === "session.create" && request.sshDeviceId)) {
+          throw new Error("SSH device settings are available from the desktop only.")
+        }
         const data = await handle(runtime, request, REMOTE_SHELL_OWNER)
         reply({ kind: "response", id: frame.id, ok: true, data })
       } catch (err) {

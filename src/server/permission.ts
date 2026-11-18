@@ -220,6 +220,7 @@ interface Pending {
   /** The project its "always" would be kept for, and what it asks about. */
   key: string
   patterns: string[]
+  /** Requires a current human response even at full access. */
   humanOnly?: boolean
   /** What the user said when refusing, if anything. */
   reason?: string
@@ -537,7 +538,9 @@ export class Permissions {
      * answered. A deliberate difference from MiMo - see HANDOFF. Every other
      * level, and "always allow commands" at any of them, still asks each time.
      */
-    if (action === "allow" && (!forced || level === "full")) return
+    if (!input.humanOnly) {
+      if (action === "allow" && (!forced || level === "full")) return
+    }
     // MiMo's read-only allowlist: a command made only of reading pieces runs once without a question.
     // Except one naming a file the read rules ask about (`type .env`): reading it through a shell asks too,
     // and except a command a user rule deliberately put to them.
@@ -639,6 +642,7 @@ export class Permissions {
     kind: string
     /** What the model passed, so the question can name the file or pattern. */
     arguments?: Record<string, unknown>
+    target?: string
     /** The project the call works in, which "always" is kept for. */
     directory?: string
   }): Promise<void> {
@@ -673,6 +677,7 @@ export class Permissions {
        */
       title: input.tool,
       titleCode: `tool.desc.${bucket}`,
+      preview: input.target ? `Device: ${input.target}` : undefined,
       subject,
       directory: input.directory,
       patternAsks: bucket === "read" && readAsks(subject),

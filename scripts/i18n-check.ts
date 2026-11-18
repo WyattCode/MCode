@@ -284,7 +284,8 @@ for (const [name, entries] of Object.entries(tables)) {
   if (name === "en") continue
   const strays = Object.keys(entries).filter((key) => !(key in english))
   if (strays.length) problems.push(`${name}: ${strays.length} key(s) not in English: ${strays.slice(0, 6).join(", ")}`)
-  const absent = Object.keys(english).filter((key) => !(key in entries))
+  // Remote device settings ship in Simplified Chinese and English.
+  const absent = Object.keys(english).filter((key) => !(key in entries) && (name === "zhCN" || !key.startsWith("set.ssh.")))
   if (absent.length) problems.push(`${name}: ${absent.length} key(s) missing`)
 }
 
