@@ -220,6 +220,7 @@ interface Pending {
   /** The project its "always" would be kept for, and what it asks about. */
   key: string
   patterns: string[]
+  requireExplicitApproval?: boolean
   /** What the user said when refusing, if anything. */
   reason?: string
   /** How it was closed, for the record the transcript keeps. */
@@ -494,6 +495,8 @@ export class Permissions {
     always?: string[]
     /** Asked every time and never remembered, whatever was said before; decided from the command when left out. */
     forced?: boolean
+    /** Keep the request pending even at full access. */
+    requireExplicitApproval?: boolean
     /** A pattern rule asks for this call even where its bucket allows it - a `.env` read - except at full access. */
     patternAsks?: boolean
   }): Promise<void> {
@@ -534,7 +537,9 @@ export class Permissions {
      * answered. A deliberate difference from MiMo - see HANDOFF. Every other
      * level, and "always allow commands" at any of them, still asks each time.
      */
-    if (action === "allow" && (!forced || level === "full")) return
+    if (!input.requireExplicitApproval) {
+      if (action === "allow" && (!forced || level === "full")) return
+    }
     // MiMo's read-only allowlist: a command made only of reading pieces runs once without a question.
     // Except one naming a file the read rules ask about (`type .env`): reading it through a shell asks too,
     // and except a command a user rule deliberately put to them.
@@ -574,7 +579,7 @@ export class Permissions {
 
     let entry: Pending | undefined
     const response = await new Promise<PermissionResponse>((resolve) => {
-      entry = { request, resolve, key, patterns }
+      entry = { request, resolve, key, patterns, requireExplicitApproval: input.requireExplicitApproval }
       this.pending.set(request.id, entry)
       this.bus.publish({ type: "permission.requested", request })
     })
@@ -636,6 +641,7 @@ export class Permissions {
     kind: string
     /** What the model passed, so the question can name the file or pattern. */
     arguments?: Record<string, unknown>
+    target?: string
     /** The project the call works in, which "always" is kept for. */
     directory?: string
   }): Promise<void> {
@@ -670,6 +676,7 @@ export class Permissions {
        */
       title: input.tool,
       titleCode: `tool.desc.${bucket}`,
+      preview: input.target ? `Device: ${input.target}` : undefined,
       subject,
       directory: input.directory,
       patternAsks: bucket === "read" && readAsks(subject),
@@ -721,7 +728,7 @@ export class Permissions {
        * to "always allow" was answered "once" by the next unrelated update,
        * with nobody having pressed anything (R28-8).
        */
-      if (pending.request.forced && action === "allow" && level !== "full") continue
+      if (pending.request.forced && action === "allow" && (level !== "full" || pending.requireExplicitApproval)) continue
       const auto = level === "auto"
       /*
        * The middle level switched on while a question was up - MiMo's 帮我审批 -

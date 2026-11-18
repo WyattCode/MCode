@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import RemoteDevices from "./RemoteDevices.vue"
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useApp } from "../stores/app"
 import { useOpenWith } from "../lib/open-with"
@@ -59,6 +60,7 @@ type Section =
   | "smart"
   | "mcp"
   | "cliPlugins"
+  | "ssh"
   | "lab"
 
 /** Which page to land on - the title bar's server button aims straight at it. */
@@ -1166,6 +1168,7 @@ const NAV_LABELS: Record<Section, string> = {
   keys: "set.shortcuts",
   mcp: "set.nav.mcp",
   cliPlugins: "set.plugins.title",
+  ssh: "set.ssh.title",
   environment: "set.environment",
   lab: "set.nav.lab",
   archive: "set.nav.archive",
@@ -1186,6 +1189,7 @@ const NAV_KEYWORDS: Record<Section, string> = {
   keys: "set.keywords.keys",
   mcp: "set.keywords.mcp",
   cliPlugins: "set.plugins.keywords",
+  ssh: "set.ssh.keywords",
   environment: "set.keywords.environment",
   lab: "set.keywords.lab",
   archive: "set.keywords.archive",
@@ -2045,7 +2049,7 @@ onBeforeUnmount(() => {
             {{ t("set.shortcuts") }}
           </button>
 
-          <div v-show="navShows('mcp') || navShows('cliPlugins')" class="nav-group">{{ t("set.group.integrations") }}</div>
+          <div v-show="navShows('mcp') || navShows('cliPlugins') || navShows('ssh')" class="nav-group">{{ t("set.group.integrations") }}</div>
 
           <button v-show="navShows('mcp')" class="nav-item" :class="{ on: section === 'mcp' }" @click="section = 'mcp'">
             <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
@@ -2056,6 +2060,12 @@ onBeforeUnmount(() => {
             <span>{{ t("set.nav.mcp") }}</span>
           </button>
 
+          <button v-show="navShows('ssh')" class="nav-item" :class="{ on: section === 'ssh' }" @click="section = 'ssh'">
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path fill-rule="evenodd" d="M4 2.75A2.25 2.25 0 0 0 1.75 5v8A2.25 2.25 0 0 0 4 15.25h5.25v1.5H7a.75.75 0 0 0 0 1.5h6a.75.75 0 0 0 0-1.5h-2.25v-1.5H16A2.25 2.25 0 0 0 18.25 13V5A2.25 2.25 0 0 0 16 2.75H4Zm1.02 3.47a.75.75 0 0 1 1.06 0l2.25 2.25a.75.75 0 0 1 0 1.06l-2.25 2.25a.75.75 0 1 1-1.06-1.06L6.74 9 5.02 7.28a.75.75 0 0 1 0-1.06Zm5.23 4.53a.75.75 0 0 1 .75-.75h3.5a.75.75 0 0 1 0 1.5H11a.75.75 0 0 1-.75-.75Z" />
+            </svg>
+            <span>{{ t("set.ssh.title") }}</span>
+          </button>
           <button v-show="navShows('cliPlugins')" class="nav-item" :class="{ on: section === 'cliPlugins' }" @click="section = 'cliPlugins'">
             <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
               <path fill-rule="evenodd" d="M4.5 3.75A2.75 2.75 0 0 0 1.75 6.5v7a2.75 2.75 0 0 0 2.75 2.75h11a2.75 2.75 0 0 0 2.75-2.75v-7a2.75 2.75 0 0 0-2.75-2.75h-11Zm1 3.22a.75.75 0 0 0-1.06 1.06L6.41 10l-1.97 1.97a.75.75 0 0 0 1.06 1.06l2.5-2.5a.75.75 0 0 0 0-1.06l-2.5-2.5Zm4.75 4.28a.75.75 0 0 0 0 1.5h4a.75.75 0 0 0 0-1.5h-4Z" />
@@ -2843,6 +2853,8 @@ onBeforeUnmount(() => {
             />
           </Teleport>
         </template>
+
+        <RemoteDevices v-else-if="section === 'ssh'" @session-started="emit('close')" />
 
         <template v-else-if="section === 'cliPlugins'">
           <h2>{{ t("set.plugins.title") }}</h2>

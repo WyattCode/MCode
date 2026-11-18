@@ -456,6 +456,10 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     }
 
     case "session.create": {
+      if (request.sshDeviceId) {
+        if (!runtime.devices) throw new Error("SSH devices are unavailable.")
+        await runtime.devices.resolve(request.sshDeviceId)
+      }
       const config = runtime.config.get()
       const directory = request.scratch ? await scratchDirectory(new Date(), config.projectRoot, runtime.config.projectLocations) : (request.directory ?? config.directory)
       await runtime.config.projectLocations.assert(directory)
@@ -464,12 +468,13 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
        * as MiMo derives one. Listed before the session exists, so the window
        * never sees the conversation without its project.
        */
-      if (!request.scratch && !request.sideOf) await runtime.config.adoptProjects([directory], { byRepository: true })
+      if (!request.sshDeviceId && !request.scratch && !request.sideOf) await runtime.config.adoptProjects([directory], { byRepository: true })
       // MiMo's rule for saved MCP changes: a new conversation is when they take effect, for every conversation.
       // Not waited for: the conversation's first turn waits for its project's servers itself.
-      void runtime.mcp.commitIfDirty()
+      if (!request.sshDeviceId) void runtime.mcp.commitIfDirty()
       const session = await runtime.sessions.create({
         directory,
+        ...(request.sshDeviceId ? { sshDeviceId: request.sshDeviceId } : {}),
         ...(request.scratch ? { scratch: true } : {}),
         ...(request.sideOf ? { sideOf: request.sideOf } : {}),
         model: config.model,
@@ -1717,6 +1722,18 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "workspace.list":
       return { worktrees: await git.worktrees(request.directory) } satisfies Handled<"workspace.list">
+
+    case "ssh.list":
+    case "ssh.save":
+    case "ssh.remove":
+    case "ssh.test": {
+      if (!runtime.devices || !runtime.ssh) throw new Error("SSH devices are unavailable.")
+      if (request.type === "ssh.list") return { devices: await runtime.devices.list() } satisfies Handled<"ssh.list">
+      if (request.type === "ssh.save") return { device: await runtime.devices.save(request.device) } satisfies Handled<"ssh.save">
+      if (request.type === "ssh.test") return await runtime.ssh.test(request.device) satisfies Handled<"ssh.test">
+      await runtime.devices.remove(request.id)
+      return {} satisfies Handled<"ssh.remove">
+    }
 
     case "cliPlugin.list":
       return { plugins: listPlugins(runtime.config.get()) } satisfies Handled<"cliPlugin.list">

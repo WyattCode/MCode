@@ -1,3 +1,4 @@
+import type { SshDevice, SshDeviceInput, SshTest } from "./ssh"
 import type { SmartRoute } from "./smart"
 import type { ProviderPreset, ProviderProtocol } from "./custom-endpoint"
 
@@ -52,6 +53,7 @@ export interface QueuedPrompt {
 }
 
 export interface SessionInfo {
+  sshDeviceId?: string
   id: string
   title: string
   /**
@@ -2128,7 +2130,7 @@ export type Request =
    * import` pair, over this app's own documents. The Markdown export is a
    * transcript to read; this is a conversation to reopen.
    */
-  | { type: "session.create"; directory?: string; title?: string; scratch?: boolean; sideOf?: string }
+  | { type: "session.create"; sshDeviceId?: string; directory?: string; title?: string; scratch?: boolean; sideOf?: string }
   /* An empty folder for a new project, named by the user, under the default project location. */
   | { type: "project.createBlank"; name: string }
   /* A folder onto the project list, with no conversation; `used` also makes it the latest pick. */
@@ -2473,6 +2475,10 @@ export type Request =
   /** Everything a shell has printed so far, to redraw a pane that went away. */
   | { type: "shell.attach"; shellID: string }
   | { type: "workspace.list"; directory: string }
+  | { type: "ssh.list" }
+  | { type: "ssh.save"; device: SshDeviceInput }
+  | { type: "ssh.remove"; id: string }
+  | { type: "ssh.test"; device: { id: string } | SshDeviceInput }
   | { type: "cliPlugin.list" }
   | { type: "cliPlugin.install"; operationID: string; name: string; command: string; binary?: string }
   | { type: "cliPlugin.set"; id: string; action: boolean | "delete" }
@@ -2744,6 +2750,10 @@ export interface ResponseMap {
   "mcp.tools": { tools?: McpToolInfo[]; error?: string }
   "mcp.authenticate": { servers: McpServerState[] }
   "mcp.register": { servers: McpServerState[] }
+  "ssh.list": { devices: SshDevice[] }
+  "ssh.save": { device: SshDevice }
+  "ssh.remove": Record<string, never>
+  "ssh.test": SshTest
   "cliPlugin.list": { plugins: (CliPlugin & { available: boolean })[] }
   "cliPlugin.install": { plugin: CliPlugin }
   "cliPlugin.set": Record<string, never>

@@ -37,7 +37,12 @@ import { ModelCatalog, shippedCatalog } from "./provider/models-dev"
 import { closeAllApps, closeAppOf } from "./tool/app"
 import { stopLookout } from "./appdrive/windows"
 
+import { Devices } from "./ssh/devices"
+import { SshPool } from "./ssh/pool"
+
 export interface Runtime {
+  devices?: Devices
+  ssh?: SshPool
   storage: Storage
   bus: Bus
   config: Config
@@ -148,7 +153,9 @@ export async function startBackend(dataDirectory: string, options: BackendOption
   await config.migrateRepositoryProjects()
   // Plain-text keys are encrypted once the system can (L12-3); a failure is kept plain and tried next launch.
   await config.migrateCredentials()
-  const runner = new SessionRunner(sessions, bus, config, permissions, auth, storage)
+  const devices = new Devices(storage)
+  const ssh = new SshPool(devices)
+  const runner = new SessionRunner(sessions, bus, config, permissions, auth, storage, ssh)
   /*
    * Undo's own housekeeping, in the background so the window is not held up by
    * it: an existing profile's inline undo bodies move into the projects'
@@ -311,7 +318,7 @@ export async function startBackend(dataDirectory: string, options: BackendOption
   mcp.useBusy(() => runner.busySessions().length > 0)
   mcp.useBusyDirectories(() => runner.busyDirectories())
 
-  const runtime: Runtime = { storage, bus, config, auth, permissions, sessions, runner, shells, mcp, artifacts }
+  const runtime: Runtime = { storage, bus, config, auth, permissions, sessions, runner, shells, mcp, artifacts, devices, ssh }
 
   /*
    * Connecting is not awaited: a server that hangs on start would otherwise
@@ -475,6 +482,7 @@ export async function startBackend(dataDirectory: string, options: BackendOption
       clearTimeout(packFirst)
       if (packEvery) clearInterval(packEvery)
       await shells.closeAll()
+      await ssh.close()
       // The browsers the app tool opened close with the app; apps it attached to are only let go.
       await closeAllApps()
       // And the one that watches shell commands for windows they opened.
