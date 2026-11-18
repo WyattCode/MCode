@@ -295,7 +295,12 @@ export async function roundNineProviderChecks(check: Check, section: (name: stri
       check("MiniMax is reached at its current domain", providers.find((entry) => entry.id === "minimax")?.baseURL === "https://api.minimaxi.com/v1")
       const settings = readFileSync("src/renderer/src/components/ModelsPage.vue", "utf8")
       const connect = readFileSync("src/renderer/src/components/ConnectDialog.vue", "utf8")
-      check("the settings page draws its chips from that list", /const presetGroups = computed\(\(\) => quickAddGroups\(app\.providers\)\)/.test(settings))
+      check(
+        "the settings page draws its chips from the shared MiMo preset list",
+        /import \{ PROVIDER_PRESETS \} from "@shared\/custom-endpoint"/.test(settings) &&
+          /<button\s+v-for="\(entry, key\) in PROVIDER_PRESETS"[\s\S]*?@click="preset = key"[\s\S]*?\{\{ entry\.label \}\}/.test(settings) &&
+          /<CustomProviderForm[^>]*:preset="preset"/.test(settings),
+      )
       check("and the connect dialog lists only what it offers", /groupProviders\(connectableProviders\(app\.providers\)\)/.test(connect))
       /* A provider connected before still shows as added, and a moved address the user set stays theirs. */
       await e.config.set({ providerEndpoints: { minimax: "https://my-proxy.example/v1" } })

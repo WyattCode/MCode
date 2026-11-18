@@ -1,30 +1,18 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue"
+import { PROVIDER_PRESETS } from "@shared/custom-endpoint"
 import type { ProviderStatus } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
 import { localDownMessage, offMachine } from "../lib/local-runtime"
 import { notify, notifyFailure } from "../lib/toast"
-import { groupProviders, providerLabel, quickAddGroups, type Group } from "../lib/connect"
+import { groupProviders, providerLabel, type Group } from "../lib/connect"
 import { cloneId } from "../lib/custom-model"
 import ProviderIcon from "./ProviderIcon.vue"
 import ConnectDialog from "./ConnectDialog.vue"
 import ConfirmDialog from "./ConfirmDialog.vue"
 import CustomProviderForm from "./CustomProviderForm.vue"
 import ProviderCloneDialog from "./ProviderCloneDialog.vue"
-
-/**
- * Settings → 模型, as MiMo 26.920 redid it: the title and intro, a row of
- * tabs - refresh, 添加供应商, then one per provider - and under it the chosen
- * tab's page. Adding shows the vendor chips and the custom form; a custom
- * provider's tab is its form, with delete and clone beside save in the bar
- * under it; its separate profile page and add-model dialog are gone.
- *
- * Kept as MCode has them (deliberate differences, round nine): a vendor chip
- * opens the connect dialog, which takes the key and finds the models through
- * `/models`, and a connected vendor's tab lists what it found, with refresh,
- * the endpoint it is reached at, and disconnect.
- */
 
 const app = useApp()
 
@@ -41,8 +29,7 @@ watch(listed, (list) => {
   if (selected.value !== ADD && !list.some((provider) => provider.id === selected.value)) selected.value = list[0]?.id ?? ADD
 })
 
-/* MiMo's seven presets, listed whether or not one is added; a connected vendor's chip opens on 已连接. */
-const presetGroups = computed(() => quickAddGroups(app.providers))
+const preset = ref<keyof typeof PROVIDER_PRESETS>("custom")
 
 const form = ref<InstanceType<typeof CustomProviderForm>>()
 const saving = computed(() => Boolean(form.value?.busy))
@@ -158,6 +145,7 @@ async function save() {
 /* A provider just added becomes the shown tab, as MiMo moves to it. */
 function saved(id: string) {
   selected.value = id
+  preset.value = "custom"
 }
 
 /*
@@ -251,19 +239,25 @@ async function confirmClone(id: string) {
     <!-- Adding: the vendor chips, then the custom form, which is what 自定义 stands for. -->
     <template v-if="selected === ADD">
       <div class="presets" data-provider-presets>
-        <button v-for="group in presetGroups" :key="group.id" type="button" class="preset" :data-preset="group.id" @click="openConnect(group)">
-          <ProviderIcon :id="group.entries[0].id" :name="group.name" class="preset-mark" />
-          <span>{{ group.name }}</span>
-        </button>
-        <!-- MiMo's literal label, the same in every language. -->
-        <span class="preset on" data-preset="custom">
-          <svg class="preset-plus" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <button
+          v-for="(entry, key) in PROVIDER_PRESETS"
+          :key="key"
+          type="button"
+          class="preset"
+          :class="{ on: preset === key }"
+          :aria-pressed="preset === key"
+          :data-preset="key"
+          :disabled="saving"
+          @click="preset = key"
+        >
+          <ProviderIcon v-if="key !== 'custom'" :id="key" :name="entry.label" class="preset-mark" />
+          <svg v-else class="preset-plus" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M8 3v10M3 8h10" />
           </svg>
-          <span>自定义 / Custom</span>
-        </span>
+          <span>{{ entry.label }}</span>
+        </button>
       </div>
-      <CustomProviderForm key="add" ref="form" @saved="saved" />
+      <CustomProviderForm key="add" ref="form" :preset="preset" @saved="saved" />
     </template>
 
     <!-- A custom provider: its own form, with delete and clone beside save. -->
@@ -324,6 +318,9 @@ async function confirmClone(id: string) {
     <Teleport v-if="dockHost" :to="dockHost">
       <div class="dock" data-provider-actions>
         <span class="dock-start">
+          <button v-if="selected === ADD" type="button" class="dock-btn" :disabled="saving" @click="openConnect()">
+            {{ t("set.models.manage") }}
+          </button>
           <template v-if="current?.custom && customEntry">
             <button
               type="button"
@@ -365,7 +362,7 @@ async function confirmClone(id: string) {
           :disabled="saving || !form?.canSave"
           @click="save"
         >
-          {{ saving ? t("common.saving") : t("set.models.confirmAdd") }}
+          {{ saving ? t("common.saving") : t("common.save") }}
         </button>
         <button
           v-else-if="current?.custom && customEntry"

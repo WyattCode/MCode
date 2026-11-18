@@ -1,3 +1,4 @@
+import { normalizeProviderProtocol, validEndpoint } from "@shared/custom-endpoint"
 import type { ModelEntry, ProviderDefinition } from "./catalog"
 import { nameFromId } from "./model-name"
 
@@ -233,38 +234,47 @@ export type ProbeResult = { ok: true; models: string[] } | { ok: false; reason: 
  * work, and the list only offers ids to pick from.
  *
  * An Anthropic gateway takes its key as `x-api-key` with a version header, so
- * that protocol sends those beside the bearer token MiMo sends to everyone.
+ * the other protocols use bearer authentication.
  */
 export async function probeModels(input: {
   baseURL: string
   apiKey: string
   headers?: Record<string, string>
-  protocol?: "openai" | "anthropic" | "responses"
+  protocol?: string
   fetcher?: typeof fetch
   timeout?: number
 }): Promise<ProbeResult> {
-  const root = input.baseURL.trim().replace(/\/+$/, "")
+  if (!validEndpoint(input.baseURL)) return { ok: false, reason: "network", message: "Invalid HTTP(S) URL" }
+  const url = new URL(input.baseURL.trim())
+  url.pathname = `${url.pathname.replace(/\/+$/, "")}/models`
   const key = input.apiKey.trim()
-  const headers: Record<string, string> = {
-    ...input.headers,
-    accept: "application/json",
-    ...(key ? { authorization: `Bearer ${key}` } : {}),
-    ...(key && input.protocol === "anthropic" ? { "x-api-key": key, "anthropic-version": "2023-06-01" } : {}),
+  const messages = normalizeProviderProtocol(input.protocol) === "messages"
+  const headers = Object.fromEntries(Object.entries(input.headers ?? {}).map(([name, value]) => [name.toLowerCase(), value]))
+  headers.accept = "application/json"
+  if (messages) {
+    if (key) {
+      delete headers.authorization
+      headers["x-api-key"] = key
+    }
+    headers["anthropic-version"] = "2023-06-01"
+  } else if (key) {
+    headers.authorization = `Bearer ${key}`
   }
+  const signal = AbortSignal.timeout(input.timeout ?? PROBE_TIMEOUT)
   let response: Response
   try {
-    response = await (input.fetcher ?? fetch)(`${root}/models`, { headers, signal: AbortSignal.timeout(input.timeout ?? PROBE_TIMEOUT) })
+    response = await (input.fetcher ?? fetch)(url.href, { method: "GET", headers, signal, redirect: "manual" })
   } catch (err) {
-    const name = err instanceof Error || err instanceof DOMException ? err.name : ""
-    if (name === "TimeoutError" || name === "AbortError") return { ok: false, reason: "timeout" }
-    return { ok: false, reason: "network", message: err instanceof Error ? err.message : String(err) }
+    if (signal.aborted || (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError"))) return { ok: false, reason: "timeout" }
+    return { ok: false, reason: "network", message: "Network request failed" }
   }
   if (!response.ok) return { ok: false, reason: "http", status: response.status }
   let body: unknown
   try {
-    body = JSON.parse(await response.text())
-  } catch {
-    return { ok: false, reason: "json" }
+    body = await response.json()
+  } catch (err) {
+    if (signal.aborted) return { ok: false, reason: "timeout" }
+    return err instanceof SyntaxError ? { ok: false, reason: "json" } : { ok: false, reason: "network", message: "Could not read response" }
   }
   const record = body && typeof body === "object" ? (body as { data?: unknown; models?: unknown }) : {}
   const rows = Array.isArray(record.data) ? record.data : Array.isArray(record.models) ? record.models : []

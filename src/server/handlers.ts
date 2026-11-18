@@ -5,6 +5,8 @@ import { renderOffice } from "./office/html"
 import { kindFor, mimeFor } from "./media"
 import type {
   AppPath,
+  CustomModel,
+  CustomProvider,
   ArtifactFile,
   Request,
   ResponseMap,
@@ -14,7 +16,7 @@ import type {
 } from "@shared/protocol"
 import { sessionFiles } from "@shared/session-files"
 import { artifactCategory } from "@shared/artifact-category"
-import { normalizeBaseURL } from "@shared/custom-endpoint"
+import { normalizeBaseURL, normalizeProviderProtocol, validEndpoint } from "@shared/custom-endpoint"
 import { providerIdMessageKey, providerIdProblem, type ProviderIdProblem } from "@shared/provider-id"
 import { CodedError } from "@shared/errors"
 import { cleanGoal } from "./session/goal"
@@ -31,6 +33,7 @@ import { IGNORED, insideReal, resolveInsideReal } from "./tool/fs-util"
 import { protectedFilter } from "./protected-paths"
 import { readableFile, writableFile } from "./file-access"
 import { restoreHeaders, restoreMasked, restoreServer, restoreUrl } from "./config-view"
+import { BUILT_IN } from "./provider/catalog"
 import { discoverModels, probeModels } from "./provider/discover"
 import { blankProjectDirectory, scratchDirectory, scratchRoot } from "./scratch"
 import { searchMessages } from "./search"
@@ -301,13 +304,42 @@ async function waitForIdle(runtime: Runtime, sessionID: string, within = IDLE_WA
 /** A refused provider id, said in English for logs and coded for the window's own language. */
 function providerIdRefusal(id: string, problem: ProviderIdProblem): CodedError {
   const said =
-    problem === "exists" ? `A provider with the id ${id} already exists` : problem === "slash" ? `"${id}" is not a valid provider id: it contains /` : "A provider id is required"
+    {
+      exists: `A provider with the id ${id} already exists`,
+      slash: `"${id}" is not a valid provider id: it contains /`,
+      reserved: `The provider id ${id} is reserved`,
+      empty: "A provider id is required",
+    }[problem]
   return new CodedError(said, providerIdMessageKey(problem))
 }
 
 /** Every provider id in use: the built-ins, the custom ones, and a disabled custom one too. */
 function takenProviderIds(runtime: Runtime): string[] {
-  return [...runtime.config.definitions().map((entry) => entry.id), ...runtime.config.get().customProviders.map((entry) => entry.id)]
+  return [...BUILT_IN.map((entry) => entry.id), ...runtime.config.get().customProviders.map((entry) => entry.id)]
+}
+
+function customProtocol(raw: string | undefined): CustomProvider["protocol"] {
+  const protocol = normalizeProviderProtocol(raw)
+  if (protocol === "messages") return "anthropic"
+  if (protocol === "responses") return "responses"
+}
+
+function customEndpoint(raw: string): string {
+  const baseURL = normalizeBaseURL(raw)
+  if (!validEndpoint(baseURL)) throw new CodedError("Enter an HTTP(S) URL", "model.endpointInvalid")
+  return baseURL
+}
+
+function customModels(runtime: Runtime, models: CustomModel[], previous?: CustomModel[]): CustomModel[] {
+  if (!models.length) throw new CodedError("A custom provider needs at least one model", "provider.needsModel")
+  const seen = new Set<string>()
+  const stored = new Map(previous?.map((model) => [model.id, model]))
+  return models.map((model) => {
+    const checked = customModelOf(model, stored.get(model.id))
+    if (seen.has(checked.id)) throw new CodedError("Model already exists", "set.models.modelExists")
+    seen.add(checked.id)
+    return withImageInput(checked, runtime.config.modelCatalog())
+  })
 }
 
 export async function handle(runtime: Runtime, request: Request, owner?: ShellOwner): Promise<unknown> {
@@ -1192,15 +1224,9 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
        * both.
        */
       const id = request.id.trim()
-      const config = runtime.config.get()
-      // MiMo's rule. Checked against every provider, not only the custom ones
-      // (and a disabled one too), without case: taking a built-in's id would
-      // shadow it and there would be no way back.
-      const problem = providerIdProblem(id, takenProviderIds(runtime))
-      if (problem) throw providerIdRefusal(id, problem)
-      // Id and name trimmed, and 高级配置 checked: a bad limit is refused, not dropped.
-      const models = request.models.map((model) => withImageInput(customModelOf(model), runtime.config.modelCatalog()))
-      if (!models.length) throw new CodedError("A custom provider needs at least one model", "provider.needsModel")
+      const models = customModels(runtime, request.models)
+      const baseURL = customEndpoint(request.baseURL)
+      const protocol = customProtocol(request.protocol)
       /*
        * `{env:MY_VAR}` in the key field names a variable rather than supplying
        * a secret. The config records the name and nothing else is written, so
@@ -1213,21 +1239,25 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
           .map(([key, value]) => [key.trim(), value.trim()])
           .filter(([key, value]) => key && value),
       )
-      await runtime.config.update((current) => ({
-        customProviders: [
-          ...current.customProviders,
-          {
-            id,
-            name: request.name.trim(),
-            baseURL: normalizeBaseURL(request.baseURL),
-            ...(Object.keys(headers).length ? { headers } : {}),
-            models,
-            ...(environment ? { environment } : {}),
-            // A Claude-style gateway speaks the Messages API, and `responses` the Responses API; absent stays OpenAI-compatible.
-            ...(request.protocol === "anthropic" || request.protocol === "responses" ? { protocol: request.protocol } : {}),
-          },
-        ],
-      }))
+      await runtime.config.update((current) => {
+        const problem = providerIdProblem(id, takenProviderIds(runtime))
+        if (problem) throw providerIdRefusal(id, problem)
+        return {
+          customProviders: [
+            ...current.customProviders,
+            {
+              id,
+              name: request.name.trim(),
+              baseURL,
+              ...(request.preset ? { preset: request.preset } : {}),
+              ...(Object.keys(headers).length ? { headers } : {}),
+              models,
+              ...(environment ? { environment } : {}),
+              ...(protocol ? { protocol } : {}),
+            },
+          ],
+        }
+      })
       // A literal key is stored; an {env:...} indirection stores nothing.
       await runtime.config.setApiKey(id, environment ? "" : request.apiKey.trim())
       return { providers: runtime.config.providers() }
@@ -1242,9 +1272,9 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       const config = runtime.config.get()
       const existing = config.customProviders.find((entry) => entry.id === request.id)
       if (!existing) throw new CodedError(`No custom provider with the id ${request.id}`, "provider.notFound")
-      // Id and name trimmed, and 高级配置 checked: a bad limit is refused, not dropped.
-      const models = request.models.map((model) => withImageInput(customModelOf(model), runtime.config.modelCatalog()))
-      if (!models.length) throw new CodedError("A custom provider needs at least one model", "provider.needsModel")
+      const models = customModels(runtime, request.models, existing.models)
+      const protocol = customProtocol(request.protocol)
+      const baseURL = customEndpoint(restoreUrl(request.baseURL.trim(), existing.baseURL))
       const typed = request.apiKey.trim()
       const environment = /^\{env:([^}]+)\}$/.exec(typed)?.[1]?.trim()
       const headers = Object.fromEntries(
@@ -1262,11 +1292,12 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
                 id: entry.id,
                 name: request.name.trim(),
                 // An address shown with its secret parts masked, left as shown, keeps what is stored.
-                baseURL: normalizeBaseURL(restoreUrl(request.baseURL.trim(), existing.baseURL)),
+                baseURL,
+                ...(request.preset ? { preset: request.preset } : {}),
                 ...(Object.keys(keptHeaders).length ? { headers: keptHeaders } : {}),
                 models,
                 ...(keptEnvironment ? { environment: keptEnvironment } : {}),
-                ...(request.protocol === "anthropic" || request.protocol === "responses" ? { protocol: request.protocol } : {}),
+                ...(protocol ? { protocol } : {}),
               }
             : entry,
         ),
@@ -1311,11 +1342,12 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     case "provider.probe": {
       const existing = request.provider ? runtime.config.get().customProviders.find((entry) => entry.id === request.provider) : undefined
       const typed = request.apiKey.trim()
-      const apiKey = typed || (request.provider ? (runtime.config.apiKey(request.provider) ?? "") : "")
+      const environment = /^\{env:([^}]+)\}$/.exec(typed)?.[1]?.trim()
+      const apiKey = environment ? (process.env[environment] ?? "") : typed || (request.provider ? (runtime.config.apiKey(request.provider) ?? "") : "")
       const baseURL = normalizeBaseURL(existing ? restoreUrl(request.baseURL.trim(), existing.baseURL) : request.baseURL.trim())
       const headers = existing ? restoreHeaders(request.headers ?? {}, existing.headers) : request.headers
-      const result = await probeModels({ baseURL, apiKey, headers, protocol: request.protocol })
-      return (result.ok ? { ok: true, models: result.models } : { ...result, models: [] }) satisfies Handled<"provider.probe">
+      const result = await probeModels({ baseURL, apiKey, headers, protocol: request.protocol ?? existing?.protocol })
+      return (result.ok ? { ok: true, modelIds: result.models } : { ...result, modelIds: [] }) satisfies Handled<"provider.probe">
     }
 
     case "provider.removeCustom": {

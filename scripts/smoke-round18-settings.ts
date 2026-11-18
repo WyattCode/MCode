@@ -241,7 +241,15 @@ export async function roundEighteenSettingsChecks(check: Check, section: (name: 
     const config = await read("src/server/config.ts")
     check("R18-M4: a provider stored with `responses` is reached over it", /entry\.protocol === "responses" \? "openai-responses"/.test(config))
     const handlers = await read("src/server/handlers.ts")
-    check("R18-M4: adding and editing keep the choice", (handlers.match(/request\.protocol === "anthropic" \|\| request\.protocol === "responses"/g) ?? []).length === 2)
+    const storesProtocol = (operation: string) =>
+      /const protocol = customProtocol\(request\.protocol\)[\s\S]*?\.\.\.\(protocol \? \{ protocol \} : \{\}\)/.test(
+        handlers.split(`case "provider.${operation}Custom":`)[1]?.split(/\n    case /)[0] ?? "",
+      )
+    check(
+      "R18-M4: adding and editing keep the choice",
+      storesProtocol("add") && storesProtocol("update") &&
+        /const protocol = normalizeProviderProtocol\(raw\)\s+if \(protocol === "messages"\) return "anthropic"\s+if \(protocol === "responses"\) return "responses"/.test(handlers),
+    )
     const runner = await read("src/server/session/runner.ts")
     check("R18-M4: no caller picks an adapter by hand any more", !/\? ChatGPTSubscription/.test(runner + handlers))
   }
@@ -282,12 +290,12 @@ export async function roundEighteenSettingsChecks(check: Check, section: (name: 
     const settings = await read("src/renderer/src/components/SettingsDialog.vue")
     check("R18-M5: a row of tabs - refresh, add, then one per provider", /data-provider-tabs[\s\S]*data-provider-refresh-all[\s\S]*data-provider-add[\s\S]*v-for="provider in listed"/.test(models))
     check("R18-M5: a custom provider's tab carries delete, clone and save", /data-provider-remove[\s\S]*data-provider-clone[\s\S]*data-provider-save/.test(models))
-    check("R18-M5: the form offers the three protocols", /\(\["openai", "anthropic", "responses"\] as const\)\.map\(\(value\) => \(\{ value, label: t\(`provider\.custom\.protocol\.\$\{value\}`\) \}\)\)/.test(form) && /:options="protocolOptions"/.test(form))
+    check("R18-M5: the form offers the three protocols", /\(\["chat-completions", "messages", "responses"\] as const\)\.map\(\(value\) => \(\{ value, label: t\(`set\.models\.protocol\.\$\{value\}`\) \}\)\)/.test(form) && /:options="protocolOptions"/.test(form))
     check("R18-M5: a connection test, a model picker and the four inputs", /data-provider-probe/.test(form) && /data-model-combo/.test(form) && /v-for="key in MODALITIES"/.test(form))
     check("R18-M5: a blank key on an edit tests with the one held, never sent to the window", /\.\.\.\(editing \? \{ provider: editing\.id \} : \{\}\)/.test(form))
     check("R18-M5: the old add-model dialog is gone", !(await fs.stat(path.join(process.cwd(), "src/renderer/src/components/CustomModelDialog.vue")).catch(() => undefined)) && !/CustomModelDialog/.test(settings + models))
     check("R18-M5: the settings dialog draws the page from its own component", /<ModelsPage v-else \/>/.test(settings))
-    check("R18-M5: kept as decided in round nine - a vendor chip opens the connect dialog", /@click="openConnect\(group\)"/.test(models))
+    check("R18-M5: preset chips populate the form and built-in connections remain available", /@click="preset = key"/.test(models) && /@click="openConnect\(\)"/.test(models))
     check("R18-M5: and a connected vendor keeps its endpoint and its models", /data-provider-endpoint/.test(models) && /app\.discoverModels\(provider\.id\)/.test(models))
     const handlers = await read("src/server/handlers.ts")
     check("R18-M5: a clone takes the id chosen, checked as a new provider's", /const chosen = request\.id\?\.trim\(\)/.test(handlers) && /providerIdProblem\(chosen, ids\)/.test(handlers))

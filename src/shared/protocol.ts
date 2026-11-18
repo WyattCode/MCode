@@ -1,3 +1,5 @@
+import type { ProviderPreset, ProviderProtocol } from "./custom-endpoint"
+
 /**
  * Wire protocol shared by the renderer and the Node backend.
  *
@@ -1974,6 +1976,7 @@ export interface CustomProvider {
   id: string
   name: string
   baseURL: string
+  preset?: ProviderPreset
   /**
    * Extra request headers, sent with every call to this provider.
    *
@@ -2308,7 +2311,8 @@ export type Request =
       apiKey: string
       headers?: Record<string, string>
       models: CustomModel[]
-      protocol?: CustomProvider["protocol"]
+      preset?: ProviderPreset
+      protocol?: CustomProvider["protocol"] | ProviderProtocol
     }
   | { type: "provider.removeCustom"; provider: string }
   /** MiMo 26.920's 删除自定义模型: one model leaves the saved provider at once, not on the next save. */
@@ -2322,7 +2326,8 @@ export type Request =
       apiKey: string
       headers?: Record<string, string>
       models: CustomModel[]
-      protocol?: CustomProvider["protocol"]
+      preset?: ProviderPreset
+      protocol?: CustomProvider["protocol"] | ProviderProtocol
     }
   /**
    * Copied in the backend so the stored key never travels to the window;
@@ -2341,7 +2346,7 @@ export type Request =
       apiKey: string
       provider?: string
       headers?: Record<string, string>
-      protocol?: CustomProvider["protocol"]
+      protocol?: CustomProvider["protocol"] | ProviderProtocol
     }
   | { type: "auth.begin"; provider: string; method: AuthMethodKind }
   | { type: "auth.cancel"; provider: string }
@@ -2627,7 +2632,7 @@ export interface ResponseMap {
   "provider.updateCustom": { providers: ProviderStatus[] }
   /** The copy's id. */
   "provider.copyCustom": { providers: ProviderStatus[]; id: string }
-  "provider.probe": { ok: boolean; models: string[]; reason?: "http" | "json" | "timeout" | "network"; status?: number; message?: string }
+  "provider.probe": { ok: boolean; modelIds: string[]; reason?: "http" | "json" | "timeout" | "network"; status?: number; message?: string }
   /**
    * Where to send the user, plus the short code to type when the flow is the
    * device kind. Either way the outcome arrives later as an auth event.
