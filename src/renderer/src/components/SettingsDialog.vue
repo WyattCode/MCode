@@ -3,8 +3,9 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useApp } from "../stores/app"
 import { useOpenWith } from "../lib/open-with"
 import ModelsPage from "./ModelsPage.vue"
+import ContextMenu from "./ContextMenu.vue"
 import { SMART_THRESHOLD } from "@shared/smart"
-import type { ModelRef } from "@shared/protocol"
+import type { ModelRef, ResponseMap } from "@shared/protocol"
 import { LANGUAGES, ago, compactTokens, dayLabel, language, sessionTitle, t, type Language } from "../lib/i18n"
 import { pickDirectory, pickProjectFolder } from "../lib/native-pick"
 import { wordMatch } from "../lib/word-match"
@@ -56,6 +57,7 @@ type Section =
   | "models"
   | "smart"
   | "mcp"
+  | "cliPlugins"
   | "lab"
 
 /** Which page to land on - the title bar's server button aims straight at it. */
@@ -1140,6 +1142,7 @@ const NAV_LABELS: Record<Section, string> = {
   personal: "set.personal",
   keys: "set.shortcuts",
   mcp: "set.nav.mcp",
+  cliPlugins: "set.plugins.title",
   environment: "set.environment",
   lab: "set.nav.lab",
   archive: "set.nav.archive",
@@ -1158,10 +1161,129 @@ const NAV_KEYWORDS: Record<Section, string> = {
   personal: "set.keywords.personal",
   keys: "set.keywords.keys",
   mcp: "set.keywords.mcp",
+  cliPlugins: "set.plugins.keywords",
   environment: "set.keywords.environment",
   lab: "set.keywords.lab",
   archive: "set.keywords.archive",
   updates: "set.keywords.updates",
+}
+
+type CliRow = ResponseMap["cliPlugin.list"]["plugins"][number]
+const cliRows = ref<CliRow[]>([])
+const cliListError = ref(false)
+const cliBusy = ref(new Set<string>())
+const cliMenu = ref<{ row: CliRow; x: number; y: number; end: boolean; anchor?: HTMLElement }>()
+const cliDialog = ref<HTMLDialogElement>()
+const cliDialogOpen = ref(false)
+const cliName = ref("")
+const cliCommand = ref("")
+const cliValidation = ref("")
+const cliOutput = ref("")
+const cliInstallError = ref("")
+const cliLog = ref<HTMLElement>()
+const cliInstalling = ref(false)
+let cliListVersion = 0
+
+async function refreshCliPlugins() {
+  const version = ++cliListVersion
+  try {
+    const result = await app.client?.request({ type: "cliPlugin.list" })
+    if (version !== cliListVersion) return
+    cliListError.value = !result
+    if (result) cliRows.value = result.plugins
+  } catch {
+    if (version === cliListVersion) cliListError.value = true
+  }
+}
+
+watch([section, () => app.config?.cliPlugins], ([active]) => {
+  if (active === "cliPlugins") void refreshCliPlugins()
+  else cliMenu.value = undefined
+}, { immediate: true })
+
+function openCliMenu(row: CliRow, event: MouseEvent, anchor?: HTMLElement) {
+  if (cliBusy.value.has(row.id)) return
+  const rect = anchor?.getBoundingClientRect()
+  cliMenu.value = { row, x: rect?.right ?? event.clientX, y: rect?.bottom ?? event.clientY, end: Boolean(rect), anchor }
+}
+
+function closeCliMenu() {
+  cliMenu.value?.anchor?.focus()
+  cliMenu.value = undefined
+}
+
+function cliReason(error: unknown) {
+  return (error instanceof Error ? error.message.trim() : "") || t("set.plugins.unknown")
+}
+
+async function changeCliPlugin(row: CliRow, action: boolean | "delete") {
+  if (cliBusy.value.has(row.id)) return
+  cliBusy.value.add(row.id)
+  try {
+    const result = await app.client?.request({ type: "cliPlugin.set", id: row.id, action })
+    if (!result) throw new Error(t("error.backendLost"))
+    const key = action === "delete" ? "set.plugins.deleted" : action ? "set.plugins.enabled" : "set.plugins.disabled"
+    notify(t(key, { name: row.name }), { level: "success" })
+    await refreshCliPlugins()
+  } catch (error) {
+    const key = action === "delete" ? "set.plugins.deleteFailed" : "set.plugins.operationFailed"
+    notify(t(key, { reason: cliReason(error) }), { level: "danger" })
+  } finally {
+    cliBusy.value.delete(row.id)
+  }
+}
+
+function deleteCliPlugin() {
+  const row = cliMenu.value?.row
+  closeCliMenu()
+  if (row) void changeCliPlugin(row, "delete")
+}
+
+function openCliDialog() {
+  cliName.value = ""
+  cliCommand.value = ""
+  cliValidation.value = ""
+  cliOutput.value = ""
+  cliInstallError.value = ""
+  cliDialog.value?.showModal()
+  cliDialogOpen.value = true
+}
+
+function closeCliDialog() {
+  if (!cliInstalling.value) cliDialog.value?.close()
+}
+
+async function submitCliPlugin() {
+  if (cliInstalling.value) return
+  const name = cliName.value.trim()
+  const command = cliCommand.value.trim()
+  cliValidation.value = !name ? "set.plugins.nameRequired" : !command ? "set.plugins.commandRequired" : ""
+  if (cliValidation.value) return
+  cliOutput.value = ""
+  cliInstallError.value = ""
+  cliInstalling.value = true
+  const client = app.client
+  const operationID = crypto.randomUUID()
+  const unsubscribe = client?.on(event => {
+    if (event.type !== "cliPlugin.output" || event.operationID !== operationID) return
+    cliOutput.value = (cliOutput.value + event.output).slice(-16000)
+    void nextTick(() => {
+      if (cliLog.value) cliLog.value.scrollTop = cliLog.value.scrollHeight
+    })
+  })
+  try {
+    const result = await client?.request({ type: "cliPlugin.install", operationID, name, command })
+    if (!result) throw new Error(t("error.backendLost"))
+    cliDialog.value?.close()
+    notify(t("set.plugins.installed", { name: result.plugin.name }), { level: "success" })
+    await refreshCliPlugins()
+  } catch (error) {
+    cliInstallError.value = t("set.plugins.installFailed", { reason: cliReason(error) })
+    notify(cliInstallError.value, { level: "danger" })
+  } finally {
+    unsubscribe?.()
+    cliInstalling.value = false
+  }
 }
 
 function navShows(entry: Section): boolean {
@@ -1891,7 +2013,7 @@ onBeforeUnmount(() => {
             {{ t("set.shortcuts") }}
           </button>
 
-          <div v-show="navShows('mcp')" class="nav-group">{{ t("set.group.integrations") }}</div>
+          <div v-show="navShows('mcp') || navShows('cliPlugins')" class="nav-group">{{ t("set.group.integrations") }}</div>
 
           <button v-show="navShows('mcp')" class="nav-item" :class="{ on: section === 'mcp' }" @click="section = 'mcp'">
             <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
@@ -1900,6 +2022,13 @@ onBeforeUnmount(() => {
               <path d="M5.2 7.1h9.6v2.8a4.85 4.85 0 0 1-4.05 4.78v2.62h-1.5v-2.62A4.85 4.85 0 0 1 5.2 9.9V7.1Z" />
             </svg>
             <span>{{ t("set.nav.mcp") }}</span>
+          </button>
+
+          <button v-show="navShows('cliPlugins')" class="nav-item" :class="{ on: section === 'cliPlugins' }" @click="section = 'cliPlugins'">
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path fill-rule="evenodd" d="M4.5 3.75A2.75 2.75 0 0 0 1.75 6.5v7a2.75 2.75 0 0 0 2.75 2.75h11a2.75 2.75 0 0 0 2.75-2.75v-7a2.75 2.75 0 0 0-2.75-2.75h-11Zm1 3.22a.75.75 0 0 0-1.06 1.06L6.41 10l-1.97 1.97a.75.75 0 0 0 1.06 1.06l2.5-2.5a.75.75 0 0 0 0-1.06l-2.5-2.5Zm4.75 4.28a.75.75 0 0 0 0 1.5h4a.75.75 0 0 0 0-1.5h-4Z" />
+            </svg>
+            <span>{{ t("set.plugins.title") }}</span>
           </button>
 
           <div v-show="navShows('environment')" class="nav-group">{{ t("set.group.coding") }}</div>
@@ -2656,6 +2785,60 @@ onBeforeUnmount(() => {
               @close="confirmingAgentsDelete = false"
             />
           </Teleport>
+        </template>
+
+        <template v-else-if="section === 'cliPlugins'">
+          <h2>{{ t("set.plugins.title") }}</h2>
+          <p class="page-sub">{{ t("set.plugins.subtitle") }}</p>
+          <button type="button" class="ctl-btn cli-add" @click="openCliDialog">{{ t("set.plugins.add") }}</button>
+          <div v-if="cliListError" class="line-sub">
+            {{ t("set.plugins.listFailed") }}
+            <button type="button" class="ctl-btn" @click="refreshCliPlugins">{{ t("common.retry") }}</button>
+          </div>
+          <div v-if="cliRows.length" class="card">
+            <div v-for="row in cliRows" :key="row.id" class="line" @contextmenu.prevent="openCliMenu(row, $event)">
+              <div class="line-text">
+                <div class="line-title">{{ row.name }}</div>
+                <span v-if="!row.available" class="cli-badge">{{ t("set.plugins.missing") }}</span>
+              </div>
+              <div class="mcp-ctrl">
+                <button type="button" class="switch" :class="{ on: row.enabled }" role="switch"
+                  :aria-checked="row.enabled" :aria-label="row.name" :disabled="cliBusy.has(row.id)"
+                  @click="changeCliPlugin(row, !row.enabled)">
+                  <span class="knob" />
+                </button>
+                <button type="button" class="ctl-btn" aria-haspopup="menu" :aria-expanded="cliMenu?.row.id === row.id"
+                  :aria-label="t('set.plugins.more', { name: row.name })" :disabled="cliBusy.has(row.id)"
+                  @click="openCliMenu(row, $event, $event.currentTarget as HTMLElement)">⋯</button>
+              </div>
+            </div>
+          </div>
+          <ContextMenu v-if="cliMenu" :x="cliMenu.x" :y="cliMenu.y" :end="cliMenu.end"
+            :items="[{ key: 'delete', label: t('set.plugins.remove'), danger: true }]"
+            @pick="deleteCliPlugin" @close="closeCliMenu" />
+          <dialog ref="cliDialog" class="cli-dialog" :aria-modal="cliDialogOpen || undefined"
+            aria-labelledby="cli-dialog-title" @cancel.prevent="closeCliDialog" @close="cliDialogOpen = false">
+            <form class="cli-form" novalidate @submit.prevent="submitCliPlugin">
+              <h3 id="cli-dialog-title">{{ t("set.plugins.add") }}</h3>
+              <label>{{ t("set.plugins.name") }}
+                <input v-model="cliName" required autofocus :placeholder="t('set.plugins.namePlaceholder')" :disabled="cliInstalling" />
+              </label>
+              <label>{{ t("set.plugins.command") }}
+                <input v-model="cliCommand" required spellcheck="false" :placeholder="t('set.plugins.commandPlaceholder')"
+                  :disabled="cliInstalling" aria-describedby="cli-allowlist" />
+              </label>
+              <p id="cli-allowlist" class="line-sub">{{ t("set.plugins.allowlist") }}</p>
+              <p v-if="cliValidation" class="line-sub" role="alert">{{ t(cliValidation) }}</p>
+              <p v-if="cliInstallError" class="cli-error" role="alert">{{ cliInstallError }}</p>
+              <pre v-if="cliOutput" ref="cliLog" class="cli-log" role="log" :aria-label="t('set.plugins.log')">{{ cliOutput }}</pre>
+              <div class="mcp-ctrl cli-actions">
+                <button type="button" class="ctl-btn" :disabled="cliInstalling" @click="closeCliDialog">{{ t("common.cancel") }}</button>
+                <button type="submit" class="ctl-btn" :disabled="cliInstalling">
+                  {{ t(cliInstalling ? "set.plugins.installing" : "set.plugins.install") }}
+                </button>
+              </div>
+            </form>
+          </dialog>
         </template>
 
         <template v-else-if="section === 'mcp' && mcpView === 'form'">
@@ -6274,5 +6457,52 @@ h3 {
   color: var(--text-weak);
   font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 1.3;
+}
+
+.cli-add { margin-bottom: 14px; }
+.cli-badge {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: var(--surface-hover);
+  color: var(--text-base);
+  font-size: 12px;
+}
+.cli-dialog {
+  width: min(440px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  padding: 22px;
+  border: 1px solid var(--border-button);
+  border-radius: 14px;
+  background: var(--surface-raised);
+  color: var(--text-strong);
+  box-shadow: var(--shadow-pop);
+}
+.cli-dialog::backdrop { background: rgb(0 0 0 / 35%); }
+.cli-form { display: grid; gap: 12px; }
+.cli-form h3, .cli-form p { margin: 0; }
+.cli-form label { display: grid; gap: 6px; }
+.cli-form input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border-button);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--surface-raised);
+  color: inherit;
+  font: inherit;
+}
+.cli-error { color: var(--text-error); overflow-wrap: anywhere; }
+.cli-actions { justify-content: flex-end; }
+.cli-log {
+  max-height: 160px;
+  overflow: auto;
+  margin: 0;
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--surface-hover);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 </style>

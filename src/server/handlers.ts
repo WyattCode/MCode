@@ -40,6 +40,7 @@ import { blankProjectDirectory, scratchDirectory, scratchRoot } from "./scratch"
 import { searchMessages } from "./search"
 import { historyService } from "./history/service"
 import { workspaceInfo } from "./workspace"
+import { installPlugin, listPlugins, pluginPrompt, setPlugin } from "./cli-plugins"
 import { systemPrompt } from "./session/prompt"
 import * as git from "./git"
 import { pullRequestState } from "./pull-request"
@@ -343,7 +344,7 @@ function customModels(runtime: Runtime, models: CustomModel[], previous?: Custom
   })
 }
 
-export async function handle(runtime: Runtime, request: Request, owner?: ShellOwner): Promise<unknown> {
+export async function handle(runtime: Runtime, request: Request, owner?: ShellOwner, emit?: (event: import("@shared/protocol").ServerEvent) => void): Promise<unknown> {
   switch (request.type) {
     case "session.list":
       return {
@@ -546,7 +547,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     case "session.systemPrompt": {
       const session = await runtime.sessions.require(request.sessionID)
       return {
-        prompt: await systemPrompt({
+        prompt: [await systemPrompt({
           directory: session.directory,
           agent: session.agent,
           globalAgentsFile: globalAgentsPath(runtime.storage.directory),
@@ -554,7 +555,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
             (await discoverSkills({ directory: session.directory, storageDirectory: runtime.storage.directory, settings: runtime.config.get() })).skills,
             runtime.config.get().disabledSkills,
           ),
-        }),
+        }), pluginPrompt(runtime.config.get())].filter(Boolean).join("\n\n"),
       } satisfies Handled<"session.systemPrompt">
     }
 
@@ -1716,6 +1717,23 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "workspace.list":
       return { worktrees: await git.worktrees(request.directory) } satisfies Handled<"workspace.list">
+
+    case "cliPlugin.list":
+      return { plugins: listPlugins(runtime.config.get()) } satisfies Handled<"cliPlugin.list">
+
+    case "cliPlugin.install": {
+      if (!emit) throw new Error("CLI plugins can only be installed from the desktop app")
+      const plugin = await installPlugin(runtime.config, request, output => {
+        emit({ type: "cliPlugin.output", operationID: request.operationID, output })
+      })
+      return { plugin } satisfies Handled<"cliPlugin.install">
+    }
+
+    case "cliPlugin.set":
+      if (!emit) throw new Error("CLI plugins can only be changed from the desktop app")
+      if (typeof request.action !== "boolean" && request.action !== "delete") throw new Error("Invalid CLI plugin action")
+      await setPlugin(runtime.config, request.id, request.action)
+      return {} satisfies Handled<"cliPlugin.set">
 
     case "mcp.list":
       return { servers: runtime.mcp.list(), unapplied: runtime.mcp.unapplied } satisfies Handled<"mcp.list">

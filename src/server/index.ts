@@ -438,7 +438,7 @@ export async function startBackend(dataDirectory: string, options: BackendOption
           reply({ kind: "response", id: frame.id, ok: true, data: {} })
           return
         }
-        const data = await handle(runtime, frame.request, socket)
+        const data = await handle(runtime, frame.request, socket, (event) => reply({ kind: "event", event }))
         reply({ kind: "response", id: frame.id, ok: true, data })
       } catch (err) {
         reply({
