@@ -34,6 +34,16 @@ jobs:
         run: npm run typecheck
 
       - name: Package (runtimes + soundfont are fetched and hash-verified)
+        # The check that the bundled runtime names no machine compares against
+        # os.homedir(); on GitHub's runners that home (C:\Users\runneradmin) is
+        # also baked into the official numpy wheel by its own CI, so the guard
+        # would flag the vendor's own bytes. A neutral home for this step keeps
+        # the guard pointed at the real staging and pip-cache paths.
+        env:
+          USERPROFILE: D:\cihome
+          HOME: D:\cihome
+          LOCALAPPDATA: D:\cihome\AppData\Local
+          APPDATA: D:\cihome\AppData\Roaming
         run: npm run package:win
 
       - name: Read the version the build produced
