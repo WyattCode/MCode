@@ -4,6 +4,7 @@ import { AGENT_NAMES } from "@shared/protocol"
 import { useApp } from "./stores/app"
 import { pickDirectory, pickProjectFolder, saveText } from "./lib/native-pick"
 import Sidebar from "./components/Sidebar.vue"
+import { archiveNotice, undoArchive } from "./lib/archive"
 import HomeHero from "./components/HomeHero.vue"
 import SessionHero from "./components/SessionHero.vue"
 import SessionHeader from "./components/SessionHeader.vue"
@@ -618,7 +619,7 @@ async function runBatch(action: "archive" | "delete" | "cancel" | "all" | "none"
   }
   if (!chosen.length) return
   if (action === "archive") {
-    await archiveSessions([...chosen])
+    await archiveSessions([...chosen], true)
     selecting.value = undefined
     return
   }
@@ -651,58 +652,39 @@ async function confirmDeleteMany() {
   if (removed && app.currentID === held) notify(t("toast.convosDeleted", { n: removed }), { level: "success" })
 }
 
-/*
- * MiMo's archive notice (store:threads): one per action, with 撤销 for the
- * conversations still archived and 已归档 to the Settings page. With nothing
- * to archive it says that instead.
- */
-async function archiveSessions(ids: string[]) {
-  if (!ids.length) {
-    notify(t("toast.noConvosToArchive"))
-    return
-  }
-  // Hold the toast to the place the person started from: leaving mid-await must not
-  // flash the archive outcome onto another chat.
-  const held = app.currentID
+async function archiveSessions(ids: string[], batch = false) {
   const archived: string[] = []
   let failed = false
-  let err: unknown
+  let error: unknown
   for (const sessionID of ids) {
     try {
-      await app.archive(sessionID, true)
-      archived.push(sessionID)
-    } catch (e) {
+      if (await app.archive(sessionID, true)) archived.push(sessionID)
+    } catch (err) {
       failed = true
-      err = e
+      error = err
     }
   }
-  if (failed && app.currentID === held) {
-    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+  if (failed) notifyFailure(t("common.requestFailed"), error instanceof Error ? error.message : String(error))
+  if (!archived.length) {
+    if (!failed) notify(archiveNotice(0, batch))
+    return
   }
-  if (!archived.length || app.currentID !== held) return
-  notify(archived.length === 1 ? t("toast.convoArchived") : t("toast.archivedNConvos", { count: archived.length }), {
+  notify(archiveNotice(archived.length, batch), {
     level: "success",
     links: [
-      { label: t("toast.archiveUndo"), run: () => void undoArchive(archived) },
+      { label: t("toast.archiveUndo"), run: () => void undoSessionArchive(archived) },
       { label: t("toast.viewArchived"), run: () => openSettings("archive") },
     ],
   })
 }
 
-/* Only what is still archived comes back; if none is, MiMo says the undo failed. */
-async function undoArchive(ids: readonly string[]) {
-  const still = ids.filter((id) => app.sessions.some((session) => session.id === id && session.archived))
-  if (!still.length) {
-    notifyFailure(t("toast.archiveUndoFailed"))
-    return
-  }
-  // Hold the toast to the place the person started from: leaving mid-await must not
-  // flash the undo-failed outcome onto another chat.
-  const held = app.currentID
+async function undoSessionArchive(ids: readonly string[]) {
   try {
-    for (const sessionID of still) await app.archive(sessionID, false)
-  } catch {
-    if (app.currentID === held) notifyFailure(t("toast.archiveUndoFailed"))
+    const restored = await undoArchive(ids, app.archive)
+    if (!restored) notifyFailure(t("toast.archiveUndoFailed"))
+    else notify(restored === 1 ? t("toast.convoRestored") : t("toast.convosRestored", { n: restored }), { level: "success" })
+  } catch (err) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
   }
 }
 
@@ -795,8 +777,10 @@ watch(
 
 /* And whether there is an icon in the corner at all. */
 watch(
-  () => app.config?.tray ?? true,
-  (enabled) => window.mcode.tray(enabled),
+  () => app.config?.tray,
+  (enabled) => {
+    if (enabled !== undefined) window.mcode.tray(enabled)
+  },
   { immediate: true },
 )
 
@@ -1749,7 +1733,7 @@ const PROJECT_ACTIONS: Record<string, (directory: string) => void | Promise<void
     if (app.currentID === held) notify(t(was ? "side.projectUnpinnedToast" : "side.projectPinnedToast"))
   },
   archive: async (directory) => {
-    await archiveSessions(projectSessions(directory).map((session) => session.id))
+    await archiveSessions(projectSessions(directory).map((session) => session.id), true)
   },
   /* MiMo's project batch management chooses projects, starting with this one. */
   batch: (directory) => {
@@ -2289,7 +2273,7 @@ watch(priorityFilter, (on) => {
 
 /* The priority section's archive-all, which MiMo applies to every conversation. */
 async function archiveAll() {
-  await archiveSessions(app.sessions.filter((entry) => !entry.archived).map((entry) => entry.id))
+  await archiveSessions(app.sessions.filter((entry) => !entry.archived).map((entry) => entry.id), true)
 }
 
 /* So is the plugins page, which MiMo opens in the workspace rather than over it. */
@@ -3831,6 +3815,7 @@ onBeforeUnmount(() => {
         @resize="resizeSide"
         @toggle-priority="priorityFilter = !priorityFilter"
         @archive-all="archiveAll"
+        @show-archived="openSettings('archive')"
         @newTask="newTaskFromSide"
         @artifacts="goArtifacts"
         @menu="(id, x, y, nested) => (sessionMenu = { x, y, sessionID: id, nested })"

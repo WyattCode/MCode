@@ -26,13 +26,15 @@ async function carrying(key: string): Promise<number> {
 }
 
 export async function roundEighteenShellChecks(check: Check, section: (name: string) => void): Promise<void> {
-  section("Round 18 (lane U): R18-U2 the tray keeps Open and Quit, its profile switch gone")
+  section("Round 18 (lane U): R18-U2 the tray opens the window, starts a conversation and quits")
   {
     const main = await read("src/main/index.ts")
     const preload = await read("src/preload/index.ts")
-    const menu = /tray\.setContextMenu\(\s*Menu\.buildFromTemplate\(\[([\s\S]*?)\]\),\s*\)/.exec(main)?.[1] ?? ""
-    const entries = menu.match(/^ {6}\{/gm)?.length ?? 0
-    check("R18-U2: the tray menu is Open, a rule and Quit - three entries", entries === 3 && /label\("tray\.open"/.test(menu) && /label\("menu\.quitApp"/.test(menu) && /type: "separator"/.test(menu), menu)
+    const tray = main.slice(main.indexOf("function refreshTray"), main.indexOf("function windowIcon"))
+    const menu = /const menu = Menu\.buildFromTemplate\(\[([\s\S]*?)\]\)/.exec(tray)?.[1] ?? ""
+    const actions = [...menu.matchAll(/label\("tray\.([\w]+)"/g)].map((match) => match[1])
+    check("R18-U2: the tray shows the window, starts a conversation and quits", actions.join(",") === "open,newConversation,quit", menu)
+    check("R18-U2: macOS opens the tray menu on right-click", /tray\.on\("right-click"[\s\S]*?popUpContextMenu/.test(tray))
     check("R18-U2: and no submenu of profiles", !/submenu/.test(menu) && !main.includes("tray.profiles"))
     check("R18-U2: nothing carries a profile over IPC any more", !/tray-profile/.test(main) && !/tray-profile|onTrayProfile/.test(preload))
     for (const key of ["tray.profiles", "tray.profilesEmpty", "tray.switched"]) {

@@ -166,7 +166,7 @@ function defaults(): AppConfig {
     uiFontSize: 14,
     codeFontSize: 12,
     instructions: "",
-    tray: true,
+    tray: false,
     voiceMode: "smart",
     voiceSend: false,
     voiceFeedback: true,

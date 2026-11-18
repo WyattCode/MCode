@@ -462,11 +462,28 @@ export class SessionStore {
   private async writeInfo(sessionID: string, change: (session: SessionInfo) => SessionInfo): Promise<SessionInfo> {
     const session = await this.require(sessionID)
     const next = change(session)
+    await this.saveInfo(sessionID, next)
+    return next
+  }
+
+  private async saveInfo(sessionID: string, next: SessionInfo): Promise<void> {
     if (this.deleted.has(sessionID)) throw new Error(`Session ${sessionID} was deleted`)
     await this.storage.write(this.infoKey(sessionID), next)
     this.patchList(sessionID, next)
     this.bus.publish({ type: "session.updated", session: next })
-    return next
+  }
+
+  async setArchived(sessionID: string, archived: boolean): Promise<{ session?: SessionInfo; changed: boolean }> {
+    return this.exclusive(this.infoKey(sessionID), async () => {
+      const session = await this.get(sessionID)
+      if (!session || this.deleted.has(sessionID)) return { changed: false }
+      if (Boolean(session.archived) === archived) return { session, changed: false }
+
+      const updated = Date.now()
+      const next = { ...session, archived, archivedAt: archived ? updated : undefined, updated }
+      await this.saveInfo(sessionID, next)
+      return { session: next, changed: true }
+    })
   }
 
   async update(sessionID: string, patch: Partial<SessionInfo>): Promise<SessionInfo> {

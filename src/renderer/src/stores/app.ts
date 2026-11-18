@@ -1678,13 +1678,14 @@ export const useApp = defineStore("app", () => {
   }
 
   async function archive(sessionID: string, archived: boolean) {
-    await api().request({ type: "session.archive", sessionID, archived })
-    if (archived && currentID.value === sessionID) {
+    const { changed } = await api().request({ type: "session.archive", sessionID, archived })
+    if (changed && archived && currentID.value === sessionID) {
       const next = sessions.value.find((entry) => entry.id !== sessionID && !entry.archived)
       currentID.value = next?.id
       if (next) await open(next.id)
       else messages.value = []
     }
+    return changed
   }
 
   /*
