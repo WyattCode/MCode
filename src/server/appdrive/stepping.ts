@@ -32,6 +32,8 @@ export interface Step {
   ms?: number
   submit?: boolean
   clear?: boolean
+  x?: number
+  y?: number
   dy?: number
 }
 
@@ -217,9 +219,11 @@ export function describeStep(step: Step): string {
     case "click":
     case "double_click":
     case "hover":
-      return `${step.action} [${step.ref}]`
+      return step.x !== undefined && step.y !== undefined && step.ref === undefined
+        ? `${step.action} (${step.x}, ${step.y})`
+        : `${step.action} [${step.ref}]`
     case "type":
-      return `type ${JSON.stringify(String(step.text ?? "").slice(0, 40))} into [${step.ref}]${step.submit ? " and press Enter" : ""}`
+      return `type ${JSON.stringify(String(step.text ?? "").slice(0, 40))} ${step.ref === undefined ? "into the focused field" : `into [${step.ref}]`}${step.submit ? " and press Enter" : ""}`
     case "press":
       return `press ${step.key}`
     case "select":
