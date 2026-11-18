@@ -14,6 +14,7 @@ import type { Attachment, AgentName,
   PermissionRequest,
   PermissionResponse,
   ProviderStatus,
+  Request,
   ServerEvent,
   SessionInfo,
 } from "@shared/protocol"
@@ -88,6 +89,7 @@ export const useApp = defineStore("app", () => {
    * may have moved on by the time the turn ends.
    */
   const running = ref(new Set<string>())
+  const queueSending = ref(new Map<string, string>())
   /** session chat: each conversation's messages in flight with others, as the server last reported them. */
   const chatLinks = shallowRef<Record<string, ChatLink[]>>({})
   const chatLinksOf = (sessionID: string): ChatLink[] => chatLinks.value[sessionID] ?? []
@@ -548,6 +550,10 @@ export const useApp = defineStore("app", () => {
 
   function apply(event: ServerEvent) {
     switch (event.type) {
+      case "session.queue.sending":
+        if (event.id) queueSending.value.set(event.sessionID, event.id)
+        else queueSending.value.delete(event.sessionID)
+        break
       case "session.updated": {
         // subagents: kept apart from every list; one that has just been made is already working.
         if (event.session.parentID) {
@@ -578,6 +584,7 @@ export const useApp = defineStore("app", () => {
         break
       }
       case "session.deleted": {
+        queueSending.value.delete(event.sessionID)
         appOperations.value.delete(event.sessionID)
         lastAppSurface.delete(event.sessionID)
         appOperationRevisions.delete(event.sessionID)
@@ -1088,6 +1095,7 @@ export const useApp = defineStore("app", () => {
     sessions.value = listed.sessions.filter((session) => !session.sideOf && !session.parentID)
     sideSessions.value = listed.sessions.filter((session) => session.sideOf)
     running.value = new Set(listed.running)
+    queueSending.value = new Map(Object.entries(listed.queueSending ?? {}))
     clockTurns(listed.running)
     await recoverAppOperations(listed.running)
     summarising.value = new Set(listed.compacting)
@@ -1323,6 +1331,7 @@ export const useApp = defineStore("app", () => {
       sessions.value = listed.sessions.filter((session) => !session.sideOf && !session.parentID)
       sideSessions.value = listed.sessions.filter((session) => session.sideOf)
       running.value = new Set(listed.running)
+      queueSending.value = new Map(Object.entries(listed.queueSending ?? {}))
       for (const sessionID of appOperations.value.keys()) {
         if (!running.value.has(sessionID)) appOperations.value.delete(sessionID)
       }
@@ -1801,45 +1810,28 @@ export const useApp = defineStore("app", () => {
     }
   }
 
-  /**
-   * OpenCode v2's queue: a waiting message sent now - into the running turn,
-   * or as a turn of its own when nothing runs - or taken back. Either is
-   * refused when the message has already gone, and said as a failed request.
-   */
-  async function sendQueued(sessionID: string, id: string): Promise<void> {
-    const joined = running.value.has(sessionID)
-    if (!joined) {
-      running.value = new Set(running.value).add(sessionID)
-      turnStarted.set(sessionID, Date.now())
-    }
+  async function queueRequest(request: Extract<Request, { type: "session.queue.send" | "session.queue.edit" | "session.queue.remove" }>): Promise<boolean> {
     try {
-      await api().request({ type: "session.queue.send", sessionID, id })
-    } catch (err) {
-      if (!joined) {
-        const next = new Set(running.value)
-        next.delete(sessionID)
-        running.value = next
-        turnStarted.delete(sessionID)
-      }
-      // Left mid-await → do not flash the failure on another conversation.
-      if (currentID.value === sessionID || sideID.value === sessionID) {
-        notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
-      }
-    }
-  }
-
-  /** True when it was taken off the queue; false when it had already gone, or the request failed (said as a notice). */
-  async function removeQueued(sessionID: string, id: string): Promise<boolean> {
-    try {
-      await api().request({ type: "session.queue.remove", sessionID, id })
+      await api().request(request)
       return true
     } catch (err) {
-      // Left mid-await → do not flash the failure on another conversation.
-      if (currentID.value === sessionID || sideID.value === sessionID) {
+      if (currentID.value === request.sessionID || sideID.value === request.sessionID) {
         notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
       }
       return false
     }
+  }
+
+  function sendQueued(sessionID: string, id: string, action: "steer" | "send") {
+    return queueRequest({ type: "session.queue.send", sessionID, id, action })
+  }
+
+  function editQueued(sessionID: string, id: string, edit: { action: "start" | "cancel" } | { action: "save"; text: string }) {
+    return queueRequest({ type: "session.queue.edit", sessionID, id, ...edit })
+  }
+
+  function removeQueued(sessionID: string, id: string) {
+    return queueRequest({ type: "session.queue.remove", sessionID, id })
   }
 
   /*
@@ -2586,6 +2578,8 @@ export const useApp = defineStore("app", () => {
     sideSessionOf,
     sideBusyOf,
     sendQueued,
+    editQueued,
+    queueSending,
     removeQueued,
     sideStreamingOf,
     openSide,

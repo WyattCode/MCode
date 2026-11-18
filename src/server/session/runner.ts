@@ -204,6 +204,7 @@ type PromptInput = {
   delivery?: "steer" | "queue"
   /* Set when the queue sends it, so the window knows a turn it did not send has started. */
   fromQueue?: boolean
+  queuedID?: string
 }
 
 /**
@@ -400,6 +401,12 @@ export class SessionRunner {
    */
   private closing = false
   /** OpenCode v2 queue: each conversation's edits, chained so none is lost to another running beside it. */
+  private readonly queueEditors = new Map<string, { id: string; owner: object }>()
+  private readonly closedQueueEditors = new WeakSet<object>()
+  private readonly queueWaitingForEdit = new Set<string>()
+  private readonly queueSending = new Map<string, string>()
+  private readonly queueDispatches = new Map<string, Promise<string | undefined>>()
+  private readonly turnCompletions = new Map<AbortController, Promise<void>>()
   private readonly queueEdits = new Map<string, Promise<void>>()
 
   /** Whether a process is alive; replaced by checks, which cannot rely on the machine's process table. */
@@ -816,6 +823,10 @@ export class SessionRunner {
   /** The turns waiting between attempts, for a window that reconnected into one (N11-17). */
   retryRows(): Record<string, { messageID: string; attempt: number; message: string; next: number; kind?: string; max?: number }> {
     return Object.fromEntries(this.retrying)
+  }
+
+  sendingQueueItems(): Record<string, string> {
+    return Object.fromEntries(this.queueSending)
   }
 
   busySessions(): string[] {
@@ -1849,7 +1860,8 @@ export class SessionRunner {
     // stays in the map only until cleanup finishes; enqueueing into it would sit
     // forever because finally skips sendQueued when aborted.
     if (input.delivery === "queue" && !aborted && (open || this.running.has(input.sessionID))) return this.enqueue(input)
-    if (mayJoinSteering(Boolean(open), aborted) && open) return this.join(open, input)
+    if (!input.fromQueue && mayJoinSteering(Boolean(open), aborted) && open) return this.join(open, input)
+    if (!input.fromQueue && this.queueDispatches.has(input.sessionID)) throw new CodedError("This session is already working on something", "error.sessionBusy")
 
     // An aborted controller is finishing cleanup; the finally block only clears
     // its own entry, so a prompt here may claim the session for a new turn.
@@ -1924,6 +1936,7 @@ export class SessionRunner {
     const context = typed ? [runtimeContext({ language: this.config.get().language })] : []
     const user: UserMessage = {
       id: Identifier.message(),
+      ...(input.queuedID ? { queueSourceID: input.queuedID } : {}),
       sessionID: input.sessionID,
       role: "user",
       text: input.text,
@@ -2200,6 +2213,7 @@ export class SessionRunner {
     this.turn(session.id).noTesting = noTesting
     const user: UserMessage = {
       id: Identifier.message(),
+      ...(input.queuedID ? { queueSourceID: input.queuedID } : {}),
       sessionID: session.id,
       role: "user",
       text: input.text,
@@ -2750,7 +2764,7 @@ export class SessionRunner {
     // Deliberately not awaited: the caller gets the message id immediately and
     // follows the turn through events.
     let failed = false
-    void this.run(sessionID, apiKey, controller, resumed, lead)
+    const completion = this.run(sessionID, apiKey, controller, resumed, lead)
       .catch((err) => {
         failed = true
         // A failure recorded on the message is already in front of the user.
@@ -2759,6 +2773,8 @@ export class SessionRunner {
         this.bus.publish({ type: "session.error", sessionID, error: describe(err), ...(code ? { errorCode: code, errorParams: paramsOf(err) } : {}) })
       })
       .finally(() => this.finishTurn(sessionID, controller, failed))
+      .finally(() => { this.turnCompletions.delete(controller) })
+    this.turnCompletions.set(controller, completion)
   }
 
   /** Records the turn, releases its claim, and hands the session on to whatever waits behind it. */
@@ -2815,20 +2831,20 @@ export class SessionRunner {
    * a moment apart must both be kept, and a read-change-write pair running
    * beside another would drop one of them.
    */
-  private queueEdit(sessionID: string, change: (queued: QueuedPrompt[]) => QueuedPrompt[]): Promise<{ before: QueuedPrompt[]; after: QueuedPrompt[] }> {
+  private queueEdit(sessionID: string, change: (queued: QueuedPrompt[]) => QueuedPrompt[], paused?: boolean): Promise<void> {
     const edited = (this.queueEdits.get(sessionID) ?? Promise.resolve()).then(async () => {
-      const before = (await this.store.require(sessionID)).queued ?? []
+      const session = await this.store.require(sessionID)
+      const before = session.queued ?? []
       const after = change(before)
-      await this.store.update(sessionID, { queued: after.length ? after : undefined })
-      return { before, after }
+      const queuePaused = after.length ? (paused ?? session.queuePaused) || undefined : undefined
+      if (after === before && queuePaused === session.queuePaused) return
+      await this.store.update(sessionID, { queued: after.length ? after : undefined, queuePaused })
     })
-    this.queueEdits.set(
-      sessionID,
-      edited.then(
-        () => undefined,
-        () => undefined,
-      ),
-    )
+    const tail = edited.catch(() => undefined)
+    this.queueEdits.set(sessionID, tail)
+    void tail.then(() => {
+      if (this.queueEdits.get(sessionID) === tail) this.queueEdits.delete(sessionID)
+    })
     return edited
   }
 
@@ -2852,6 +2868,7 @@ export class SessionRunner {
   private promptOf(sessionID: string, item: QueuedPrompt): PromptInput {
     return {
       sessionID,
+      queuedID: item.id,
       text: item.text,
       attachments: item.attachments,
       annotations: item.annotations,
@@ -2862,52 +2879,142 @@ export class SessionRunner {
     }
   }
 
-  /** Takes a queued message back without sending it. */
-  async removeQueued(sessionID: string, id: string): Promise<void> {
-    const { before } = await this.queueEdit(sessionID, (queued) => queued.filter((item) => item.id !== id))
-    if (!before.some((item) => item.id === id)) throw new CodedError("That message is no longer queued", "error.queueGone")
+  private assertQueueItem(queued: QueuedPrompt[], sessionID: string, id: string): QueuedPrompt {
+    if (this.queueSending.get(sessionID) === id) throw new CodedError("This session is already working on something", "error.sessionBusy")
+    const item = queued.find((entry) => entry.id === id)
+    if (!item) throw new CodedError("That message is no longer queued", "error.queueGone")
+    return item
   }
 
-  /** 立即发送: a queued message into the running turn, or as a turn of its own if none is running. */
-  async sendQueuedNow(sessionID: string, id: string): Promise<string> {
-    // The same refusal `session.prompt` gives: a review-restricted conversation takes nothing more.
-    if ((await this.store.get(sessionID))?.reviewRestricted) throw new CodedError("this conversation can't be continued - start a new one", "composer.reviewRestricted")
-    let item: QueuedPrompt | undefined
+  async removeQueued(sessionID: string, id: string): Promise<void> {
     await this.queueEdit(sessionID, (queued) => {
-      item = queued.find((entry) => entry.id === id)
-      return queued.filter((entry) => entry.id !== id)
+      this.assertQueueItem(queued, sessionID, id)
+      if (this.queueEditors.get(sessionID)?.id === id) throw new CodedError("This session is already working on something", "error.sessionBusy")
+      return queued.filter((item) => item.id !== id)
     })
-    const taken = item
-    if (!taken) throw new CodedError("That message is no longer queued", "error.queueGone")
-    try {
-      return await this.prompt(this.promptOf(sessionID, taken))
-    } catch (failure) {
-      // Not sent, so not lost: back where it was, at the front.
-      await this.queueEdit(sessionID, (queued) => [taken, ...queued]).catch(() => undefined)
-      throw failure
+  }
+
+  async beginQueueEdit(sessionID: string, id: string, owner: object): Promise<void> {
+    await this.queueEdit(sessionID, (queued) => {
+      this.assertQueueItem(queued, sessionID, id)
+      if (this.closedQueueEditors.has(owner) || this.queueEditors.has(sessionID)) {
+        throw new CodedError("This session is already working on something", "error.sessionBusy")
+      }
+      this.queueEditors.set(sessionID, { owner, id })
+      return queued
+    })
+  }
+
+  cancelQueueEdit(sessionID: string, id: string, owner: object): void {
+    const editing = this.queueEditors.get(sessionID)
+    if (editing?.owner !== owner || editing.id !== id) return
+    this.queueEditors.delete(sessionID)
+    if (this.queueWaitingForEdit.delete(sessionID)) void this.sendQueued(sessionID)
+  }
+
+  releaseQueueEdits(owner: object): void {
+    this.closedQueueEditors.add(owner)
+    for (const [sessionID, editing] of this.queueEditors) {
+      this.cancelQueueEdit(sessionID, editing.id, owner)
     }
   }
 
-  /**
-   * The oldest queued message, sent as a new turn. A send that is refused - a
-   * provider gone, a rollback in the way - puts it back and leaves the rest
-   * waiting, said as the turn's own error would be.
-   */
-  private async sendQueued(sessionID: string): Promise<void> {
-    if (this.running.has(sessionID) || this.steering.has(sessionID)) return
-    // A conversation a review restricted during the turn takes nothing more; what was queued stays for the reader to take back.
-    if ((await this.store.get(sessionID).catch(() => undefined))?.reviewRestricted) return
+  async updateQueued(sessionID: string, id: string, text: string, owner?: object): Promise<void> {
+    await this.queueEdit(sessionID, (queued) => {
+      const item = this.assertQueueItem(queued, sessionID, id)
+      const editing = this.queueEditors.get(sessionID)
+      if (editing?.id === id && editing.owner !== owner) throw new CodedError("This session is already working on something", "error.sessionBusy")
+      const value = text.trim()
+      if (!value && !item.attachments?.length && !item.annotations?.length) throw new CodedError("Enter a message", "composer.emptyInput")
+      return queued.map((entry) => entry === item ? { ...item, text: value } : entry)
+    })
+    if (owner) this.cancelQueueEdit(sessionID, id, owner)
+  }
+
+  async sendQueuedNow(sessionID: string, id: string, action?: "steer" | "send"): Promise<string> {
+    if (this.queueDispatches.has(sessionID)) throw new CodedError("This session is already working on something", "error.sessionBusy")
+    const messageID = await this.dispatchQueued(sessionID, id, action)
+    if (!messageID) throw new CodedError("That message is no longer queued", "error.queueGone")
+    return messageID
+  }
+
+  private dispatchQueued(sessionID: string, id?: string, action?: "steer" | "send"): Promise<string | undefined> {
+    const pending = this.deliverQueued(sessionID, id, action).finally(() => {
+      this.queueDispatches.delete(sessionID)
+      if (this.queueSending.delete(sessionID)) this.bus.publish({ type: "session.queue.sending", sessionID })
+    })
+    this.queueDispatches.set(sessionID, pending)
+    return pending
+  }
+
+  private async deliverQueued(sessionID: string, id?: string, action?: "steer" | "send"): Promise<string | undefined> {
+    const session = await this.store.require(sessionID)
+    if (session.reviewRestricted) {
+      if (!id) return
+      throw new CodedError("this conversation can't be continued - start a new one", "composer.reviewRestricted")
+    }
+    if (!id && (session.queuePaused || this.running.has(sessionID) || this.closing)) return
     let item: QueuedPrompt | undefined
     await this.queueEdit(sessionID, (queued) => {
-      item = queued[0]
-      return queued.slice(1)
-    }).catch(() => undefined)
+      const next = id ? this.assertQueueItem(queued, sessionID, id) : queued[0]
+      if (next && this.queueEditors.get(sessionID)?.id === next.id) {
+        if (id) throw new CodedError("This session is already working on something", "error.sessionBusy")
+        this.queueWaitingForEdit.add(sessionID)
+        return queued
+      }
+      item = next
+      if (item) {
+        this.queueSending.set(sessionID, item.id)
+        this.bus.publish({ type: "session.queue.sending", sessionID, id: item.id })
+      }
+      return queued
+    })
+    if (!item) return
     const taken = item
-    if (!taken) return
+    // A previous dispatch can have reached the transcript before its queue update was written.
+    const delivered = (await this.store.messages(sessionID)).find((message) => message.role === "user" && message.queueSourceID === taken.id)
+    if (delivered) {
+      await this.queueEdit(sessionID, (queued) => queued.filter((entry) => entry.id !== taken.id), false)
+      if (!id) void this.sendQueued(sessionID)
+      return delivered.id
+    }
+    const input = this.promptOf(sessionID, taken)
+    const live = this.running.get(sessionID)
+    const open = this.steering.get(sessionID)
+    let messageID: string
     try {
-      await this.prompt({ ...this.promptOf(sessionID, taken), fromQueue: true })
+      if (action === "steer" || (id && !action && live && !live.signal.aborted)) {
+        if (!open || live?.signal.aborted) throw new CodedError("This session is already working on something", "error.sessionBusy")
+        messageID = await this.join(open, input)
+      } else {
+        if (action === "send" && live) {
+          const finished = this.turnCompletions.get(live)
+          if (!finished) throw new CodedError("This session is already working on something", "error.sessionBusy")
+          this.abort(sessionID)
+          await finished
+        }
+        messageID = await this.prompt({ ...input, fromQueue: true })
+      }
     } catch (failure) {
-      await this.queueEdit(sessionID, (queued) => [taken, ...queued]).catch(() => undefined)
+      if (!id || action === "send") await this.queueEdit(sessionID, (queued) => queued, true)
+      throw failure
+    }
+    await this.queueEdit(sessionID, (queued) => queued.filter((entry) => entry.id !== taken.id), action === "steer" ? undefined : false)
+    return messageID
+  }
+
+  private async sendQueued(sessionID: string): Promise<void> {
+    const pending = this.queueDispatches.get(sessionID)
+    if (pending) await pending.catch(() => undefined)
+    if (this.queueDispatches.has(sessionID) || this.running.has(sessionID)) return
+    try {
+      // An empty queue must not claim the session after the idle event.
+      await this.queueEdits.get(sessionID)
+      const session = await this.store.require(sessionID)
+      if (!session.queued?.length || session.queuePaused || this.closing) return
+      if (this.queueDispatches.has(sessionID) || this.running.has(sessionID)) return
+      await this.dispatchQueued(sessionID)
+    } catch (failure) {
       const code = codeOf(failure)
       this.bus.publish({ type: "session.error", sessionID, error: describe(failure), ...(code ? { errorCode: code, errorParams: paramsOf(failure) } : {}) })
     }

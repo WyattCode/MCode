@@ -183,6 +183,7 @@ export interface SessionInfo {
    * failure leaves them parked for the user.
    */
   queued?: QueuedPrompt[]
+  queuePaused?: boolean
   /**
    * The conversation's instruction values (OpenCode v2's instruction state):
    * `initial` is what the system prompt is built from, fixed so the provider's
@@ -440,6 +441,8 @@ export interface UserMessage {
   steered?: boolean
   /** Sent from the queue (SessionInfo.queued) when the turn before it ended, not typed into an idle conversation. */
   queued?: boolean
+  /** Source queue item, used to reconcile a delivery interrupted before queue cleanup. */
+  queueSourceID?: string
   /**
    * plan: written by the app rather than typed - the word that the user
    * approved a plan, put where the user's next message would be. The model
@@ -1618,6 +1621,7 @@ export interface AppConfig {
    * default reaches everyone who never touched that one.
    */
   keybinds: Record<string, string>
+  runningSend?: "queue" | "steer"
   /**
    * How many tool steps a turn may take before it has to answer in words.
    *
@@ -2218,7 +2222,8 @@ export type Request =
   | { type: "session.abort"; sessionID: string }
   /* A queued follow-up taken back, or sent now: into the running turn if there is one, as a new turn if not. */
   | { type: "session.queue.remove"; sessionID: string; id: string }
-  | { type: "session.queue.send"; sessionID: string; id: string }
+  | { type: "session.queue.send"; sessionID: string; id: string; action?: "steer" | "send" }
+  | ({ type: "session.queue.edit"; sessionID: string; id: string } & ({ action: "start" | "cancel" } | { action: "save"; text: string }))
   /*
    * subagents: a slash command marked `subtask`. `text` is the line as typed,
    * kept as the user's message; `prompt` is its filled-in template, which a
@@ -2519,6 +2524,7 @@ export interface ResponseMap {
   "session.list": {
     sessions: SessionInfo[]
     running: string[]
+    queueSending?: Record<string, string>
     /** Sessions being summarised, so a window that reconnects mid-summary is right. */
     compacting: string[]
     permissions: PermissionRequest[]
@@ -2588,6 +2594,7 @@ export interface ResponseMap {
   "session.prompt": { messageID: string }
   "session.queue.remove": Record<string, never>
   "session.queue.send": { messageID: string }
+  "session.queue.edit": Record<string, never>
   "session.abort": Record<string, never>
   "session.subtask": { messageID: string }
   "permission.respond": Record<string, never>
@@ -2747,6 +2754,7 @@ export type ServerEvent =
   | { type: "session.updated"; session: SessionInfo }
   | { type: "session.deleted"; sessionID: string }
   | { type: "session.idle"; sessionID: string }
+  | { type: "session.queue.sending"; sessionID: string; id?: string }
   /**
    * A compaction is running for this session.
    *
