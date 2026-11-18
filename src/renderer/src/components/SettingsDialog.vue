@@ -23,9 +23,10 @@ import { skillPathCompat } from "@shared/protocol"
 import type { McpImportItem, McpImportSource, McpServerConfig, McpStatus, McpToolInfo } from "@shared/protocol"
 import { MCP_STATUS_TONE, isMcpStatus, mcpNeedsSignIn, mcpStatusLabel } from "../lib/mcp-status"
 import { homePath } from "../lib/home-path"
-import { chordOf, composing, formatChord, isBindable, recordingChord } from "../lib/keys"
+import { chordOf, composing, formatChord, recordingChord } from "../lib/keys"
 import { layerOpen } from "../lib/escape-layer"
-import { pageRows } from "../lib/shortcut-page"
+import { boundShortcut, shortcutChords } from "@shared/chord"
+import { bindingConflict, changeShortcut, pageRows, recordShortcutKey } from "../lib/shortcut-page"
 import { fullAccessOff } from "../lib/confirm-queue"
 import { notifyFailure, notify } from "../lib/toast"
 import { installUpdate, updateState } from "./UpdatePill.vue"
@@ -1310,12 +1311,12 @@ function setSize(field: "uiFontSize" | "codeFontSize", event: Event, base: numbe
  */
 function boundKeys(shortcut: { id: string; hint?: string }) {
   const binds = app.config?.keybinds ?? {}
-  return shortcut.id in binds ? binds[shortcut.id] : shortcut.hint || ""
+  return boundShortcut(shortcut, binds)
 }
 
 /** Whether the user has changed this command's chord - set or deleted - so it can be reset. */
 function customBinding(command: string) {
-  return command in (app.config?.keybinds ?? {})
+  return Object.hasOwn(app.config?.keybinds ?? {}, command)
 }
 
 /*
@@ -1331,7 +1332,7 @@ const recordChord = ref<string>()
 const recordConflict = computed(() => {
   const chord = recordChord.value
   if (!chord || !recording.value) return undefined
-  return props.commands.find((entry) => entry.id !== recording.value && boundKeys(entry) === chord)
+  return bindingConflict(props.commands, app.config?.keybinds ?? {}, recording.value, chord)
 })
 
 /* A conflicting command is named the way the page names it, or by its own title off the page. */
@@ -1342,24 +1343,31 @@ function commandLabel(command: { id: string; title: string }): string {
 function onRecordKey(event: KeyboardEvent) {
   event.preventDefault()
   event.stopImmediatePropagation()
-  if (event.key === "Escape") {
-    cancelRecord()
-    return
-  }
-  // Read by physical key, skipping composition; MiMo needs a modifier plus a key.
-  const chord = chordOf(event, app.platform)
-  if (isBindable(chord)) recordChord.value = chord
+  if (savingKeys.value) return
+  const key = recordShortcutKey(event, app.platform)
+  if (key?.action === "cancel") cancelRecord()
+  else if (key?.action === "confirm") void confirmRecord()
+  else if (key?.action === "record") recordChord.value = key.chord
 }
 
-/* MiMo's one line for any shortcut write that fails. */
-function saveKeybinds(next: Record<string, string>): Promise<void> {
-  return app.patchConfig({ keybinds: next }).catch(() => {
+const savingKeys = ref(false)
+
+async function saveKeybinds(next: Record<string, string>): Promise<boolean> {
+  if (savingKeys.value) return false
+  savingKeys.value = true
+  try {
+    await app.patchConfig({ keybinds: next }, { quiet: true, expectedKeybinds: { ...(app.config?.keybinds ?? {}) } })
+    return true
+  } catch {
     notifyFailure(t("set.keys.saveFailed"))
-    throw new Error("keybinds not saved")
-  })
+    return false
+  } finally {
+    savingKeys.value = false
+  }
 }
 
 function onRecordPress(event: MouseEvent) {
+  if (savingKeys.value) return
   const inside = (event.target as HTMLElement | null)?.closest(`[data-shortcut-id="${recording.value}"]`)
   if (!inside) cancelRecord()
 }
@@ -1378,7 +1386,7 @@ function cancelRecord() {
   document.removeEventListener("mousedown", onRecordPress)
   recording.value = undefined
   recordChord.value = undefined
-  recordingChord.value = false
+  recordingChord.value = keySearch.value
 }
 
 /* As MiMo does, a failed save keeps the recording open so the chord can be tried again. */
@@ -1386,56 +1394,55 @@ async function confirmRecord() {
   const command = recording.value
   const chord = recordChord.value
   if (!command || !chord || recordConflict.value) return
-  try {
-    await saveKeybinds({ ...(app.config?.keybinds ?? {}), [command]: chord })
-    cancelRecord()
-  } catch {
-    /* already said */
-  }
+  const next = changeShortcut(props.commands, app.config?.keybinds ?? {}, command, chord)
+  if (next && await saveKeybinds(next) && recording.value === command && recordChord.value === chord) cancelRecord()
 }
 
-/* Deleting a built-in chord saves an empty one, so the default stops answering too. */
 function deleteBinding(command: string) {
-  void saveKeybinds({ ...(app.config?.keybinds ?? {}), [command]: "" }).catch(() => undefined)
+  const next = changeShortcut(props.commands, app.config?.keybinds ?? {}, command, "")
+  if (next) void saveKeybinds(next)
 }
 
 function resetBinding(command: string) {
-  const next = { ...(app.config?.keybinds ?? {}) }
-  delete next[command]
-  void saveKeybinds(next).catch(() => undefined)
+  const binds = app.config?.keybinds ?? {}
+  const next = changeShortcut(props.commands, binds, command)
+  if (next) {
+    void saveKeybinds(next)
+    return
+  }
+  const entry = props.commands.find((item) => item.id === command)
+  if (!entry) return
+  const conflict = shortcutChords(entry, {}).map((chord) => bindingConflict(props.commands, binds, command, chord)).find(Boolean)
+  if (conflict) notifyFailure(t("set.keys.conflict", { label: commandLabel(conflict) }))
 }
 
 async function resetAllBindings() {
-  try {
-    await saveKeybinds({})
-    notify(t("set.keys.resetAllDone"))
-  } catch {
-    /* already said */
-  }
+  if (await saveKeybinds({})) notify(t("set.keys.resetAllDone"))
 }
 
 /* MiMo's key search: while on, the next chord pressed is what the table is narrowed to; Escape clears it. */
 const keySearch = ref(false)
+const keySearchField = ref<HTMLElement>()
 const keySearchChord = ref<string>()
 
 function onKeySearchKey(event: KeyboardEvent) {
-  if (recording.value) return
+  if (recording.value || composing(event)) return
+  const chord = chordOf(event, app.platform)
+  if (!chord || chord === "Tab" || chord === "Shift+Tab") return
+  if (chord === "Enter" && event.target instanceof HTMLButtonElement) return
   event.preventDefault()
   event.stopImmediatePropagation()
-  if (event.key === "Escape") {
-    keySearchChord.value = undefined
-    return
-  }
-  const chord = chordOf(event, app.platform)
-  if (chord) keySearchChord.value = chord
+  keySearchChord.value = chord === "Escape" ? undefined : chord
 }
 
 function toggleKeySearch() {
   keySearch.value = !keySearch.value
   keySearchChord.value = undefined
   keyFilter.value = ""
+  recordingChord.value = keySearch.value
   if (keySearch.value) window.addEventListener("keydown", onKeySearchKey, true)
   else window.removeEventListener("keydown", onKeySearchKey, true)
+  if (section.value === "keys") void nextTick(() => keySearchField.value?.focus())
 }
 
 watch(section, (next) => {
@@ -1446,6 +1453,7 @@ watch(section, (next) => {
 
 onBeforeUnmount(() => {
   cancelRecord()
+  recordingChord.value = false
   window.removeEventListener("keydown", onKeySearchKey, true)
 })
 
@@ -1595,12 +1603,6 @@ watch(
 /** What the shortcuts page is narrowed to by typing. */
 const keyFilter = ref("")
 
-/*
- * MiMo's fixed shortcut list, in its order, each row a label over a
- * description (see lib/shortcut-page). The per-theme, per-language and other
- * picker commands stay bindable from the palette but are off this page, as
- * the user chose.
- */
 const shortcutPage = computed(() => pageRows(props.commands, t))
 
 /** A chord as MiMo prints it on the key cap. */
@@ -1614,9 +1616,9 @@ function shownChord(chord: string): string {
  */
 const shortcutRows = computed(() => {
   const needle = keyFilter.value.trim().toLowerCase()
-  const chord = keySearchChord.value?.toLowerCase()
+  const chord = keySearchChord.value
   return shortcutPage.value.filter((row) => {
-    if (keySearch.value) return !chord || boundKeys(row).toLowerCase() === chord
+    if (keySearch.value) return !chord || shortcutChords(row, app.config?.keybinds ?? {}).includes(chord)
     if (!needle) return true
     const bound = boundKeys(row)
     return [row.title, row.desc, shownChord(bound), bound].some((text) => text.toLowerCase().includes(needle))
@@ -3179,12 +3181,13 @@ onBeforeUnmount(() => {
             their bindings; and reset-all at the foot.
           -->
           <div class="keys-search" data-shortcuts-searchbar>
-            <div v-if="keySearch" class="keys-search-capture" data-key-search-capture>
+            <div v-if="keySearch" ref="keySearchField" tabindex="-1" class="keys-search-capture" :aria-label="t('set.keys.pressToSearch')" data-key-search-capture>
               <span v-if="keySearchChord" class="keys-search-chord">{{ shownChord(keySearchChord) }}</span>
               <template v-else>{{ t("set.keys.pressToSearch") }}</template>
             </div>
             <input
               v-else
+              ref="keySearchField"
               v-model="keyFilter"
               class="keys-search-input"
               :aria-label="t('key.search')"
@@ -3223,17 +3226,17 @@ onBeforeUnmount(() => {
 
           <!-- KS7: only the list scrolls; the title, search and footer stay put. -->
           <div class="keys-list">
-            <div class="keys-table" data-shortcuts-list>
-              <div class="keys-cols">
-                <span class="keys-col-command">{{ t("set.keys.colCommand") }}</span>
-                <span>{{ t("set.keys.colBinding") }}</span>
+            <div class="keys-table" role="table" :aria-label="t('set.shortcuts')" data-shortcuts-list>
+              <div class="keys-cols" role="row">
+                <span class="keys-col-command" role="columnheader">{{ t("set.keys.colCommand") }}</span>
+                <span role="columnheader">{{ t("set.keys.colBinding") }}</span>
               </div>
-              <div v-for="shortcut in shortcutRows" :key="shortcut.id" class="keys-row" :data-shortcut-id="shortcut.id">
-                <div class="keys-command">
+              <div v-for="shortcut in shortcutRows" :key="shortcut.id" class="keys-row" role="row" :data-shortcut-id="shortcut.id">
+                <div class="keys-command" role="cell">
                   <div class="keys-label">{{ shortcut.title }}</div>
                   <div v-if="shortcut.desc" class="keys-desc" data-shortcut-desc>{{ shortcut.desc }}</div>
                 </div>
-                <div class="keys-binding">
+                <div class="keys-binding" role="cell">
                   <div v-if="recording === shortcut.id" class="keys-record">
                     <div class="keys-record-line">
                       <span class="keys-record-box" :class="{ conflict: recordConflict }" data-record-box>
@@ -3243,16 +3246,17 @@ onBeforeUnmount(() => {
                         v-if="recordChord && !recordConflict"
                         type="button"
                         class="keys-record-confirm"
+                        :disabled="savingKeys"
                         data-record-confirm
                         @click="confirmRecord"
                       >
                         {{ t("set.keys.confirm") }}
                       </button>
-                      <button type="button" class="keys-record-cancel" data-record-cancel @click="cancelRecord">
+                      <button type="button" class="keys-record-cancel" :disabled="savingKeys" data-record-cancel @click="cancelRecord">
                         {{ t("common.cancel") }}
                       </button>
                     </div>
-                    <span v-if="recordConflict" class="keys-record-conflict" data-record-conflict>
+                    <span v-if="recordConflict" class="keys-record-conflict" role="alert" data-record-conflict>
                       {{ t("set.keys.conflict", { label: commandLabel(recordConflict) }) }}
                     </span>
                   </div>
@@ -3264,6 +3268,7 @@ onBeforeUnmount(() => {
                       class="keys-edit"
                       :aria-label="t('set.keys.edit')"
                       v-tip="{ label: t('set.keys.edit'), placement: 'top' }"
+                      :disabled="savingKeys"
                       data-edit-shortcut
                       @click="startRecord(shortcut.id)"
                     >
@@ -3273,42 +3278,44 @@ onBeforeUnmount(() => {
                       </svg>
                     </button>
                   </template>
-                </div>
-                <div class="keys-end">
-                  <button
-                    v-if="customBinding(shortcut.id)"
-                    type="button"
-                    class="keys-icon"
-                    :aria-label="t('set.keys.resetOne', { label: shortcut.title })"
-                    v-tip="{ label: t('set.keys.resetOne', { label: shortcut.title }), placement: 'top' }"
-                    data-reset-shortcut
-                    @click="resetBinding(shortcut.id)"
-                  >
-                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                      <path d="M3 8.2a5 5 0 1 0 1.6-3.7M3.2 2.5v2.8H6" />
-                    </svg>
-                  </button>
-                  <button
-                    v-else-if="boundKeys(shortcut)"
-                    type="button"
-                    class="keys-icon danger"
-                    :aria-label="t('set.keys.delete')"
-                    v-tip="{ label: t('set.keys.delete'), placement: 'top' }"
-                    data-delete-shortcut
-                    @click="deleteBinding(shortcut.id)"
-                  >
-                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                      <path d="M3 4.5h10M6.5 2.5h3M4.5 4.5l.5 9h6l.5-9" />
-                    </svg>
-                  </button>
+                  <div v-if="recording !== shortcut.id" class="keys-end">
+                    <button
+                      v-if="customBinding(shortcut.id)"
+                      type="button"
+                      class="keys-icon"
+                      :aria-label="t('set.keys.resetOne', { label: shortcut.title })"
+                      v-tip="{ label: t('set.keys.resetOne', { label: shortcut.title }), placement: 'top' }"
+                      :disabled="savingKeys"
+                      data-reset-shortcut
+                      @click="resetBinding(shortcut.id)"
+                    >
+                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M3 8.2a5 5 0 1 0 1.6-3.7M3.2 2.5v2.8H6" />
+                      </svg>
+                    </button>
+                    <button
+                      v-if="boundKeys(shortcut)"
+                      type="button"
+                      class="keys-icon danger"
+                      :aria-label="t('set.keys.delete')"
+                      v-tip="{ label: t('set.keys.delete'), placement: 'top' }"
+                      :disabled="savingKeys"
+                      data-delete-shortcut
+                      @click="deleteBinding(shortcut.id)"
+                    >
+                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M3 4.5h10M6.5 2.5h3M4.5 4.5l.5 9h6l.5-9" />
+                      </svg>
+                    </button>
+                  </div>
                 </div>
               </div>
-              <div v-if="!shortcutRows.length" class="keys-empty" data-shortcuts-empty>{{ t("set.keys.noMatch") }}</div>
             </div>
+            <div v-if="!shortcutRows.length" class="keys-empty" role="status" data-shortcuts-empty>{{ t("set.keys.noMatch") }}</div>
           </div>
 
           <div class="keys-foot">
-            <button type="button" class="ctl-btn" data-reset-all-shortcuts :title="t('set.keys.resetAll')" @click="resetAllBindings">{{ t("set.keys.resetAll") }}</button>
+            <button type="button" class="ctl-btn" :disabled="savingKeys" data-reset-all-shortcuts :title="t('set.keys.resetAll')" @click="resetAllBindings">{{ t("set.keys.resetAll") }}</button>
           </div>
         </div>
 
@@ -4361,8 +4368,9 @@ h3 {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  margin-inline-start: 12px;
+  flex: 0 0 auto;
+  min-width: 28px;
+  margin-inline-start: auto;
 }
 
 .keys-icon {

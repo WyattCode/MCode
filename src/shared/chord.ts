@@ -94,3 +94,69 @@ export function normalizeChord(chord: string): string {
   const mapped = SHIFTED[key] ?? (key.length === 1 ? key.toUpperCase() : key)
   return [...mods, mapped].join("+")
 }
+
+export const KEYBINDS_VERSION = 1
+export const FIND_SHORTCUT_DEFAULT = "Ctrl+F"
+
+export function boundShortcut(
+  command: { id: string; hint?: string },
+  binds: Readonly<Record<string, string>>,
+): string {
+  return normalizeChord(Object.hasOwn(binds, command.id) ? binds[command.id] : command.hint ?? "")
+}
+
+/** Additional spellings accepted by the default keyboard actions. */
+export const SHORTCUT_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  "zoom.in": ["Ctrl+Shift+=", "Ctrl+NumpadAdd"],
+  "zoom.out": ["Ctrl+Shift+-", "Ctrl+NumpadSubtract"],
+  "zoom.reset": ["Ctrl+Shift+0"],
+  "composer.send": ["Alt+Enter", "Ctrl+Enter"],
+  "notifications.focus": [
+    "Ctrl+Alt+T", "Alt+Shift+T", "Alt+Meta+T",
+    "Ctrl+Alt+Shift+T", "Ctrl+Alt+Meta+T", "Alt+Shift+Meta+T", "Ctrl+Alt+Shift+Meta+T",
+  ],
+}
+
+export function shortcutChords(
+  command: { id: string; hint?: string },
+  binds: Readonly<Record<string, string>>,
+): readonly string[] {
+  const chord = boundShortcut(command, binds)
+  if (!chord) return []
+  return Object.hasOwn(binds, command.id) ? [chord] : [chord, ...(SHORTCUT_ALIASES[command.id] ?? [])]
+}
+
+/** Resolves the active keyboard commands. An explicit override takes priority over an older default. */
+export function shortcutDispatch<Command extends { id: string; hint?: string }>(
+  commands: readonly Command[],
+  binds: Readonly<Record<string, string>>,
+): Map<string, Command> {
+  const active = new Map<string, Command>()
+  for (const command of commands) {
+    if (Object.hasOwn(binds, command.id)) continue
+    for (const chord of shortcutChords(command, binds)) active.set(chord, command)
+  }
+  for (const command of commands) {
+    if (!Object.hasOwn(binds, command.id)) continue
+    const chord = boundShortcut(command, binds)
+    if (chord) active.set(chord, command)
+  }
+  return active
+}
+
+export function sameShortcutBindings(left: Readonly<Record<string, string>>, right: Readonly<Record<string, string>>): boolean {
+  return Object.keys(left).length === Object.keys(right).length &&
+    Object.entries(left).every(([id, chord]) => Object.hasOwn(right, id) && right[id] === chord)
+}
+
+/** Default shortcuts also displayed by the operating system's application menu. */
+export const MENU_SHORTCUT_DEFAULTS = {
+  "app.settings": "Ctrl+,",
+  "session.new": "Ctrl+N",
+  "project.open": "Ctrl+O",
+  "window.close": "Ctrl+W",
+  "zoom.in": "Ctrl+=",
+  "zoom.out": "Ctrl+-",
+  "zoom.reset": "Ctrl+0",
+  "app.quit": "Ctrl+Q",
+} as const

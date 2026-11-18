@@ -1,3 +1,4 @@
+import { KEYBINDS_VERSION } from "@shared/chord"
 import { DEFAULT_APP_ICON } from "@shared/app-icons"
 import { migrateChime } from "@shared/chime"
 import { normalizeChord, retireKeybinds } from "@shared/chord"
@@ -756,6 +757,7 @@ export class Config {
      */
     const read = await this.readStored()
     const stored = read.value
+    this.shortcutReadFailed = Boolean(read.corrupt || read.unreadable)
     if (read.corrupt) {
       const aside = await this.storage.quarantine("config")
       this.unreadable = { problem: read.corrupt, evidence: aside }
@@ -934,6 +936,12 @@ export class Config {
    * The app opens on the defaults either way; this is what lets it say so
    * rather than leaving the reader to wonder where their settings went.
    */
+  private shortcutReadFailed = false
+
+  get keybindsUnreadable(): boolean {
+    return Boolean(this.shortcutReadFailed || this.held.has("keybinds") || this.held.has("keybindsVersion"))
+  }
+
   unreadable: { problem: string; evidence?: string } | undefined
 
   /**
@@ -1145,11 +1153,19 @@ export class Config {
   }
 
   private async reloadNow(): Promise<void> {
-    // A file that stopped parsing is left alone: the next save refuses and says where it broke.
     const read = await this.readStored()
+    if (read.corrupt || read.unreadable) {
+      if (!this.shortcutReadFailed) {
+        this.shortcutReadFailed = true
+        this.current = { ...this.current, keybinds: {} }
+        this.bus.publish({ type: "config.updated", config: this.current, keybindsUnreadable: true })
+      }
+      return
+    }
     const stored = read.value
     if (!stored || (read.text !== undefined && this.written.includes(read.text))) return
-    if (JSON.stringify(stored) === JSON.stringify(this.current)) return
+    if (!this.shortcutReadFailed && JSON.stringify(stored) === JSON.stringify(this.current)) return
+    this.shortcutReadFailed = false
     const before = this.current
     // As load reads it: a later build's document is taken in but never written back over.
     this.fromNewerVersion = typeof stored.schemaVersion === "number" && stored.schemaVersion > CONFIG_SCHEMA_VERSION
@@ -1163,7 +1179,7 @@ export class Config {
     next.autoApprove = allowed(next.permissions)
     this.current = next
     this.held = held
-    this.bus.publish({ type: "config.updated", config: this.current })
+    this.bus.publish({ type: "config.updated", config: this.current, keybindsUnreadable: this.keybindsUnreadable })
     for (const listener of this.reloadListeners) await Promise.resolve(listener(before, next)).catch(() => undefined)
   }
 
@@ -1244,6 +1260,10 @@ export class Config {
     const providersBefore = this.current.customProviders
     const projectsBefore = { projects: this.current.projects, closedProjects: this.current.closedProjects }
     this.current = { ...this.current, ...patch }
+    if (Object.hasOwn(patch, "keybinds")) {
+      this.current.keybindsVersion = KEYBINDS_VERSION
+      this.held.delete("keybindsVersion")
+    }
     // A value set now is the one to write, even where it equals what a stored one was read as.
     for (const key of Object.keys(patch)) this.held.delete(key)
     dropRetired(this.current)
@@ -1292,7 +1312,8 @@ export class Config {
     }
     this.current = { ...this.current, schemaVersion: CONFIG_SCHEMA_VERSION }
     await this.persist()
-    this.bus.publish({ type: "config.updated", config: this.current })
+    if (Object.hasOwn(patch, "keybinds")) this.shortcutReadFailed = false
+    this.bus.publish({ type: "config.updated", config: this.current, keybindsUnreadable: this.keybindsUnreadable })
     return this.current
   }
 

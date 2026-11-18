@@ -3,9 +3,8 @@ import { computed, onBeforeUnmount, onMounted, nextTick, ref } from "vue"
 import { t } from "../lib/i18n"
 import { isRovingKey } from "../lib/composer-menu"
 import { focusRow } from "../lib/menu-keys"
-import { controlChord, shownChord } from "../lib/keys"
+import { shownChord } from "../lib/keys"
 import { useEscapeLayer } from "../lib/escape-layer"
-import { useApp } from "../stores/app"
 
 /**
  * The application menu, drawn in the window.
@@ -22,8 +21,7 @@ const emit = defineEmits<{ close: []; run: [command: string] }>()
  * them away, so without this they took the click and did nothing - which reads
  * as the menu being broken rather than the item being unavailable.
  */
-const props = defineProps<{ x: number; y: number; disabled?: Set<string> }>()
-const app = useApp()
+const props = defineProps<{ x: number; y: number; disabled?: Set<string>; shortcutHints: Record<string, string> }>()
 
 interface Item {
   key: string
@@ -43,9 +41,9 @@ const groups = computed<Group[]>(() => [
     key: "file",
     label: t("menu.file"),
     items: [
-      { key: "new-session", label: t("side.newTask"), hint: "Ctrl+N" },
-      { key: "open-project", label: t("menu.openFolder"), hint: "Ctrl+O" },
-      { key: "settings", label: t("menu.settings"), hint: "Ctrl+," },
+      { key: "new-session", label: t("side.newTask") },
+      { key: "open-project", label: t("menu.openFolder") },
+      { key: "settings", label: t("menu.settings") },
       { key: "close", label: t("menu.close"), divided: true },
       { key: "quit", label: t("menu.quit") },
     ],
@@ -67,13 +65,13 @@ const groups = computed<Group[]>(() => [
     key: "view",
     label: t("menu.view"),
     items: [
-      { key: "sidebar", label: t("menu.sidebar"), hint: "Ctrl+B", divided: true },
-      { key: "terminal", label: t("menu.terminal"), hint: controlChord("`", app.platform) },
+      { key: "sidebar", label: t("menu.sidebar"), divided: true },
+      { key: "terminal", label: t("menu.terminal") },
       { key: "reload", label: t("menu.reload"), divided: true },
       { key: "devtools", label: t("menu.developerTools") },
-      { key: "zoom-reset", label: t("menu.resetZoom"), hint: "Ctrl+0", divided: true },
-      { key: "zoom-in", label: t("menu.zoomIn"), hint: "Ctrl+=" },
-      { key: "zoom-out", label: t("menu.zoomOut"), hint: "Ctrl+-" },
+      { key: "zoom-reset", label: t("menu.resetZoom"), divided: true },
+      { key: "zoom-in", label: t("menu.zoomIn") },
+      { key: "zoom-out", label: t("menu.zoomOut") },
       { key: "fullscreen", label: t("menu.enterFullscreen"), divided: true },
     ],
   },
@@ -81,8 +79,8 @@ const groups = computed<Group[]>(() => [
     key: "session",
     label: t("key.groupConversation"),
     items: [
-      { key: "abort", label: t("menu.stop"), hint: "Ctrl+." },
-      { key: "model", label: t("menu.switchModel"), hint: "Ctrl+Shift+M" },
+      { key: "abort", label: t("menu.stop") },
+      { key: "model", label: t("menu.switchModel") },
       { key: "delete-session", label: t("menu.delete"), divided: true },
     ],
   },
@@ -90,12 +88,12 @@ const groups = computed<Group[]>(() => [
     key: "go",
     label: t("menu.go"),
     items: [
-      { key: "back", label: t("menu.back"), hint: "Ctrl+[" },
-      { key: "forward", label: t("menu.forward"), hint: "Ctrl+]" },
-      { key: "prev-session", label: t("conv.prev"), hint: "Alt+Up", divided: true },
-      { key: "next-session", label: t("conv.next"), hint: "Alt+Down" },
-      { key: "prev-project", label: t("menu.prevProject"), hint: "Ctrl+Alt+Up", divided: true },
-      { key: "next-project", label: t("menu.nextProject"), hint: "Ctrl+Alt+Down" },
+      { key: "back", label: t("menu.back") },
+      { key: "forward", label: t("menu.forward") },
+      { key: "prev-session", label: t("conv.prev"), divided: true },
+      { key: "next-session", label: t("conv.next") },
+      { key: "prev-project", label: t("menu.prevProject"), divided: true },
+      { key: "next-project", label: t("menu.nextProject") },
     ],
   },
   {
@@ -121,7 +119,10 @@ const groups = computed<Group[]>(() => [
       { key: "check-updates", label: t("update.check") },
     ],
   },
-])
+].map((group) => ({
+  ...group,
+  items: group.items.map((item: Item) => ({ ...item, hint: props.shortcutHints[item.key] ?? item.hint })),
+})))
 
 /** Which group's submenu is showing, and where its panel should sit. */
 const open = ref<string>()

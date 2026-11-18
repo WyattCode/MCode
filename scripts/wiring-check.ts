@@ -53,26 +53,14 @@ for (const command of forwarded) {
 console.log(`menu commands: ${sent.size}`)
 
 // --------------------------------------------------- guards that name a command
-/*
- * Two tables in App.vue map a menu item or a keyboard chord to the id of the
- * command that decides whether it can run. A typo in either is silent in the
- * worst possible direction: the lookup finds nothing, "is this disabled" answers
- * no, and the guard quietly stops guarding while every id around it still works.
- */
-for (const table of ["MENU_COMMAND_IDS", "KEY_COMMAND_IDS"]) {
-  const at = appSource.indexOf(`const ${table}`)
-  if (at === -1) {
-    problems.push(`App.vue no longer declares ${table}, which the menu and keyboard guards read`)
-    continue
-  }
-  const body = appSource.slice(at, appSource.indexOf("\n}", at))
-  const ids = [...body.matchAll(/:\s*"([\w.]+)"/g)].map((match) => match[1])
-  if (!ids.length) problems.push(`${table} names no commands, so nothing is guarded`)
-  for (const id of ids) {
-    if (!appSource.includes(`id: "${id}"`)) {
-      problems.push(`${table} points at "${id}", which is not a command - that guard does nothing`)
-    }
-  }
+const menuIDs = /const MENU_COMMAND_IDS[^\n]*\{([\s\S]*?)\n\}/.exec(appSource)?.[1] ?? ""
+const commandIDs = [...menuIDs.matchAll(/:\s*"([\w.]+)"/g)].map((match) => match[1])
+if (!commandIDs.length) problems.push("MENU_COMMAND_IDS names no commands")
+for (const id of commandIDs) {
+  if (!appSource.includes(`id: "${id}"`)) problems.push(`MENU_COMMAND_IDS points at "${id}", which is not a command`)
+}
+if (!/keyboardCommands\.value\.get\(chordOf\(event, app\.platform\)\)/.test(appSource)) {
+  problems.push("App.vue does not dispatch keyboard events through its effective command bindings")
 }
 
 // ------------------------------------------------------- what the window may reach

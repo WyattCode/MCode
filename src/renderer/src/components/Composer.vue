@@ -2280,27 +2280,15 @@ function takesRow(event: KeyboardEvent): boolean {
   return !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey
 }
 
-/**
- * The chord the user has bound "send message" to, when it is an Enter of some
- * kind.
- *
- * MiMo reads the binding before deciding between a newline and a send: a
- * binding on an Enter combination is matched exactly and takes Ctrl+Enter's
- * newline away with it, and anything else leaves the default alone - Enter
- * sends, Ctrl+Enter breaks the line, Alt+Enter sends. Nothing read the binding
- * here at all, so rebinding the send key did nothing in the box and, worse, the
- * window's own dispatcher then sent the newline the box had just typed.
- */
-const sendChord = computed(() => {
-  const bound = app.config?.keybinds?.["composer.send"]
-  const chord = typeof bound === "string" && bound ? normalizeChord(bound) : ""
-  return /(^|\+)Enter$/i.test(chord) ? chord : ""
-})
+/** An absent override keeps the contextual Enter shortcuts. An empty override disables sending by shortcut. */
+const sendBinding = computed(() => app.config?.keybinds?.["composer.send"])
+const sendChord = computed(() => normalizeChord(sendBinding.value ?? ""))
 
 function sendsMessage(event: KeyboardEvent): boolean {
-  if (event.key !== "Enter") return false
-  if (sendChord.value) return chordOf(event, app.platform) === sendChord.value
-  return !event.shiftKey && !event.metaKey && !event.ctrlKey
+  if (!sendChord.value && sendBinding.value === undefined) {
+    return event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey
+  }
+  return Boolean(sendChord.value) && chordOf(event, app.platform) === sendChord.value
 }
 
 /**
@@ -2314,7 +2302,7 @@ function queuesMessage(event: KeyboardEvent): boolean {
 
 /** Ctrl+Enter breaks the line only while no Enter combination is bound to sending. */
 function breaksLine(event: KeyboardEvent): boolean {
-  if (event.key !== "Enter" || event.shiftKey || event.altKey || sendChord.value) return false
+  if (event.key !== "Enter" || event.shiftKey || event.altKey || sendChord.value.endsWith("+Enter")) return false
   return event.ctrlKey || event.metaKey
 }
 
@@ -2393,7 +2381,9 @@ function onKeydown(event: KeyboardEvent) {
     }
   }
 
-  const delivery = runningChat.value ? runningDelivery(event, app.platform, runningSend.value) : undefined
+  const delivery = runningChat.value && sendBinding.value === undefined
+    ? runningDelivery(event, app.platform, runningSend.value)
+    : undefined
   if (delivery) {
     handled(event)
     if (!event.repeat) void submit(delivery === "queue" ? "queue" : undefined)

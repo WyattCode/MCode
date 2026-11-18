@@ -68,11 +68,13 @@ function follow(id: string, link: ToastLink) {
 const list = ref<HTMLElement>()
 let before: HTMLElement | null = null
 
-function onHotkey(event: KeyboardEvent) {
-  // MiMo's check asks only that Alt is down and the key is T; a chord that carries more still counts.
-  if (!event.altKey || event.code !== "KeyT") return
-  if (toasts.value.length) list.value?.focus()
+function focusNotices(): boolean {
+  if (!toasts.value.length || !list.value) return false
+  list.value.focus()
+  return true
 }
+
+defineExpose({ focusNotices })
 
 function onFocusIn(event: FocusEvent) {
   if (before !== null || !list.value) return
@@ -150,13 +152,11 @@ function followMain() {
 }
 
 onMounted(() => {
-  document.addEventListener("keydown", onHotkey)
   followMain()
   window.addEventListener("resize", measure)
 })
 
 onBeforeUnmount(() => {
-  document.removeEventListener("keydown", onHotkey)
   window.removeEventListener("resize", measure)
   cancelAnimationFrame(waiting)
   watching?.disconnect()

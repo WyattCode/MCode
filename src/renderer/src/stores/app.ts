@@ -249,6 +249,7 @@ export const useApp = defineStore("app", () => {
     return last?.role === "assistant" ? last : undefined
   }
 
+  let shortcutReadWarned = false
   const config = ref<AppConfig>()
   const providers = ref<ProviderStatus[]>([])
   /**
@@ -889,6 +890,10 @@ export const useApp = defineStore("app", () => {
          */
         const before = config.value
         config.value = event.config
+        if (event.keybindsUnreadable && !shortcutReadWarned) {
+          noticesHere().notifyFailure(t("set.keys.readFailed"))
+          shortcutReadWarned = true
+        } else if (!event.keybindsUnreadable) shortcutReadWarned = false
         const affectsProviders =
           JSON.stringify(before?.providerEndpoints) !== JSON.stringify(event.config.providerEndpoints) ||
           /*
@@ -1062,6 +1067,8 @@ export const useApp = defineStore("app", () => {
 
     const settings = await instance.request({ type: "config.get" })
     config.value = settings.config
+    shortcutReadWarned = Boolean(settings.keybindsUnreadable)
+    if (shortcutReadWarned) notice.warning(t("set.keys.readFailed"))
     /*
      * MiMo's CONFIG_INVALID, said rather than only noted.
      *
@@ -2109,12 +2116,12 @@ export const useApp = defineStore("app", () => {
    * that was not saved falls back to the value that was. `quiet` is for callers
    * that say their own failure.
    */
-  async function patchConfig(patch: Partial<AppConfig>, options: { quiet?: boolean } = {}) {
+  async function patchConfig(patch: Partial<AppConfig>, options: { quiet?: boolean; expectedKeybinds?: Record<string, string> } = {}) {
     const say = noticesHere()
     let failure: unknown
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        config.value = (await api().request({ type: "config.set", patch })).config
+        config.value = (await api().request({ type: "config.set", patch, expectedKeybinds: options.expectedKeybinds })).config
         return
       } catch (err) {
         failure = err

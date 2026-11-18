@@ -190,16 +190,14 @@ export async function roundThirteenKeyboardChecks(check: Check, section: (name: 
       /modalOpen\.value/.test(covered) && /searchOpen\.value/.test(covered) && /dialogOpen\(\)/.test(covered),
       covered,
     )
-    const unguarded = ["p", "r", "a", "s", "u", "c", "l"].filter((letter) => {
-      const at = shell.indexOf(`if (mod && event.altKey && letter === "${letter}") {`)
-      return at < 0 || !/^\s+if \(conversationCovered\(\)/.test(shell.slice(shell.indexOf("\n", at) + 1, shell.indexOf("\n", shell.indexOf("\n", at) + 1)))
-    })
-    check("K13-5: pin, rename, archive, side chat, priority filter, copy id and copy link do nothing behind a layer", unguarded.length === 0, unguarded)
-    check(
-      "K13-5: and neither do they when re-bound to another chord",
-      /if \(CONVERSATION_COMMANDS\.has\(command\.id\) && conversationCovered\(\)\) return/.test(shell) &&
-        ["session.pin", "session.archive", "session.rename", "session.side", "session.copyID", "session.copyLink", "view.priority"].every((id) => new RegExp(`CONVERSATION_COMMANDS = new Set\\(\\[[^\\]]*"${id.replace(".", "\\.")}"`).test(shell)),
-    )
+    const guarded = /CONVERSATION_COMMANDS = new Set\(\[([^\]]*)\]/.exec(shell)?.[1] ?? ""
+    const ids = ["session.pin", "session.archive", "session.rename", "session.side", "session.copyID", "session.copyLink", "view.priority"]
+    check("K13-5: pin, rename, archive, side chat, priority filter, copy ID and copy link are layer-sensitive",
+      ids.every((id) => guarded.includes(`"${id}"`)), guarded)
+    const dispatch = shell.slice(shell.indexOf("function onKeydown("), shell.indexOf("const menuCommands"))
+    check("K13-5: defaults and overrides share the conversation layer guard",
+      /keyboardCommands\.value\.get\(chordOf\(event, app\.platform\)\)/.test(dispatch) &&
+      /if \(CONVERSATION_COMMANDS\.has\(id\) && conversationCovered\(\)\) return/.test(dispatch))
   }
 
   // ---------------------------------------------------------------- K13-6
@@ -224,10 +222,12 @@ export async function roundThirteenKeyboardChecks(check: Check, section: (name: 
       run,
     )
     check("K13-6: a dialog that asks something keeps the key", /!node\.closest\("\[data-new-task-clears\]"\)/.test(run) && /if \(asking \|\| editingProject\.value/.test(run))
+    const dispatch = shell.slice(shell.indexOf("function onKeydown("), shell.indexOf("const menuCommands"))
     check(
       "K13-6: its chord is tried before the modal block, wherever it is bound, and the application menu's New goes the same way",
-      /if \(isNewTaskChord\(chordOf\(event, platform\)\) && !commandDisabled\("session\.new"\) && newTaskOverLayers\(\)\) \{/.test(shell) &&
-        shell.indexOf("if (isNewTaskChord(") < shell.indexOf("if (!modalOpen.value) {\n    const chord = chordOf(") && /"new-session": \(\) => void newTaskOverLayers\(\)/.test(shell),
+      /if \(id === "session\.new"\) \{\s*if \(newTaskOverLayers\(\)\)/.test(dispatch) &&
+        dispatch.indexOf('if (id === "session.new")') < dispatch.indexOf("if (modalOpen.value") &&
+        /"new-session": \(\) => void newTaskOverLayers\(\)/.test(shell),
     )
     const cleared = await Promise.all(["SettingsDialog", "SearchOverlay", "ImagePreview", "VideoPreview"].map(async (name) => /data-new-task-clears/.test(await component(name))))
     check("K13-6: Settings, the search and both previews are marked as what a new task clears", cleared.every(Boolean), cleared)

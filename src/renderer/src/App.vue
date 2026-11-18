@@ -70,8 +70,8 @@ import { sessionLink, type SessionLinkTarget } from "@shared/session-link"
 import { folderName, projectName } from "./lib/project"
 import { addDraftSkill, bindDraftSources, drafts, flushDrafts, homeFilled, loadDrafts, scheduleDraftSave } from "./lib/composer-drafts"
 import { renderMarkdown } from "./lib/markdown"
-import { chordOf, controlChord, controlHeld, keyOfCode, modHeld, recordingChord } from "./lib/keys"
-import { normalizeChord } from "@shared/chord"
+import { chordOf, controlChord, formatChord, recordingChord } from "./lib/keys"
+import { boundShortcut, FIND_SHORTCUT_DEFAULT, MENU_SHORTCUT_DEFAULTS, shortcutDispatch } from "@shared/chord"
 import { projectOf } from "./lib/session-project"
 import FindBar from "./components/FindBar.vue"
 import AnnotationComposer from "./components/AnnotationComposer.vue"
@@ -554,54 +554,6 @@ async function checkForUpdates() {
     updateChecking.value = false
   }
 }
-
-/**
- * Chord to command id, for whatever the user has re-bound.
- *
- * Read in the physical-key spelling `chordOf` produces, so a binding written
- * the old printed way (Ctrl+Shift+{) that reached the config some other way
- * than the load-time migration still fires.
- */
-const rebound = computed(() => {
-  const out = new Map<string, string>()
-  for (const [id, chord] of Object.entries(app.config?.keybinds ?? {})) {
-    // Only a chord written as text is one; the backend drops anything else as it reads the file.
-    if (chord && typeof chord === "string") out.set(normalizeChord(chord), id)
-  }
-  return out
-})
-/* The application menu names the chords as bound (MiMo's menu does), and none while one is being recorded. */
-watch(
-  [() => app.config?.keybinds, recordingChord],
-  ([binds, recording]) => window.mcode.menuKeys?.({ binds: { ...(binds ?? {}) }, recording }),
-  { immediate: true, deep: true },
-)
-
-/**
- * Built-in chords whose command has been moved somewhere else.
- *
- * Rebinding wrote the new chord and left the old one working: the shortcuts page
- * said Ctrl+J while Ctrl+T went on creating a session, because the built-in
- * table below is consulted by key and knows nothing about what the user has
- * changed. A chord that has been vacated has to stop doing its old job, or the
- * page is describing an app that no longer exists.
- *
- * Not vacated if some other command has since taken it - then it belongs to
- * that command and is handled a few lines above, by the rebinding itself.
- */
-const retiredChords = computed(() => {
-  const binds = app.config?.keybinds ?? {}
-  const claimed = new Set(Object.values(binds).filter(Boolean))
-  const out = new Set<string>()
-  for (const command of bindableCommands.value) {
-    const custom = binds[command.id]
-    // Absent means untouched; an empty string means its built-in chord was deleted on the shortcuts page.
-    if (custom === undefined || !command.hint || custom === command.hint) continue
-    if (claimed.has(command.hint)) continue
-    out.add(command.hint)
-  }
-  return out
-})
 
 /*
  * The terminal is fetched the first time one is opened rather than built into
@@ -1349,14 +1301,6 @@ function newTaskOverLayers(): boolean {
   return true
 }
 
-/** Whether a chord is the one new task answers to: Ctrl+N, or wherever it has been re-bound. */
-function isNewTaskChord(chord: string): boolean {
-  if (!chord) return false
-  const bound = rebound.value.get(chord)
-  if (bound) return bound === "session.new"
-  return chord === "Ctrl+N" && !retiredChords.value.has(chord)
-}
-
 /* What a click in the thread leaves alone because it takes the click or the keyboard itself: MiMo's list. */
 const THREAD_CONTROLS =
   "button, a, input, textarea, select, label, [contenteditable], [role=button], [role=textbox], [role=link], [role=menuitem], [role=checkbox], [role=tab]"
@@ -1557,12 +1501,10 @@ const HEADER_MENU: MenuRow[] = [
  * binding when they have moved it, else the default. Pinning is a row action
  * here and a command on the shortcuts page, so it is looked up by that name.
  */
-const hintFor = (entry: MenuRow) =>
-  entry.hint &&
-  ((binds, id) => (id in binds ? binds[id] : entry.hint))(
-    app.config?.keybinds ?? {},
-    entry.id === "row.pin" ? "session.pin" : entry.id,
-  )
+const hintFor = (entry: MenuRow) => boundShortcut(
+  { id: entry.id === "row.pin" ? "session.pin" : entry.id, hint: entry.hint },
+  app.config?.keybinds ?? {},
+)
 
 /*
  * The rows that are this menu's own rather than commands: they name a
@@ -2618,13 +2560,15 @@ interface AppCommand {
   run: () => unknown
 }
 
+const toastRegion = ref<InstanceType<typeof Toasts>>()
+
 const bindableCommands = computed((): AppCommand[] => {
   const hasSession = Boolean(app.currentID)
   const inWorkspace = !isHome.value
 
   const all: AppCommand[] = [
     // Session
-    { id: "session.new", group: "key.groupGeneral", title: t("side.newTask"), hint: "Ctrl+N", run: newSession },
+    { id: "session.new", group: "key.groupGeneral", title: t("side.newTask"), hint: MENU_SHORTCUT_DEFAULTS["session.new"], run: newSession },
     {
       id: "view.model",
       group: "key.groupModels",
@@ -2648,7 +2592,7 @@ const bindableCommands = computed((): AppCommand[] => {
       group: "key.groupConversation",
       title: t("cmd.rename"),
       hint: "Ctrl+Alt+R",
-      enabled: hasSession,
+      enabled: hasSession && inWorkspace,
       run: () => renameInHeader(),
     },
     {
@@ -2728,7 +2672,7 @@ const bindableCommands = computed((): AppCommand[] => {
     },
 
     // Project
-    { id: "project.open", group: "key.groupGeneral", title: t("cmd.openProject"), hint: "Ctrl+O", run: browse },
+    { id: "project.open", group: "key.groupGeneral", title: t("cmd.openProject"), hint: MENU_SHORTCUT_DEFAULTS["project.open"], run: browse },
     { id: "view.home", group: "key.groupGeneral", title: t("cmd.goHome"), enabled: inWorkspace, run: goHome },
 
     // View
@@ -2832,6 +2776,7 @@ const bindableCommands = computed((): AppCommand[] => {
     // MiMo's 发送消息 row; Enter itself is answered by the composer.
     {
       id: "composer.send",
+      hint: "Enter",
       group: "key.groupPrompt",
       title: t("cmd.sendMessage"),
       enabled: hasSession,
@@ -2993,7 +2938,7 @@ const bindableCommands = computed((): AppCommand[] => {
       group: "key.groupGeneral",
       title: t("key.focusInput"),
       hint: "Ctrl+Shift+L",
-      enabled: hasSession,
+      enabled: inWorkspace,
       run: () => composer.value?.focus(),
     },
     {
@@ -3001,7 +2946,7 @@ const bindableCommands = computed((): AppCommand[] => {
       id: "app.find",
       group: "key.groupGeneral",
       title: t("key.label.find"),
-      hint: "Ctrl+F",
+      hint: FIND_SHORTCUT_DEFAULT,
       run: () => void openFind(),
     },
     {
@@ -3009,7 +2954,7 @@ const bindableCommands = computed((): AppCommand[] => {
       id: "window.close",
       group: "key.groupGeneral",
       title: t("key.closeWindow"),
-      hint: "Ctrl+W",
+      hint: MENU_SHORTCUT_DEFAULTS["window.close"],
       run: () => window.mcode.window("close"),
     },
     /*
@@ -3110,9 +3055,7 @@ const bindableCommands = computed((): AppCommand[] => {
       group: "key.groupGeneral",
       title: t("key.label.search"),
       hint: "Ctrl+K",
-      run: () => {
-        searchOpen.value = true
-      },
+      run: toggleSearch,
     },
     {
       id: "terminal.close",
@@ -3125,21 +3068,21 @@ const bindableCommands = computed((): AppCommand[] => {
       id: "zoom.in",
       group: "key.groupDisplay",
       title: t("key.zoomIn"),
-      hint: "Ctrl+=",
+      hint: MENU_SHORTCUT_DEFAULTS["zoom.in"],
       run: () => window.mcode.zoom("in"),
     },
     {
       id: "zoom.out",
       group: "key.groupDisplay",
       title: t("key.zoomOut"),
-      hint: "Ctrl+-",
+      hint: MENU_SHORTCUT_DEFAULTS["zoom.out"],
       run: () => window.mcode.zoom("out"),
     },
     {
       id: "zoom.reset",
       group: "key.groupDisplay",
       title: t("key.zoomReset"),
-      hint: "Ctrl+0",
+      hint: MENU_SHORTCUT_DEFAULTS["zoom.reset"],
       run: () => window.mcode.zoom("reset"),
     },
     {
@@ -3160,7 +3103,22 @@ const bindableCommands = computed((): AppCommand[] => {
       title: t("connect.title"),
       run: () => (connectOpen.value = true),
     },
-    { id: "app.settings", group: "key.groupGeneral", title: t("cmd.settings"), hint: "Ctrl+,", run: openSettings },
+    { id: "app.settings", group: "key.groupGeneral", title: t("cmd.settings"), hint: MENU_SHORTCUT_DEFAULTS["app.settings"], run: openSettings },
+    {
+      id: "app.quit",
+      group: "key.groupGeneral",
+      title: t("menu.quitApp"),
+      hint: MENU_SHORTCUT_DEFAULTS["app.quit"],
+      run: () => window.mcode.quitApp(),
+    },
+    {
+      id: "notifications.focus",
+      group: "key.groupGeneral",
+      title: t("set.keys.focusNotices"),
+      hint: "Alt+T",
+      run: () => toastRegion.value?.focusNotices(),
+    },
+    { id: "browser.annotate", group: "key.groupGeneral", title: t("rp.browser.annotateLabel"), hint: "Ctrl+.", run: annotateBrowser },
     // MiMo's unbound rows: copy as Markdown, and the maximised side panel (only while the panel is open).
     {
       id: "session.copyMarkdown",
@@ -3180,7 +3138,6 @@ const bindableCommands = computed((): AppCommand[] => {
     },
   ]
 
-  /* The shortcuts page draws lib/shortcut-page's fixed list out of these; every command keeps its chord. */
   return all
 })
 
@@ -3250,255 +3207,49 @@ function swallowDrop(event: DragEvent) {
   if (acceptsDrop(event.dataTransfer?.types)) event.preventDefault()
 }
 
+const keyboardCommands = computed(() => {
+  const binds = app.config?.keybinds ?? {}
+  // The composer owns its default Enter actions while its input has focus.
+  const entries = bindableCommands.value.filter(({ id }) => id !== "composer.send" || Object.hasOwn(binds, id))
+  return shortcutDispatch(entries, binds)
+})
+
 function onKeydown(event: KeyboardEvent) {
-  const platform = app.platform
-  // MiMo's `mod`: Command on a Mac and Ctrl elsewhere, never the two folded together.
-  const mod = modHeld(event, platform)
-  // Read by where the key sits: with Option held a Mac types another character.
-  const letter = (keyOfCode(event.code) ?? event.key).toLowerCase()
-  if (event.isComposing || event.keyCode === 229) return
-
-  /* New task runs over whatever is on screen, clearing it first, as MiMo's does; the rest stays put behind a modal. */
-  if (isNewTaskChord(chordOf(event, platform)) && !commandDisabled("session.new") && newTaskOverLayers()) {
-    event.preventDefault()
+  if (event.defaultPrevented || recordingChord.value) return
+  const command = keyboardCommands.value.get(chordOf(event, app.platform))
+  if (!command) return
+  const { id, enabled } = command
+  if (enabled === false || typeof enabled === "function" && !enabled()) {
+    // The files shortcut also suppresses Chromium's print dialog on the launcher.
+    if (id === "app.openFile" && !modalOpen.value) event.preventDefault()
     return
   }
-
-  /*
-   * A shortcut the user has re-bound wins over the built-in table, and is
-   * looked up by the chord rather than by the key - which is what lets a
-   * rebinding move an action onto a combination the table knows nothing about.
-   */
-  if (!modalOpen.value) {
-    const chord = chordOf(event, platform)
-    const bound = rebound.value.get(chord)
-    if (bound) {
-      const command = commands.value.find((entry) => entry.id === bound)
-      if (command && command.enabled !== false) {
-        if (TYPING_OFF.has(command.id) && typingIn(event.target)) return
-        if (CONVERSATION_COMMANDS.has(command.id) && conversationCovered()) return
-        event.preventDefault()
-        void command.run()
-        return
-      }
-    }
-    // Nothing answers to it any more, and the built-in table below must not.
-    if (retiredChords.value.has(chord)) {
-      event.preventDefault()
-      return
-    }
-  }
-
-  /*
-   * Ctrl+Tab and Ctrl+Shift+Tab, through the recently viewed conversations.
-   * Control rather than Command: on a Mac, Cmd+Tab belongs to the system.
-   */
-  if (controlHeld(event) && !event.altKey && event.key === "Tab") {
-    if (modalOpen.value) return
-    event.preventDefault()
-    void stepRecent(event.shiftKey ? -1 : 1)
+  if (id === "session.new") {
+    if (newTaskOverLayers()) event.preventDefault()
     return
   }
-
-  /* The side panel, on MiMo's chord and on every screen, as its title-bar button is; its review tab is Ctrl+Shift+G. */
-  if (mod && event.altKey && letter === "b") {
-    if (modalOpen.value) return
+  if (id === "app.quit") {
     event.preventDefault()
-    toggleSidePanel()
+    if (!event.repeat) window.mcode.quitApp(true)
     return
   }
-
-  /* Pinning the open conversation, and copying the id of it. */
-  if (mod && event.altKey && letter === "p") {
-    if (conversationCovered() || !app.currentID) return
-    event.preventDefault()
-    app.togglePinned(app.currentID)
+  if (id === "notifications.focus") {
+    if (command.run()) event.preventDefault()
     return
   }
-
-  /* Renaming and archiving the open conversation, on MiMo's chords. */
-  if (mod && event.altKey && letter === "r") {
-    if (conversationCovered() || !app.currentID || isHome.value) return
-    event.preventDefault()
-    renameInHeader()
+  if (modalOpen.value && !id.startsWith("zoom.")) return
+  if (TYPING_OFF.has(id) && typingIn(event.target)) return
+  if (CONVERSATION_COMMANDS.has(id) && conversationCovered()) return
+  if (id === "app.find") {
+    if (openFind(event)) event.preventDefault()
     return
   }
-
-  if (mod && event.altKey && letter === "a") {
-    if (conversationCovered() || !app.currentID) return
-    event.preventDefault()
-    void archiveSessions([app.currentID])
-    return
-  }
-
-  /* A side chat tab, on MiMo's chord. */
-  if (mod && event.altKey && letter === "s") {
-    if (conversationCovered()) return
-    event.preventDefault()
-    openSideChatTab()
-    return
-  }
-
-  /* The priority filter, on MiMo's own chord. */
-  if (mod && event.altKey && letter === "u") {
-    if (conversationCovered()) return
-    event.preventDefault()
-    priorityFilter.value = !priorityFilter.value
-    return
-  }
-
-  if (mod && event.altKey && letter === "c") {
-    if (conversationCovered() || !app.currentID) return
-    event.preventDefault()
-    window.mcode.setClipboardText(app.currentID)
-    notify(t("menu.copiedID"))
-    return
-  }
-
-  if (mod && event.altKey && letter === "l") {
-    if (conversationCovered() || !app.current) return
-    event.preventDefault()
-    copySessionLink()
-    return
-  }
-
-  /* MiMo's terminal toggle is its `ctrl` chord: Control+` on a Mac as well. */
-  if (controlHeld(event) && !event.altKey && !event.shiftKey && event.code === "Backquote") {
-    if (modalOpen.value) return
-    event.preventDefault()
-    if (!commandDisabled("view.terminal")) terminalOpen.value = !terminalOpen.value
-    return
-  }
-
-  if (!mod) return
-
-  // Zoom keys carry several spellings depending on layout and shift state,
-  // and the numpad reports its own codes.
-  const zoomIn = event.key === "=" || event.key === "+" || event.code === "NumpadAdd"
-  const zoomOut = event.key === "-" || event.key === "_" || event.code === "NumpadSubtract"
-  const zoomReset = event.key === "0" || event.code === "Numpad0"
-  if (zoomIn || zoomOut || zoomReset) {
-    event.preventDefault()
-    window.mcode.zoom(zoomIn ? "in" : zoomOut ? "out" : "reset")
-    return
-  }
-
-  /*
-   * A shortcut fired behind a dialog acts on a screen the user cannot see -
-   * Ctrl+N would quietly start a session under the settings window.
-   */
-  if (modalOpen.value) return
-
-  /*
-   * Shift combinations first: they are separate commands, not variants, and a
-   * handler table keyed on the bare letter cannot tell Ctrl+T from Ctrl+Shift+T.
-   */
-  /*
-   * Find first, and only if a host will have it.
-   *
-   * `openFind` answers false when the chord was typed into a text field or when
-   * no host wants it, and then Ctrl+F does nothing, as MiMo's does.
-   */
-  if (!event.shiftKey && event.key === "f" && openFind(event)) {
-    event.preventDefault()
-    return
-  }
-
-  /*
-   * MiMo's previous and next chat. Read by where the key sits rather than by
-   * what it types: with Shift held a bracket prints a brace on some layouts
-   * and something else entirely on others.
-   */
-  if (mod && event.shiftKey && !event.altKey && (event.code === "BracketLeft" || event.code === "BracketRight")) {
-    if (modalOpen.value) return
-    event.preventDefault()
-    void stepSession(event.code === "BracketLeft" ? -1 : 1)
-    return
-  }
-
-  if (event.shiftKey) {
-    const shifted: Record<string, () => void> = {
-      // MiMo's: a reload that skips the cache, while there is a page to reload.
-      r: () => reloadBrowser(true),
-      // MiMo's model picker and working directory.
-      m: () => composer.value?.openModelMenu(),
-      c: copyWorkingDirectory,
-      g: openReviewTab,
-      // The box, on MiMo's chord; Ctrl+L is the browser's address bar.
-      l: () => composer.value?.focus(),
-      // MiMo's browser toggle.
-      b: toggleBrowserTab,
-      // And the list of all of these, which is a settings page here.
-      "?": () => {
-        settingsSection.value = "keys"
-        settingsOpen.value = true
-      },
-      "/": () => {
-        settingsSection.value = "keys"
-        settingsOpen.value = true
-      },
-    }
-    const shiftedHandler = shifted[event.key.toLowerCase()]
-    if (!shiftedHandler) return
-    event.preventDefault()
-    shiftedHandler()
-    return
-  }
-
-  /*
-   * Ctrl and a digit opens the conversation in that slot of the side column's
-   * visible order, the way MiMo does. The project in that position is Ctrl+Alt
-   * and the digit.
-   */
-  if (/^[1-9]$/.test(event.key)) {
-    const target = app.visibleChats[Number(event.key) - 1]
-    if (!target) return
-    event.preventDefault()
-    void selectTab(target)
-    return
-  }
-
-  /*
-   * The table below is Ctrl alone. With Alt held a chord is a different one -
-   * Ctrl+Alt+T is not Ctrl+T (MiMo has no Ctrl+Alt+T) - and AltGr, which types
-   * brackets on many layouts, arrives as Ctrl+Alt and is not a shortcut.
-   */
-  if (event.altKey) return
-
-  const handlers: Record<string, () => void> = {
-    k: toggleSearch,
-    // MiMo's files tab.
-    p: openFilesTab,
-    b: () => toggleSide(),
-    ",": openSettings,
-    n: () => void newSession(),
-    // MiMo's: Ctrl+T is a browser tab, and the bottom panel is Ctrl+J.
-    t: () => void openBrowserTab(),
-    j: () => (terminalOpen.value = !terminalOpen.value),
-    r: () => reloadBrowser(),
-    o: () => void browse(),
-    // MiMo's: the window closes, hiding to the tray when that is on.
-    w: () => window.mcode.window("close"),
-    // The browser's address bar while it is open, else the box.
-    l: focusBrowserAddress,
-    // MiMo's annotate, while a browser tab is showing.
-    ".": annotateBrowser,
-    "[": back,
-    "]": forward,
-  }
-  const handler = handlers[event.key]
-  if (!handler) return
-  // MiMo's back and forward alone stay out of text fields: the bracket is left to what is being typed.
-  if ((event.key === "[" || event.key === "]") && typingIn(event.target)) return
-  /*
-   * Claimed before the availability test, not after: Ctrl+P belongs to the
-   * browser's print dialog otherwise, so letting an unavailable chord fall
-   * through would replace doing nothing with doing something surprising.
-   */
   event.preventDefault()
-  const id = KEY_COMMAND_IDS[event.key]
-  if (id && commandDisabled(id)) return
-  handler()
+  if (id === "session.nextRecent" || id === "session.prevRecent") {
+    void stepRecent(id === "session.nextRecent" ? 1 : -1)
+  } else if (id !== "composer.send" || !event.repeat) {
+    void command.run()
+  }
 }
 
 const menuCommands: Record<string, () => void> = {
@@ -3556,7 +3307,20 @@ const MENU_COMMAND_IDS: Record<string, string> = {
   model: "view.model",
   "delete-session": "session.delete",
   "check-updates": "app.update",
+  close: "window.close",
+  quit: "app.quit",
+  shortcuts: "app.shortcuts",
+  "zoom-in": "zoom.in",
+  "zoom-out": "zoom.out",
+  "zoom-reset": "zoom.reset",
 }
+
+const appMenuHints = computed(() => {
+  const byID = new Map(bindableCommands.value.map((entry) => [entry.id, entry]))
+  return Object.fromEntries(Object.entries(MENU_COMMAND_IDS).map(([key, id]) => [
+    key, boundShortcut(byID.get(id) ?? { id }, app.config?.keybinds ?? {}),
+  ]))
+})
 
 /**
  * Runs a menu item, if it can run at all.
@@ -3589,24 +3353,6 @@ function menuItemDisabled(key: string): boolean {
 /** Whether a command says it cannot run where the user currently is. */
 function commandDisabled(id: string): boolean {
   return bindableCommands.value.find((entry) => entry.id === id)?.enabled === false
-}
-
-/*
- * The chords that are also commands.
- *
- * The table in onKeydown answers keys directly, which is readable but knows
- * nothing about whether what it runs can run: Ctrl+P opened a file picker with
- * nothing in it on the launcher, and Ctrl+B toggled a panel that was not there.
- * Where a key has a command behind it, that command decides. Keys with no
- * command - attach, the MCP dialog - are unaffected and keep answering.
- */
-const KEY_COMMAND_IDS: Record<string, string> = {
-  k: "app.search",
-  p: "app.openFile",
-  b: "view.left",
-  j: "view.bottom",
-  "[": "app.back",
-  "]": "app.forward",
 }
 
 /* MiMo's only two commands marked off in form fields (`formTags: false`). */
@@ -3918,6 +3664,18 @@ onMounted(async () => {
   window.addEventListener("dragend", endDrag)
   // A drag the system took over never sends `dragend`; the next press is when the app knows it is over.
   window.addEventListener("pointerdown", endDrag, true)
+  watch(
+    [() => app.config?.keybinds, recordingChord],
+    ([binds, recording]) => window.mcode.menuKeys?.({ binds: { ...(binds ?? {}) }, recording }),
+    { immediate: true, deep: true },
+  )
+
+  watch(
+    () => JSON.stringify(Object.fromEntries([...keyboardCommands.value].map(([chord, command]) => [chord, command.id]))),
+    (chords) => window.mcode.browserKeys(JSON.parse(chords)),
+    { immediate: true },
+  )
+
   window.addEventListener("keydown", onKeydown)
   window.addEventListener("keyup", endRecentWalk)
   window.addEventListener("blur", forgetRecentWalk)
@@ -3938,7 +3696,10 @@ onMounted(async () => {
     })
     .catch(() => undefined)
   // macOS: a first Cmd+Q only arms the quit, and says so.
-  offQuitHint = window.mcode.onQuitHint(() => notify(t("quit.hint"), { id: "quit-shortcut", duration: 2000 }))
+  offQuitHint = window.mcode.onQuitHint(() => {
+    const chord = formatChord(appMenuHints.value.quit, platformName())
+    notify(t("quit.hint").replace("⌘Q", chord), { id: "quit-shortcut", duration: 2000 })
+  })
   await boot()
 })
 
@@ -4408,6 +4169,7 @@ onBeforeUnmount(() => {
   <AppMenu
     v-if="appMenu"
     :disabled="disabledMenuItems"
+    :shortcut-hints="appMenuHints"
     :x="appMenu.x"
     :y="appMenu.y"
     @run="runAppMenu"
@@ -4437,7 +4199,7 @@ onBeforeUnmount(() => {
     @close="projectMenu = undefined"
   />
 
-  <Toasts />
+  <Toasts ref="toastRegion" />
 
   <!-- Last in the document on purpose: see .rail-no-drag. -->
   <div v-if="!leftPanel" class="rail-no-drag" :data-platform="app.platform || undefined" aria-hidden="true" />

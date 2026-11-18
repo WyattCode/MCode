@@ -186,7 +186,7 @@ const api = {
   /** A renderer diagnostics line for the day's log file (MiMo's diagLog). */
   diagLog: (line: string): void => ipcRenderer.send("mcode:diag-log", line),
   /** The footer menu's Quit app: every window, the backend and its terminals. */
-  quitApp: (): void => ipcRenderer.send("mcode:quit"),
+  quitApp: (fromShortcut = false): void => ipcRenderer.send("mcode:quit", fromShortcut),
 
   /** Both take a project root and a path relative to it; see the main process. */
   revealFile: (directory: string, relative: string): Promise<{ ok: boolean; missing?: boolean; error?: string }> =>
@@ -358,7 +358,7 @@ const api = {
     return () => ipcRenderer.off("mcode:browser-state", listener)
   },
   /** The chords the reader has bound, so the same keys pressed inside a page reach the window. */
-  browserKeys: (chords: string[]): void => ipcRenderer.send("mcode:browser-keys", chords),
+  browserKeys: (chords: Record<string, string>): void => ipcRenderer.send("mcode:browser-keys", chords),
   /** A page opened a link in a new tab; the id is the page the main process already made for it. */
   onBrowserOpenTab: (handler: (pageId: string) => void): (() => void) => {
     const listener = (_event: unknown, pageId: string) => handler(pageId)

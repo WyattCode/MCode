@@ -145,7 +145,7 @@ async function settingsChecks(check: Check, section: (name: string) => void): Pr
 
     const app = read("src/renderer/src/App.vue")
     const store = read("src/renderer/src/stores/app.ts")
-    check("the digits read the visible order", /app\.visibleChats\[Number\(event\.key\) - 1\]/.test(app) && /app\.visibleChats\[index\]/.test(app))
+    check("the digits read the visible order", /id: `tab\.goto\.\$\{index \+ 1\}`/.test(app) && /hint: `Ctrl\+\$\{index \+ 1\}`/.test(app) && /app\.visibleChats\[index\]/.test(app))
     check("and so do the brackets and the unread steps", /stepTarget\(app\.visibleChats/.test(app) && /const chats = app\.visibleChats/.test(app))
     check("the store orders them with the side column's own sort", /visibleChatOrder\(\s*sessions\.value,\s*config\.value\?\.pinnedTabs/.test(store) && /recentSort\.value/.test(store))
     check("and the side column's sort menu writes that same order", /app\.recentSort = mode/.test(read("src/renderer/src/components/Sidebar.vue")))
@@ -300,7 +300,7 @@ async function settingsChecks(check: Check, section: (name: string) => void): Pr
       check("a size past its range is clamped and one that is not a number is the default", got.uiFontSize === 24 && got.codeFontSize === 12, [got.uiFontSize, got.codeFontSize])
       check("a step limit that is not a positive whole number is dropped", !("maxSteps" in got))
       check("a list keeps only its strings, and a non-list is the default", JSON.stringify(got.pinnedTabs) === '["a"]' && JSON.stringify(got.projects) === "[]")
-      check("only a chord written as text is kept, so the rest still bind", JSON.stringify(got.keybinds) === '{"session.new":"Ctrl+K"}', got.keybinds)
+      check("an invalid shortcut map falls back to defaults", JSON.stringify(got.keybinds) === "{}", got.keybinds)
       check("a map that is not a map is the default", JSON.stringify(got.projectNames) === "{}")
       // The default names no model since P9-4 (the picker reads "choose a model").
       check("a model that is not a model is the default, an optional one is dropped", JSON.stringify(got.model) === '{"provider":"","model":""}' && !("titleModel" in got), got.model)

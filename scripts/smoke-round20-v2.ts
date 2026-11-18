@@ -203,7 +203,8 @@ export async function roundTwentyV2Checks(check: Check, section: (name: string) 
 
     const shell = code(await read("src/renderer/src/App.vue"))
     check("the app mounts the header by ref and no longer listens for a rename event", /<SessionHeader\s+ref="sessionHeader"/.test(shell) && !/<SessionHeader[^>]*@rename=/.test(shell))
-    check("the rename command and its Ctrl+Alt+R chord edit the header", /id: "session\.rename",[\s\S]{0,200}run: \(\) => renameInHeader\(\)/.test(shell) && /letter === "r"\) \{[\s\S]{0,200}renameInHeader\(\)/.test(shell))
+    check("the rename command and its Ctrl+Alt+R default edit the header",
+      /id: "session\.rename",[\s\S]{0,200}hint: "Ctrl\+Alt\+R",[\s\S]{0,200}run: \(\) => renameInHeader\(\)/.test(shell))
     check("a side-column row's 重命名 opens MiMo's dialog for that row without opening it", /if \(key === "session\.rename" && !header\) \{\s*beginRename\(target\)/.test(shell))
     check("a row's double-click still opens the same dialog, as MiMo's does", /function renameFromSide\(sessionID: string\) \{\s*beginRename\(sessionID\)/.test(shell) && /<RenameDialog\s+v-if="renamingSession"/.test(shell))
   }

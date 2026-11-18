@@ -1,3 +1,4 @@
+import { shortcutDispatch } from "../src/shared/chord"
 /**
  * Round 21, lane F4: the home screen, the search overlay, the artifacts
  * centre, toasts and the bell, and the side column's leftovers, against MiMo
@@ -260,7 +261,14 @@ export async function roundTwentyOneLaneFourChecks(check: Check, section: (name:
     check("the capsule's text is MiMo's --color-txt", /\.notice \{[^}]*color: var\(--text-body\)/.test(column.style))
     check("the column is above both previews, which are 210 and 220", /z-index: 230/.test(column.style))
     check("a link sits on a line of its own height", /\.link \{[^}]*line-height: 1;/.test(column.style))
-    check("Alt+T counts whatever else is held down, as MiMo's check does", /if \(!event\.altKey \|\| event\.code !== "KeyT"\) return/.test(column.all))
+    const notices = { id: "notifications.focus", hint: "Alt+T" }
+    const defaultKeys = shortcutDispatch([notices], {})
+    const reboundKeys = shortcutDispatch([notices], { [notices.id]: "Ctrl+Y" })
+    check("Alt+T retains its extra modifiers by default, and rebinding releases them",
+      ["Alt+T", "Ctrl+Alt+T", "Alt+Shift+T", "Alt+Meta+T", "Ctrl+Alt+Shift+T",
+        "Ctrl+Alt+Meta+T", "Alt+Shift+Meta+T", "Ctrl+Alt+Shift+Meta+T"]
+        .every((key) => defaultKeys.get(key) === notices && !reboundKeys.has(key)) &&
+      reboundKeys.get("Ctrl+Y") === notices)
   }
 
   // ------------------------------------------------------------------ R21-F4-8

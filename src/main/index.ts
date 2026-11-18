@@ -30,8 +30,8 @@ import { sweepWriterTemps, writeAtomicSync } from "./atomic-write"
 import { LOGIN_ITEM_FILE, loginItemSupported, parseLoginItem, readLaunchAtLogin, startsHidden, writeLaunchAtLogin, type LoginItemStore } from "./login-item"
 import { USER_VERIFY_FILE, UserVerifySession, checkUserVerifyAvailable, parseUserVerifyPref, renderUserVerifyPref, userVerifySupported, type UserVerifyAvailability, type UserVerifyRunner } from "./user-verify"
 import { BROWSER_ACTS, EDIT_ACTIONS, VIEW_ACTIONS, WINDOW_ACTIONS, actionOf, clipboardText, directoryAsk, panelBounds, titlebarMode } from "./ipc-input"
-import { buildMenu } from "./menu"
-import { readMenuKeys } from "./menu-keys"
+import { buildMenu, requestAppQuit } from "./menu"
+import { readMenuKeys, type MenuKeys } from "./menu-keys"
 import { cancelPendingHide, claimDialog, dialogParent, hideWindow, micDecision, releaseDialog } from "./native-dialogs"
 import { SHOW_FALLBACK_MS } from "./renderer-health"
 import {
@@ -1551,10 +1551,7 @@ app.whenReady().then(async () => {
    * so the recovery handlers do not take the closing windows for a crash; the
    * quit itself still goes through before-quit, which waits for the terminals.
    */
-  ipcMain.on("mcode:quit", () => {
-    beginIntentionalQuit()
-    app.quit()
-  })
+  ipcMain.on("mcode:quit", (_event, fromShortcut: unknown) => requestAppQuit(fromShortcut === true))
 
   ipcMain.on("mcode:view", (event, raw: unknown) => {
     const contents = event.sender
@@ -1962,9 +1959,17 @@ app.whenReady().then(async () => {
   })
 
   /* MiMo's menu follows the shortcuts as bound, and drops them while one is being recorded. */
-  ipcMain.on("mcode:menu-keys", (_event, raw: unknown) => {
+  const windowMenuKeys = new WeakMap<Electron.WebContents, MenuKeys>()
+  app.on("browser-window-focus", (_event, window) => {
+    buildMenu(windowMenuKeys.get(window.webContents) ?? { binds: {}, recording: false })
+  })
+  ipcMain.on("mcode:menu-keys", (event, raw: unknown) => {
     const keys = readMenuKeys(raw)
-    if (keys) buildMenu(keys)
+    if (!keys) return
+    windowMenuKeys.set(event.sender, keys)
+    event.sender.setIgnoreMenuShortcuts(keys.recording)
+    const focused = BrowserWindow.getFocusedWindow()
+    if (!focused || focused.webContents === event.sender) buildMenu(keys)
   })
 
   ipcMain.on("mcode:window", (event, raw: unknown) => {

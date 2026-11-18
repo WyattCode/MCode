@@ -1,3 +1,4 @@
+import { KEYBINDS_VERSION } from "@shared/chord"
 import { APP_ICONS, DEFAULT_APP_ICON } from "@shared/app-icons"
 import { migrateChime } from "@shared/chime"
 import { AGENT_NAMES, EFFORTS, SKILL_PATH_SOURCES, type AppConfig } from "@shared/protocol"
@@ -115,13 +116,15 @@ export function sanitizeConfig(doc: AppConfig, fallback: AppConfig): boolean {
     if (!isObject(record[key])) put(key, base[key])
   }
 
-  // MiMo's shortcut store recovers rather than failing: only a chord written as text is a chord.
   if (record.runningSend !== "queue" && record.runningSend !== "steer") put("runningSend", "queue")
 
   const binds = record.keybinds
-  if (!isObject(binds)) put("keybinds", {})
-  else if (!Object.values(binds).every((chord) => typeof chord === "string")) {
-    put("keybinds", Object.fromEntries(Object.entries(binds).filter(([, chord]) => typeof chord === "string")))
+  const version = record.keybindsVersion
+  if (version !== undefined && version !== KEYBINDS_VERSION) {
+    drop("keybindsVersion")
+    put("keybinds", {})
+  } else if (!isObject(binds) || !Object.values(binds).every((chord) => typeof chord === "string")) {
+    put("keybinds", {})
   }
 
   if (!isModel(record.model)) put("model", base.model)

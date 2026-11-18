@@ -16,10 +16,11 @@ import { pageKeyAction, pageMenuGroups, routeWindowOpen, stepZoom, type PageMenu
  * The chords the reader has bound on the shortcuts page. Only the renderer holds
  * the config document, so it sends them whenever they change.
  */
-let boundChords: ReadonlySet<string> = new Set()
-ipcMain.on("mcode:browser-keys", (_event, chords: unknown) => {
-  const list = Array.isArray(chords) ? chords.filter((chord): chord is string => typeof chord === "string" && chord.length > 0) : []
-  boundChords = new Set(list)
+const windowChords = new WeakMap<WebContents, ReadonlyMap<string, string>>()
+const noChords = new Map<string, string>()
+ipcMain.on("mcode:browser-keys", (event, chords: unknown) => {
+  if (!chords || typeof chords !== "object") return
+  windowChords.set(event.sender, new Map(Object.entries(chords).filter((entry): entry is [string, string] => typeof entry[1] === "string")))
 })
 
 export interface PageHooks {
@@ -112,6 +113,8 @@ export function wirePage(contents: WebContents, hooks: PageHooks): void {
    * handler as if it had been pressed there.
    */
   contents.on("before-input-event", (event, input) => {
+    if (hooks.window.isDestroyed()) return
+    const boundChords = windowChords.get(hooks.window.webContents) ?? noChords
     const action = pageKeyAction(input, boundChords, process.platform)
     if (action.kind === "none") return
     event.preventDefault()
@@ -121,7 +124,6 @@ export function wirePage(contents: WebContents, hooks: PageHooks): void {
       return
     }
     const window = hooks.window
-    if (window.isDestroyed()) return
     window.webContents.focus()
     window.webContents.send("mcode:browser-key", {
       key: input.key,

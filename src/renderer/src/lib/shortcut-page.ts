@@ -1,20 +1,10 @@
-/**
- * MiMo's shortcuts page: one fixed list in the order of its default table,
- * each row a label over a one-line description.
- *
- * A row names the MCode command that does the same job. Rows whose command does
- * not exist in this build are left off rather than drawn as dead rows. A row
- * may list a second command to fall back on, drawn under that command's own
- * title because MiMo's words would not describe it (MiMo's 关闭 closes the
- * window; MCode's Ctrl+W may still close a tab).
- *
- * MiMo's 插件, 自动化 and 移动应用 rows are not here: the plugins page is hidden
- * at the user's request and MCode has neither of the other two.
- */
+import { normalizeChord, shortcutChords } from "@shared/chord"
+import { chordOf, composing, isBindable } from "./keys"
+
 export interface PageRow {
   /** MiMo's id, which names the label and description keys. */
   key: string
-  /** The command that does MiMo's job, then any MCode stand-in. */
+  /** Command IDs in order of preference. */
   commands: readonly string[]
   /** For 转到聊天 N. */
   n?: number
@@ -84,7 +74,7 @@ export interface ShownRow {
   hint?: string
 }
 
-/** The rows the page draws, in MiMo's order, with MiMo's words where the command is MiMo's. */
+/** Lists the reference commands first, then the remaining MCode commands in registry order. */
 export function pageRows(
   commands: readonly PageCommand[],
   translate: (key: string, params?: Record<string, string | number>) => string,
@@ -103,5 +93,41 @@ export function pageRows(
       desc: own && row.desc !== false ? translate(`key.desc.${row.key}`) : "",
     })
   }
+  const listed = new Set(rows.map(({ id }) => id))
+  for (const command of commands) {
+    if (!listed.has(command.id)) rows.push({ ...command, desc: "" })
+  }
   return rows
+}
+
+export function bindingConflict(
+  commands: readonly PageCommand[],
+  binds: Readonly<Record<string, string>>,
+  id: string,
+  chord: string,
+): PageCommand | undefined {
+  const normalized = normalizeChord(chord)
+  return normalized ? commands.find((entry) => entry.id !== id && shortcutChords(entry, binds).includes(normalized)) : undefined
+}
+
+/** A missing chord restores the default. An empty chord explicitly removes the binding. */
+export function changeShortcut(
+  commands: readonly PageCommand[],
+  binds: Readonly<Record<string, string>>,
+  id: string,
+  chord?: string,
+): Record<string, string> | undefined {
+  const next = { ...binds }
+  if (chord === undefined) delete next[id]
+  else next[id] = normalizeChord(chord)
+  const proposed = shortcutChords(commands.find((entry) => entry.id === id) ?? { id }, next)
+  return proposed.some((key) => bindingConflict(commands, next, id, key)) ? undefined : next
+}
+
+export function recordShortcutKey(event: KeyboardEvent, platform: string): { action: "cancel" | "confirm" } | { action: "record"; chord: string } | undefined {
+  if (composing(event)) return
+  const chord = chordOf(event, platform)
+  if (chord === "Escape") return { action: "cancel" }
+  if (chord === "Enter" && !event.repeat) return { action: "confirm" }
+  if (isBindable(chord)) return { action: "record", chord }
 }

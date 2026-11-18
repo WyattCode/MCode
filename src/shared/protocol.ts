@@ -1621,6 +1621,7 @@ export interface AppConfig {
    * default reaches everyone who never touched that one.
    */
   keybinds: Record<string, string>
+  keybindsVersion?: number
   runningSend?: "queue" | "steer"
   /**
    * How many tool steps a turn may take before it has to answer in words.
@@ -2295,7 +2296,7 @@ export type Request =
   | { type: "config.recheckCredentials" }
   /** Stored documents found damaged or unreadable at start-up, each answered once per launch. */
   | { type: "storage.problems" }
-  | { type: "config.set"; patch: Partial<AppConfig> }
+  | { type: "config.set"; patch: Partial<AppConfig>; expectedKeybinds?: Record<string, string> }
   | { type: "provider.list" }
   | { type: "provider.auth"; provider: string; apiKey: string }
   /** Re-reads the provider's model list. OpenAI-compatible providers only. */
@@ -2617,6 +2618,7 @@ export interface ResponseMap {
    * has no secure storage.
    */
   "config.get": {
+    keybindsUnreadable?: boolean
     config: AppConfig
     unreadable?: { problem: string; evidence?: string }
     fromNewerVersion?: boolean
@@ -2846,7 +2848,7 @@ export type ServerEvent =
   | { type: "question.rejected"; sessionID: string; requestID: string }
   | { type: "shell.data"; shellID: string; data: string }
   | { type: "shell.exit"; shellID: string; code: number | null }
-  | { type: "config.updated"; config: AppConfig }
+  | { type: "config.updated"; config: AppConfig; keybindsUnreadable?: boolean }
   | { type: "mcp.status"; servers: McpServerState[] }
   /** skills: a SKILL.md whose frontmatter could not be read, reported once per file. */
   | { type: "skill.problem"; path: string; message: string }

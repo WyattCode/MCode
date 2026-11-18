@@ -1,3 +1,5 @@
+import { boundShortcut, MENU_SHORTCUT_DEFAULTS } from "@shared/chord"
+
 /**
  * The application menu's shortcuts, as MiMo builds them: the four items that
  * are commands (settings, new task, open folder, close) take the chord the
@@ -8,10 +10,14 @@
 
 /** The commands the menu names, by menu item, with their built-in chords. */
 export const MENU_COMMANDS = {
-  settings: { id: "app.settings", chord: "Ctrl+," },
-  newTask: { id: "session.new", chord: "Ctrl+N" },
-  openFolder: { id: "project.open", chord: "Ctrl+O" },
-  close: { id: "window.close", chord: "Ctrl+W" },
+  settings: { id: "app.settings", chord: MENU_SHORTCUT_DEFAULTS["app.settings"] },
+  newTask: { id: "session.new", chord: MENU_SHORTCUT_DEFAULTS["session.new"] },
+  openFolder: { id: "project.open", chord: MENU_SHORTCUT_DEFAULTS["project.open"] },
+  close: { id: "window.close", chord: MENU_SHORTCUT_DEFAULTS["window.close"] },
+  zoomIn: { id: "zoom.in", chord: MENU_SHORTCUT_DEFAULTS["zoom.in"] },
+  zoomOut: { id: "zoom.out", chord: MENU_SHORTCUT_DEFAULTS["zoom.out"] },
+  quit: { id: "app.quit", chord: MENU_SHORTCUT_DEFAULTS["app.quit"] },
+  zoomReset: { id: "zoom.reset", chord: MENU_SHORTCUT_DEFAULTS["zoom.reset"] },
 } as const
 
 export type MenuCommand = keyof typeof MENU_COMMANDS
@@ -30,6 +36,8 @@ const KEYS: Record<string, string> = {
   "←": "Left",
   "→": "Right",
   Enter: "Return",
+  NumpadAdd: "numadd",
+  NumpadSubtract: "numsub",
 }
 
 /**
@@ -57,7 +65,7 @@ export function acceleratorOf(chord: string, platform: string): string | undefin
 export function menuAccelerator(command: MenuCommand, keys: MenuKeys, platform: string): string | undefined {
   if (keys.recording) return undefined
   const { id, chord } = MENU_COMMANDS[command]
-  const bound = Object.hasOwn(keys.binds, id) ? keys.binds[id] : chord
+  const bound = boundShortcut({ id, hint: chord }, keys.binds)
   return acceleratorOf(bound, platform)
 }
 

@@ -75,7 +75,7 @@ export async function roundEighteenShellChecks(check: Check, section: (name: str
     check("R18-U5: the side column no longer quits the app", !side.includes("quitApp"))
     check("R18-U5: side.quitApp has left all 18 tables", (await carrying("side.quitApp")) === 0)
     const preload = await read("src/preload/index.ts")
-    check("R18-U5: quitting stays in the menu bar and the tray", preload.includes('quitApp: (): void => ipcRenderer.send("mcode:quit")') && (await read("src/main/menu.ts")).includes('L("menu.quitApp"'))
+    check("R18-U5: quitting stays in the menu bar and the tray", preload.includes('ipcRenderer.send("mcode:quit", fromShortcut)') && (await read("src/main/menu.ts")).includes('L("menu.quitApp"'))
   }
 
   section("Round 18 (lane U): R18-U11 a webfetch step reads a web page, it does not search")
