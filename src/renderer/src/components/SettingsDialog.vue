@@ -51,6 +51,7 @@ type Section =
   | "keys"
   | "archive"
   | "files"
+  | "memory"
   | "environment"
   | "usage"
   | "updates"
@@ -163,6 +164,27 @@ const configFile = computed(() => paths.value?.files.find((file) => file.name ==
  * done with it from each state.
  */
 const agents = ref<{ path: string; state: AgentsFileState }>()
+const confirmingMemoryReset = ref(false)
+const resettingMemory = ref(false)
+
+async function resetMemory() {
+  if (!confirmingMemoryReset.value || resettingMemory.value) return
+  resettingMemory.value = true
+  try {
+    const result = await app.client?.request({ type: "memory.reset" })
+    if (!result?.reset) {
+      notifyFailure(t("set.memory.failure") + t("error.chain.unknown"))
+      return
+    }
+    confirmingMemoryReset.value = false
+    notify(t("set.memory.success"), { level: "success" })
+  } catch (error) {
+    notifyFailure(t("set.memory.failure") + reasonText(error))
+  } finally {
+    resettingMemory.value = false
+  }
+}
+
 const confirmingAgentsDelete = ref(false)
 const deletingAgents = ref(false)
 
@@ -1137,6 +1159,7 @@ const NAV_LABELS: Record<Section, string> = {
   appearance: "set.appearance",
   composer: "set.composer",
   files: "set.nav.files",
+  memory: "set.nav.memory",
   models: "set.models",
   smart: "set.smart",
   personal: "set.personal",
@@ -1156,6 +1179,7 @@ const NAV_KEYWORDS: Record<Section, string> = {
   appearance: "set.keywords.appearance",
   composer: "set.keywords.composer",
   files: "set.keywords.files",
+  memory: "set.keywords.memory",
   models: "set.keywords.models",
   smart: "set.keywords.smart",
   personal: "set.keywords.personal",
@@ -1940,7 +1964,7 @@ onBeforeUnmount(() => {
           at the default size they are already taller than the dialog.
         -->
         <div ref="navScrollEl" class="nav-scroll u-scrollbar-thin" data-settings-nav-scroll>
-          <div v-show="navShows('general') || navShows('usage') || navShows('appearance') || navShows('composer') || navShows('files') || navShows('models') || navShows('smart') || navShows('personal') || navShows('keys')" class="nav-group">{{ t("set.group.personal") }}</div>
+          <div v-show="navShows('general') || navShows('usage') || navShows('appearance') || navShows('composer') || navShows('files') || navShows('memory') || navShows('models') || navShows('smart') || navShows('personal') || navShows('keys')" class="nav-group">{{ t("set.group.personal") }}</div>
 
           <button v-show="navShows('general')" class="nav-item" :class="{ on: section === 'general' }" @click="section = 'general'">
             <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
@@ -1981,6 +2005,14 @@ onBeforeUnmount(() => {
               <path d="M5.4 2.6h5.4l4.4 4.4v9.8a.6.6 0 0 1-.6.6H5.4a.6.6 0 0 1-.6-.6V3.2a.6.6 0 0 1 .6-.6ZM11 4.1v3.2h3.2L11 4.1Z" />
             </svg>
             <span>{{ t("set.nav.files") }}</span>
+          </button>
+
+          <button v-show="navShows('memory')" class="nav-item" :class="{ on: section === 'memory' }" @click="section = 'memory'">
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <ellipse cx="10" cy="5" rx="6" ry="2.5" />
+              <path d="M4 7.5c1.4 1 3.5 1.5 6 1.5s4.6-.5 6-1.5V10c0 1.4-2.7 2.5-6 2.5S4 11.4 4 10Zm0 5c1.4 1 3.5 1.5 6 1.5s4.6-.5 6-1.5V15c0 1.4-2.7 2.5-6 2.5S4 16.4 4 15Z" />
+            </svg>
+            <span>{{ t("set.nav.memory") }}</span>
           </button>
 
           <button v-show="navShows('models')" class="nav-item" :class="{ on: section === 'models' }" @click="section = 'models'">
@@ -2783,6 +2815,31 @@ onBeforeUnmount(() => {
               :confirm-label="t('set.agents.delete')"
               @confirm="removeAgents"
               @close="confirmingAgentsDelete = false"
+            />
+          </Teleport>
+        </template>
+
+        <template v-else-if="section === 'memory'">
+          <h2>{{ t("set.nav.memory") }}</h2>
+          <div class="card">
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.memory.reset") }}</div>
+                <div class="line-sub">{{ t("set.memory.description") }}</div>
+              </div>
+              <button type="button" class="ctl-btn" :disabled="resettingMemory" @click="confirmingMemoryReset = true">
+                {{ t("set.memory.button") }}
+              </button>
+            </div>
+          </div>
+          <Teleport to="body">
+            <ConfirmDialog
+              v-if="confirmingMemoryReset"
+              :title="t('set.memory.title')"
+              :body="t('set.memory.body')"
+              :confirm-label="t('set.memory.button')"
+              @confirm="resetMemory"
+              @close="confirmingMemoryReset = false"
             />
           </Teleport>
         </template>
@@ -3743,11 +3800,13 @@ onBeforeUnmount(() => {
                 <label class="line-title" for="smart-threshold">{{ t("set.smartThreshold") }}</label>
                 <div id="smart-threshold-help" class="line-sub">{{ t("set.smartThresholdSub") }}</div>
               </div>
-              <input id="smart-threshold" type="range" min="0" max="100" step="1"
+              <input id="smart-threshold" type="range" min="0" max="1" step="0.01"
                 :value="smartThreshold" aria-describedby="smart-threshold-help" @input="previewSmartThreshold" @change="saveSmartThreshold" />
-              <output for="smart-threshold">{{ smartThreshold }}</output>
+              <output for="smart-threshold">{{ smartThreshold.toFixed(2) }}</output>
             </div>
           </div>
+          <p class="note">{{ t("set.smartStandardRule") }}</p>
+          <p class="note">{{ t("set.smartKeepTier") }}</p>
         </template>
 
         <ModelsPage v-else />

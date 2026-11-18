@@ -75,7 +75,17 @@ export const CREDENTIALS_SEALED_MIGRATION = "credentials-sealed-r12"
  *
  * Raise this only when a change would be misread by a build that predates it.
  */
-export const CONFIG_SCHEMA_VERSION = 1
+export const CONFIG_SCHEMA_VERSION = 2
+
+// Version 1 used whole complexity points, including the ambiguous endpoints 0 and 1.
+function migrateSmartThreshold(stored?: Partial<AppConfig>): boolean {
+  if (!stored || (stored.schemaVersion ?? 0) >= 2) return false
+  const legacy = stored.smartThreshold
+  if (typeof legacy !== "number" || !Number.isFinite(legacy)) return false
+  stored.smartThreshold = normalizeSmartThreshold(legacy / 100)
+  stored.schemaVersion = 2
+  return true
+}
 
 export type { ModelEntry }
 
@@ -785,6 +795,7 @@ export class Config {
     this.existed = stored !== undefined || read.corrupt !== undefined || read.unreadable !== undefined
     // Read before anything is merged: what follows must not write over a newer document.
     this.fromNewerVersion = typeof stored?.schemaVersion === "number" && stored.schemaVersion > CONFIG_SCHEMA_VERSION
+    const thresholdMigrated = migrateSmartThreshold(stored)
     this.current = { ...defaults(), ...stored, permissions: storedPermissions(stored), permissionRules: storedRules(stored) }
     const retired = dropRetired(this.current) || forgetDisabledCustom(this.current)
     // Before the migrations, which read these values as the types they claim to be; in memory only.
@@ -811,7 +822,7 @@ export class Config {
     if (read.corrupt || read.unreadable) this.current.allowFullAccess = stored?.allowFullAccess === true
     const migrated = this.migrate(stored)
     this.current.autoApprove = allowed(this.current.permissions)
-    if ((migrated || retired) && !this.fromNewerVersion) await this.persist()
+    if ((migrated || retired || thresholdMigrated) && !this.fromNewerVersion) await this.persist()
     this.discovered = await this.readDiscovered()
     await this.loadCredentials()
   }
@@ -1170,6 +1181,7 @@ export class Config {
     const before = this.current
     // As load reads it: a later build's document is taken in but never written back over.
     this.fromNewerVersion = typeof stored.schemaVersion === "number" && stored.schemaVersion > CONFIG_SCHEMA_VERSION
+    migrateSmartThreshold(stored)
     let next: AppConfig = { ...defaults(), ...stored, permissions: storedPermissions(stored), permissionRules: storedRules(stored) }
     dropRetired(next)
     const held = sanitizeHeld(next, stored)

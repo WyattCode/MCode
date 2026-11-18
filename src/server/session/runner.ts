@@ -28,7 +28,7 @@ import { Identifier } from "@shared/id"
 import { effortToSend } from "@shared/effort-menu"
 import { NO_TESTING_NOTE, NO_TESTING_REFUSAL, forbidsTesting } from "@shared/no-testing"
 import { availableModels, fallbackModel, modelAvailable } from "@shared/model-fallback"
-import { scoreComplexity, smartEnabled, tierForScore, type SmartRoute } from "@shared/smart"
+import { requiresStandardTier, scoreComplexity, smartEnabled, tierForScore, type SmartRoute } from "@shared/smart"
 import type { Bus } from "../bus"
 import type { Config } from "../config"
 import type { Permissions } from "../permission"
@@ -2029,32 +2029,45 @@ export class SessionRunner {
     next.watching = this.snapshots.begin(directory)
   }
 
-  private routeSmart(
+  private async routeSmart(
     session: SessionInfo,
     input: Pick<PromptInput, "text" | "attachments" | "annotations" | "fileNotices">,
     history: readonly Message[],
-    retry = false,
-  ): SmartRoute | undefined {
+    currentRoute?: SmartRoute,
+  ): Promise<SmartRoute | undefined> {
     const config = this.config.get()
     if (!smartEnabled(config, session) || session.parentID) return
-    let tools = 0
-    let files = (input.attachments?.length ?? 0) + (input.annotations?.length ?? 0) + (input.fileNotices?.length ?? 0)
-    for (let i = history.length - 1; i >= 0; i--) {
-      const message = history[i]
-      if (message.role === "user") {
-        files += message.attachments.length
-        break
-      }
-      tools += message.parts.filter((part) => part.type === "tool").length
-      retry ||= message.finish === "error" || message.finish === "aborted"
+    // Profiles from per-turn routing only have the tier in the transcript.
+    let tier = session.smartRoute ?? currentRoute?.tier
+    if (!tier) {
+      const previous = history.findLast((message) => message.role === "user" && message.route)
+      if (previous?.role === "user") tier = previous.route?.tier
     }
-    const score = scoreComplexity(input.text, { tools, files, retry })
-    const tier = tierForScore(score, config.smartThreshold)
+    let score: number | undefined
+    if (!tier && requiresStandardTier(input.text)) tier = "main"
+    if (!tier) {
+      let tools = 0
+      let files = (input.attachments?.length ?? 0) + (input.annotations?.length ?? 0) + (input.fileNotices?.length ?? 0)
+      let retry = false
+      for (let i = history.length - 1; i >= 0; i--) {
+        const message = history[i]
+        if (message.role === "user") {
+          files += message.attachments.length
+          break
+        }
+        tools += message.parts.filter((part) => part.type === "tool").length
+        retry ||= message.finish === "error" || message.finish === "aborted"
+      }
+      score = scoreComplexity(input.text, { tools, files, retry })
+      tier = tierForScore(score, config.smartThreshold)
+    }
     const providers = this.config.providers()
     const candidates = tier === "fast" ? [config.smartFast, config.smartMain] : [config.smartMain]
     const model = [...candidates, session.model, config.model].find((candidate) => modelAvailable(providers, candidate))
       ?? fallbackModel(availableModels(providers))
-    return model ? { tier, score, model } : undefined
+    if (!model) return
+    if (!session.smartRoute) await this.store.update(session.id, { smartRoute: tier })
+    return { tier, ...(score === undefined ? {} : { score }), model }
   }
 
   /** Records what a request outside the turns spent, priced as a turn on that model would be. */
@@ -2104,7 +2117,7 @@ export class SessionRunner {
     const smart = smartEnabled(this.config.get(), session) && !session.parentID
       && this.withCommandTurn(session, { model: input.model }).model === session.model
     const recent = smart ? await this.store.messages(session.id) : undefined
-    const route = recent ? this.routeSmart(session, input, recent) : undefined
+    const route = recent ? await this.routeSmart(session, input, recent) : undefined
 
     // Keep the stored manual choice separate from this turn's effective model.
     if (!route) session = await this.withAvailableModel(session)
@@ -2554,7 +2567,7 @@ export class SessionRunner {
         const at = history.findIndex((message) => stranded.includes(message.id))
         const user = history[at]
         if (user?.role === "user") {
-          route = this.routeSmart(session, user, history.slice(0, at))
+          route = await this.routeSmart(session, user, history.slice(0, at), user.route)
           if (route) await this.store.saveMessage({ ...user, route })
         }
         if (!route) session = await this.withAvailableModel(session)
@@ -2599,9 +2612,13 @@ export class SessionRunner {
         const user = history[at]
         if (user?.role === "user") {
           const previous = user.route
-          route = how === "restart" && previous && modelAvailable(this.config.providers(), previous.model)
-            ? previous
-            : this.routeSmart(session, user, history.slice(0, at), true)
+          if (how === "restart" && previous && (!session.smartRoute || previous.tier === session.smartRoute)
+            && modelAvailable(this.config.providers(), previous.model)) {
+            if (!session.smartRoute) await this.store.update(session.id, { smartRoute: previous.tier })
+            route = previous
+          } else {
+            route = await this.routeSmart(session, user, history.slice(0, at), previous)
+          }
           if (route && previous !== route) await this.store.saveMessage({ ...user, route })
         }
         if (!route) session = await this.withAvailableModel(session)

@@ -216,7 +216,7 @@ export async function roundTwentyOneLaneFTwoChecks(check: Check, section: (name:
   {
     check("a page title takes --color-txt in dark", /:root\[data-theme="dark"\] h2 \{\s*color: #f4f4f5;/.test(style) && /:root\[data-theme="dark"\] h2 \{\s*color: #f4f4f5;/.test(modelsStyle))
     const glyphs = template.match(/<svg class="nav-ico"[^>]*>/g) ?? []
-    check("all fifteen settings pages have filled navigation glyphs", glyphs.length === 15 && glyphs.every((tag) => /fill="currentColor"/.test(tag)), String(glyphs.length))
+    check("all sixteen settings pages have filled navigation glyphs", glyphs.length === 16 && glyphs.every((tag) => /fill="currentColor"/.test(tag)), String(glyphs.length))
     check("none of them is a wire drawing any more", !/class="nav-ico"[^>]*fill="none"/.test(template))
     check("models.intro says where a key is kept, as MiMo's does", /"set\.models\.intro": "自定义模型使用你自己的密钥：填入各家的 API Key 即可在聊天里选用，仅保存到本地引擎配置"/.test(i18n))
     check("the remove confirmation is MiMo's sentence", /"set\.models\.removeProviderBody": "将删除「\{name\}」及其全部模型，且不可恢复。"/.test(i18n))

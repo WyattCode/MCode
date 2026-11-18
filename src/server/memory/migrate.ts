@@ -1,7 +1,7 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import { projectKey } from "../history/extract"
-import { folderMemoryID } from "./paths"
+import { folderMemoryID, withMemoryLock } from "./paths"
 import { projectMemoryID } from "./project-id"
 
 /**
@@ -67,12 +67,18 @@ async function exists(file: string): Promise<boolean> {
   )
 }
 
-export async function migrateMemoryLayout(input: {
+interface MemoryMigrationInput {
   dataDirectory: string
   directories: readonly string[]
   now?: Date
   home?: string
-}): Promise<MemoryMigration> {
+}
+
+export function migrateMemoryLayout(input: MemoryMigrationInput): Promise<MemoryMigration> {
+  return withMemoryLock(path.join(input.dataDirectory, "memory"), () => migrateProjects(input))
+}
+
+async function migrateProjects(input: MemoryMigrationInput): Promise<MemoryMigration> {
   const projects = path.join(input.dataDirectory, "memory", "projects")
   const present = new Set(
     (await fs.readdir(projects, { withFileTypes: true }).catch(() => []))

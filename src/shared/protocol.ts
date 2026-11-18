@@ -89,7 +89,7 @@ export interface SessionInfo {
   slug?: string
   /** False pins the manual model. Legacy true and absent values follow global Smart. */
   smart?: boolean
-  /** Legacy tier stored by first-message routing. */
+  /** Smart tier assigned to this conversation. */
   smartRoute?: "fast" | "main"
   /**
    * The reasoning effort this conversation runs at: its own, like its model.
@@ -1607,7 +1607,7 @@ export interface AppConfig {
   smartFast?: ModelRef
   /** Smart's main model, for everything else; empty follows `model`. */
   smartMain?: ModelRef
-  /** Complexity cutoff for the standard tier, 0–100. */
+  /** Minimum confidence for the lightweight tier, 0–1. */
   smartThreshold?: number
   /** Whether the in-app browser is offered at all; absent is on. */
   browserEnabled?: boolean
@@ -2497,6 +2497,7 @@ export type Request =
   | { type: "agents.ensure" }
   | { type: "agents.setEnabled"; enabled: boolean }
   | { type: "agents.delete" }
+  | { type: "memory.reset" }
 
 export type RequestType = Request["type"]
 export type RequestOf<T extends RequestType> = Extract<Request, { type: T }>
@@ -2756,6 +2757,7 @@ export interface ResponseMap {
   "agents.ensure": { path: string; state: AgentsFileState }
   "agents.setEnabled": { path: string; state: AgentsFileState }
   "agents.delete": { path: string; state: AgentsFileState }
+  "memory.reset": { reset: true }
 }
 
 // ---------------------------------------------------------------------------
