@@ -28,7 +28,7 @@ import { Identifier } from "@shared/id"
 import { effortToSend } from "@shared/effort-menu"
 import { NO_TESTING_NOTE, NO_TESTING_REFUSAL, forbidsTesting } from "@shared/no-testing"
 import { availableModels, fallbackModel, modelAvailable } from "@shared/model-fallback"
-import { readTask, smartRoute, type TaskReading } from "@shared/smart"
+import { scoreComplexity, smartEnabled, tierForScore, type SmartRoute } from "@shared/smart"
 import type { Bus } from "../bus"
 import type { Config } from "../config"
 import type { Permissions } from "../permission"
@@ -217,31 +217,6 @@ type TurnSession = Omit<SessionInfo, "agent"> & { agent: TurnAgent }
 function keepTurn(next: SessionInfo, turn: TurnSession): TurnSession {
   return { ...next, agent: turn.agent, model: turn.model }
 }
-
-/**
- * What the summary is for: the next turn reads it instead of the conversation,
- * so it has to carry decisions and state rather than read as a recap.
- */
-/*
- * Smart's one question about a conversation's first message, in this app's own
- * words: what kind of task it is and how hard, as JSON, so the route can be
- * decided by a rule rather than by the model's say-so.
- */
-const SMART_SYSTEM = [
-  "You sort one request for a coding assistant before any work starts.",
-  'Answer with JSON and nothing else: {"scene": "chat" | "writing" | "software" | "research" | "other", "difficulty": "easy" | "hard", "confidence": a number from 0 to 1}.',
-  "software means reading, writing, running or fixing code; research means finding, comparing or checking information.",
-  "easy means a short answer that needs no investigation; anything else is hard.",
-].join("\n")
-
-/** Room for the JSON, and for a model that reasons before giving it. */
-const SMART_OUTPUT_TOKENS = 1024
-
-/** How long the sorting may take before the main model is used anyway. */
-const SMART_TIMEOUT_MS = 20_000
-
-/** The message is quoted up to this many characters; the start says what it is. */
-const SMART_REQUEST_CHARS = 4000
 
 /*
  * The instruction for reviewing one risky command on the user's behalf. Its
@@ -526,7 +501,7 @@ export class SessionRunner {
         create: async ({ directory, title }) => {
           const settings = config.get()
           await config.adoptProjects([directory], { byRepository: true })
-          return store.create({ directory, title, model: settings.model, agent: settings.agent, goalMode: settings.goalMode, ...(settings.smart ? { smart: true } : {}) })
+          return store.create({ directory, title, model: settings.model, agent: settings.agent, goalMode: settings.goalMode })
         },
       },
       CHAT_WAIT_MS,
@@ -2052,70 +2027,32 @@ export class SessionRunner {
     next.watching = this.snapshots.begin(directory)
   }
 
-  /** The setup a claimed session goes through before its turn is launched. */
-  /**
-   * Smart's one decision: which of its two models this conversation runs on.
-   *
-   * Asked of the main model in a short request with no tools. Anything that
-   * does not come back as a clear reading - a failure, a timeout, prose - lands
-   * on the main model. The answer is written into the session, so every later
-   * turn simply runs on `model` like any other conversation.
-   */
-  private async routeSmart(session: SessionInfo, text: string): Promise<SessionInfo> {
+  private routeSmart(
+    session: SessionInfo,
+    input: Pick<PromptInput, "text" | "attachments" | "annotations" | "fileNotices">,
+    history: readonly Message[],
+    retry = false,
+  ): SmartRoute | undefined {
     const config = this.config.get()
-    const main = config.smartMain?.provider ? config.smartMain : config.model
-    const fast = config.smartFast?.provider ? config.smartFast : main
-    let reading: TaskReading | undefined
-    const definition = this.config.definition(main.provider)
-    if (definition && this.config.usable(main.provider)) {
-      const adapter: ProviderAdapter = adapterFor(definition.kind)
-      const apiKey = this.config.apiKey(definition.id) ?? ""
-      const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
-      const controller = new AbortController()
-      // Stop reaches Smart's routing question too; it is asked before the turn claims the session.
-      const release = this.hold(session.id, controller)
-      const timer = setTimeout(() => controller.abort(), SMART_TIMEOUT_MS)
-      let answer = ""
-      try {
-        const outcome = await adapter.stream(
-          {
-            apiKey: tokens?.access ?? apiKey,
-            model: main,
-            system: SMART_SYSTEM,
-            history: [
-              {
-                id: `${session.id}:smart-route`,
-                sessionID: session.id,
-                role: "user",
-                text: text.slice(0, SMART_REQUEST_CHARS),
-                attachments: [],
-                time: { created: Date.now() },
-              },
-            ],
-            tools: [],
-            // Out of band: routing one message is not work a reasoning budget should be spent on.
-            ...smallRequest(main.provider, main.model),
-            signal: controller.signal,
-            baseURL: definition.baseURL,
-            headers: definition.headers,
-            accountId: tokens?.accountId,
-            maxOutput: SMART_OUTPUT_TOKENS,
-          },
-          (event) => {
-            if (event.type === "text.delta") answer += event.text
-          },
-        )
-        this.noteBackground(session.id, main, outcome.usage, "smart")
-        reading = readTask(answer)
-      } catch {
-        reading = undefined
-      } finally {
-        clearTimeout(timer)
-        release()
+    if (!smartEnabled(config, session) || session.parentID) return
+    let tools = 0
+    let files = (input.attachments?.length ?? 0) + (input.annotations?.length ?? 0) + (input.fileNotices?.length ?? 0)
+    for (let i = history.length - 1; i >= 0; i--) {
+      const message = history[i]
+      if (message.role === "user") {
+        files += message.attachments.length
+        break
       }
+      tools += message.parts.filter((part) => part.type === "tool").length
+      retry ||= message.finish === "error" || message.finish === "aborted"
     }
-    const route = smartRoute(reading)
-    return this.store.update(session.id, { model: route === "fast" ? fast : main, smartRoute: route })
+    const score = scoreComplexity(input.text, { tools, files, retry })
+    const tier = tierForScore(score, config.smartThreshold)
+    const providers = this.config.providers()
+    const candidates = tier === "fast" ? [config.smartFast, config.smartMain] : [config.smartMain]
+    const model = [...candidates, session.model, config.model].find((candidate) => modelAvailable(providers, candidate))
+      ?? fallbackModel(availableModels(providers))
+    return model ? { tier, score, model } : undefined
   }
 
   /** Records what a request outside the turns spent, priced as a turn on that model would be. */
@@ -2162,11 +2099,13 @@ export class SessionRunner {
 
     await this.settleInterrupted(session.id)
 
-    // Smart picks its model from the first message, before anything is checked against it.
-    if (session.smart && !session.smartRoute && input.text.trim()) session = await this.routeSmart(session, input.text)
+    const smart = smartEnabled(this.config.get(), session) && !session.parentID
+      && this.withCommandTurn(session, { model: input.model }).model === session.model
+    const recent = smart ? await this.store.messages(session.id) : undefined
+    const route = recent ? this.routeSmart(session, input, recent) : undefined
 
-    // A conversation whose model has gone since it last ran moves to one that is there.
-    session = await this.withAvailableModel(session)
+    // Keep the stored manual choice separate from this turn's effective model.
+    if (!route) session = await this.withAvailableModel(session)
     // The level is the conversation's own: one stored before that took the app's at its next turn, and keeps it from here.
     if (!session.effort) session = await this.store.setEffort(session.id, this.config.get().effort)
 
@@ -2183,7 +2122,7 @@ export class SessionRunner {
 
     // A subscription is authorised by stored tokens, so it has no API key to
     // check here - the bearer is resolved (and refreshed) at turn time.
-    const apiKey = this.config.apiKey(session.model.provider) ?? ""
+    const apiKey = this.config.apiKey((route?.model ?? session.model).provider) ?? ""
 
     /*
       * 追求目标: the goal is written before the message that set it, so the
@@ -2195,7 +2134,7 @@ export class SessionRunner {
     if (goal) session = await this.store.update(session.id, { goal: { condition: goal, startedAt: Date.now(), attempts: 0 } })
 
     // MiMo's runtime context rides on what the user sends; a first message also gets the app note and the directory.
-    const stored = await this.store.messages(session.id)
+    const stored = recent ?? await this.store.messages(session.id)
     const first = stored.length === 0
     // MiMo attaches by path: what each such file is gets settled now, its contents are read per request.
     const attachments = await settleAttachments(input.attachments, session.directory)
@@ -2218,6 +2157,7 @@ export class SessionRunner {
       role: "user",
       text: input.text,
       attachments,
+      ...(route ? { route } : {}),
       ...(input.annotations?.length ? { annotations: input.annotations } : {}),
       ...(input.fileNotices?.length ? { fileNotices: input.fileNotices } : {}),
       // session chat
@@ -2243,10 +2183,10 @@ export class SessionRunner {
       const words = input.text.includes("/") ? withoutSkillPrefix(input.text, new Set((await this.skillsFor(session.directory)).map((skill) => skill.name))) : input.text
       const fallback = fallbackTitle(words, input.attachments ?? [])
       session = await this.store.update(session.id, { title: fallback, titleSource: "fallback" })
-      if (/\p{L}/u.test(words)) void this.generateTitle(session.id, words).catch(() => undefined)
+      if (/\p{L}/u.test(words)) void this.generateTitle(session.id, words, route?.model).catch(() => undefined)
     }
 
-    this.launch(session.id, apiKey, controller, false, lead)
+    this.launch(session.id, apiKey, controller, false, lead, route)
     return user.id
   }
 
@@ -2326,14 +2266,15 @@ export class SessionRunner {
    * fallback where it is. `MCODE_GENERATE_TITLES=0` turns it off for checks
    * whose scripted providers would otherwise have a reply taken by it.
    */
-  private async generateTitle(sessionID: string, text: string): Promise<void> {
+  private async generateTitle(sessionID: string, text: string, routedModel?: ModelRef): Promise<void> {
     if (process.env.MCODE_GENERATE_TITLES === "0") return
     const session = await this.store.get(sessionID)
     if (!session || session.titleSource !== "fallback") return
     /* MiMo's 标题生成模型: the model named for titles when this install can still reach it, else the conversation's own. */
+    const own = routedModel ?? session.model
     const model = titleModelRef(
       this.config.get().titleModel,
-      session.model,
+      own,
       (ref) => Boolean(this.config.definition(ref.provider)) && this.config.usable(ref.provider) && Boolean(this.config.modelEntry(ref)),
     )
     const controller = new AbortController()
@@ -2348,7 +2289,6 @@ export class SessionRunner {
     try {
       title = await this.titleFrom(session, model, text, controller.signal)
       // MiMo's fallback: a title model that failed, or answered with nothing usable, is followed by one try on the conversation's own.
-      const own = session.model
       if (!title && !controller.signal.aborted && (model.provider !== own.provider || model.model !== own.model)) {
         title = await this.titleFrom(session, own, text, controller.signal)
       }
@@ -2605,7 +2545,18 @@ export class SessionRunner {
     const controller = new AbortController()
     this.running.set(sessionID, controller)
     try {
-      const session = await this.store.require(sessionID)
+      let session = await this.store.require(sessionID)
+      let route: SmartRoute | undefined
+      if (smartEnabled(this.config.get(), session) && !session.parentID) {
+        const history = await this.store.messages(sessionID)
+        const at = history.findIndex((message) => stranded.includes(message.id))
+        const user = history[at]
+        if (user?.role === "user") {
+          route = this.routeSmart(session, user, history.slice(0, at))
+          if (route) await this.store.saveMessage({ ...user, route })
+        }
+        if (!route) session = await this.withAvailableModel(session)
+      }
       this.pending.delete(sessionID)
       // The messages this turn exists to answer, carried over from the turn
       // that was ending as they arrived - a rollback aimed at one of them has
@@ -2613,7 +2564,7 @@ export class SessionRunner {
       this.turn(sessionID).messages = stranded
       this.turn(sessionID).directory = session.directory
       this.turn(sessionID).watching = this.snapshots.begin(session.directory)
-      this.launch(sessionID, this.config.apiKey(session.model.provider) ?? "", controller)
+      this.launch(sessionID, this.config.apiKey((route?.model ?? session.model).provider) ?? "", controller, false, undefined, route)
     } catch (failure) {
       this.running.delete(sessionID)
       this.bus.publish({ type: "session.error", sessionID, error: describe(failure) })
@@ -2634,20 +2585,35 @@ export class SessionRunner {
     const controller = new AbortController()
     this.running.set(sessionID, controller)
     try {
-      const session = await this.store.require(sessionID)
+      let session = await this.store.require(sessionID)
       if (session.revert) throw new Error("Resume is unavailable while part of the conversation is rolled back")
-      const messageID = interruptedTurn(await this.store.messages(sessionID))
+      const history = await this.store.messages(sessionID)
+      const messageID = interruptedTurn(history)
       if (!messageID) throw new Error("There is no interrupted turn to resume")
       await this.settleInterrupted(sessionID)
-      if (!this.config.usable(session.model.provider)) {
-        throw new Error(`No API key configured for ${session.model.provider}. Add one in Settings.`)
+      let route: SmartRoute | undefined
+      if (smartEnabled(this.config.get(), session) && !session.parentID) {
+        const at = history.findIndex((message) => message.id === messageID)
+        const user = history[at]
+        if (user?.role === "user") {
+          const previous = user.route
+          route = how === "restart" && previous && modelAvailable(this.config.providers(), previous.model)
+            ? previous
+            : this.routeSmart(session, user, history.slice(0, at), true)
+          if (route && previous !== route) await this.store.saveMessage({ ...user, route })
+        }
+        if (!route) session = await this.withAvailableModel(session)
+      }
+      const provider = (route?.model ?? session.model).provider
+      if (!this.config.usable(provider)) {
+        throw new Error(`No API key configured for ${provider}. Add one in Settings.`)
       }
       this.pending.delete(sessionID)
       // The turn answers the same question the broken one did, so a rollback to it reaches both.
       this.turn(sessionID).messages = [messageID]
       this.turn(sessionID).directory = session.directory
       this.turn(sessionID).watching = this.snapshots.begin(session.directory)
-      this.launch(sessionID, this.config.apiKey(session.model.provider) ?? "", controller, how)
+      this.launch(sessionID, this.config.apiKey(provider) ?? "", controller, how, undefined, route)
       return messageID
     } catch (failure) {
       this.running.delete(sessionID)
@@ -2758,13 +2724,13 @@ export class SessionRunner {
   }
 
   /** Runs a claimed session's turn and releases it afterwards. */
-  private launch(sessionID: string, apiKey: string, controller: AbortController, resumed: Resumed = false, lead?: Lead): void {
+  private launch(sessionID: string, apiKey: string, controller: AbortController, resumed: Resumed = false, lead?: Lead, route?: SmartRoute): void {
     this.steering.set(sessionID, { waiting: [], written: Promise.resolve() })
 
     // Deliberately not awaited: the caller gets the message id immediately and
     // follows the turn through events.
     let failed = false
-    const completion = this.run(sessionID, apiKey, controller, resumed, lead)
+    const completion = this.run(sessionID, apiKey, controller, resumed, lead, route)
       .catch((err) => {
         failed = true
         // A failure recorded on the message is already in front of the user.
@@ -3020,7 +2986,7 @@ export class SessionRunner {
     }
   }
 
-  private async prepareTurn(sessionID: string, controller: AbortController) {
+  private async prepareTurn(sessionID: string, controller: AbortController, route?: SmartRoute) {
     /*
      * OpenCode v2's write-ahead claim, before anything else the turn does: a
      * quit or a crash from here on leaves it behind, and the next start
@@ -3034,7 +3000,7 @@ export class SessionRunner {
     // plan: the conversation's own mode as the turn begins; approving a plan changes it mid-turn.
     const planning = own.agent === "plan"
     // A slash command's own agent and model hold for this turn; the conversation keeps its own.
-    let session: TurnSession = this.withCommandTurn(own, this.turnOverrides.get(sessionID))
+    let session: TurnSession = this.withCommandTurn(route ? { ...own, model: route.model } : own, this.turnOverrides.get(sessionID))
     this.turnOverrides.delete(sessionID)
     // plan: what this step is judged by; a plan approved during the turn moves it to build from the next step.
     this.turnAgents.set(sessionID, session.agent)
@@ -3056,8 +3022,8 @@ export class SessionRunner {
     return { planning, session, definition, adapter, tokens, config, system, systemTail }
   }
 
-  private async run(sessionID: string, apiKey: string, controller: AbortController, resumed: Resumed = false, lead?: Lead): Promise<void> {
-    const prepared = await this.prepareTurn(sessionID, controller)
+  private async run(sessionID: string, apiKey: string, controller: AbortController, resumed: Resumed = false, lead?: Lead, route?: SmartRoute): Promise<void> {
+    const prepared = await this.prepareTurn(sessionID, controller, route)
     const { planning, definition, adapter, tokens, config } = prepared
     let { session, system, systemTail } = prepared
     // subagents: a subagent asked for structured output returns it through its tool.
@@ -3478,7 +3444,7 @@ export class SessionRunner {
       if (developer && session.compacted) session = keepTurn(await this.store.update(sessionID, { compacted: { ...session.compacted, rebuildDelivered: true } }), session)
 
       // MiMo's cost: cache reads and writes at their own prices, reasoning at the output price.
-      const usage = { ...outcome.usage, cost: costOf(outcome.usage, this.config.modelEntry(session.model)) }
+      const usage = { ...outcome.usage, cost: costOf(outcome.usage, this.config.modelEntry(session.model)), ...(route ? { route } : {}) }
       /*
        * A continued reply carries both requests' figures. The words it wrote
        * add up, and so does what they cost; what was sent does not - the second
@@ -3494,6 +3460,7 @@ export class SessionRunner {
             output: before.output + usage.output,
             reasoning: before.reasoning + usage.reasoning,
             cost: before.cost + usage.cost,
+            ...(route ? { route } : {}),
           }
         : usage
       await this.store.addUsage(sessionID, usage)

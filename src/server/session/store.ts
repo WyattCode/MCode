@@ -288,7 +288,7 @@ export class SessionStore {
       // plan: fixed now, so every turn of this conversation finds the same plan file.
       slug: newSlug(),
       ...(input.goalMode ? { goalMode: true } : {}),
-      ...(input.smart ? { smart: true } : {}),
+      ...(input.smart !== undefined ? { smart: input.smart } : {}),
       ...(input.effort ? { effort: input.effort } : {}),
       ...(input.scratch ? { scratch: true } : {}),
       ...(input.group !== undefined ? { group: input.group } : {}),
@@ -804,6 +804,7 @@ export class SessionStore {
     const session = await this.create({
       directory: origin.directory,
       model: origin.model,
+      smart: origin.smart,
       agent: origin.agent,
       // Its level too: a branch is the same conversation going another way, not a new one at the app's.
       ...(origin.effort ? { effort: origin.effort } : {}),

@@ -557,21 +557,6 @@ export async function roundNineProviderChecks(check: Check, section: (name: stri
       else process.env.TZ = zone
     }
 
-    /* A background request's spend is recorded against its conversation. */
-    const e = await engine({})
-    try {
-      await e.config.set({ model: e.model })
-      const session = await e.store.create({ directory: e.project, model: e.model, smart: true })
-      e.replies.push(say('{"scene": "chat", "difficulty": "easy", "confidence": 0.9}'))
-      e.replies.push(say("ok"))
-      await e.runner.prompt({ sessionID: session.id, text: "hello" })
-      await e.idle(session.id)
-      const noted = await e.runner.backgroundUsage.list()
-      check("Smart's routing request is recorded as background spend", noted.some((entry) => entry.kind === "smart" && entry.sessionID === session.id && entry.usage.input === 10), noted)
-    } finally {
-      await e.close()
-    }
-
     const data = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r9p-usage-"))
     const backend = await startBackend(data)
     try {

@@ -113,7 +113,7 @@ export const GROUP_C: Row[] = [
   ["set.closedSub", "关闭的项目会从侧栏移除，会话不会被删除"],
   ["set.usageSub", "本机记录的 token 用量与费用"],
   ["set.usageNone", "暂无记录"],
-  ["set.usageWindow", "近 {n} 天数据，按本机时区统计；标题、Smart 路由、上下文压缩等后台请求计入费用，不计回合"],
+  ["set.usageWindow", "近 {n} 天数据，按本机时区统计；标题、上下文压缩等后台请求计入费用，不计回合"],
   ["set.voiceModelSub", "仅用于语音转写；智能编辑由当前对话模型完成"],
   ["set.updateFeedSub", "填写存放 latest.yml 和安装包的 https 地址，用于检查更新"],
 ]

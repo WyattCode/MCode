@@ -1,3 +1,4 @@
+import type { SmartRoute } from "./smart"
 import type { ProviderPreset, ProviderProtocol } from "./custom-endpoint"
 
 /**
@@ -86,12 +87,9 @@ export interface SessionInfo {
    * Conversations stored before this have none and fall back to their id.
    */
   slug?: string
-  /**
-   * On Smart: the first message picks between the fast and the main model, and
-   * `model` then holds the one it picked.
-   */
+  /** False pins the manual model. Legacy true and absent values follow global Smart. */
   smart?: boolean
-  /** Which of the two Smart picked; absent until the first message. */
+  /** Legacy tier stored by first-message routing. */
   smartRoute?: "fast" | "main"
   /**
    * The reasoning effort this conversation runs at: its own, like its model.
@@ -261,6 +259,7 @@ export interface SessionInfo {
 }
 
 export interface Usage {
+  route?: SmartRoute
   input: number
   output: number
   reasoning: number
@@ -426,6 +425,8 @@ export interface ArtifactFacets {
 import type { FileNotice } from "./file-notices"
 
 export interface UserMessage {
+  /** Model and score chosen when this turn started, also used on resume. */
+  route?: SmartRoute
   id: string
   sessionID: string
   role: "user"
@@ -1591,12 +1592,14 @@ export interface AppConfig {
    * first search asks.
    */
   websearch?: WebSearchSelection
-  /** New conversations start on Smart rather than on `model`. */
+  /** Route eligible conversations automatically when enabled. */
   smart?: boolean
   /** Smart's fast model, for easy everyday requests; empty follows `model`. */
   smartFast?: ModelRef
   /** Smart's main model, for everything else; empty follows `model`. */
   smartMain?: ModelRef
+  /** Complexity cutoff for the standard tier, 0–100. */
+  smartThreshold?: number
   /** Whether the in-app browser is offered at all; absent is on. */
   browserEnabled?: boolean
   /**
@@ -2185,7 +2188,7 @@ export type Request =
   | { type: "session.moveOut"; sessionID: string }
   /* `titleSuffix` names the branch MiMo's way, 「{title} (分支)」, instead of copying the title. */
   | { type: "session.fork"; sessionID: string; messageID: string; titleSuffix?: boolean }
-  | { type: "session.model"; sessionID: string; model: ModelRef }
+  | { type: "session.model"; sessionID: string; model: ModelRef; fallback?: boolean }
   /** Puts the conversation on Smart, to pick its model from the next first message. */
   | { type: "session.smart"; sessionID: string }
   | { type: "session.effort"; sessionID: string; effort: Effort }

@@ -581,7 +581,7 @@ async function submit(): Promise<boolean> {
     if (props.standalone) {
       const model = { provider: id, model: entry.models[0].id }
       if (target) await app.setModel(model, target)
-      else await app.patchConfig({ model, smart: false })
+      else await app.patchConfig({ model })
     }
     if (editing) notice.success(t("model.changesSaved"))
     else notice.success(t("set.models.providerAdded"))

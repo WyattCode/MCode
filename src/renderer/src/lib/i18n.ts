@@ -1019,7 +1019,7 @@ const zhCN: Table = {
   "providerLabels.zhipu": "智谱 GLM",
   "providerLabels.dashscope": "千问",
   "model.smart": "Smart",
-  "model.smartDesc": "按任务自动选择快速或主力模型",
+  "model.smartDesc": "按每轮任务复杂度自动选择轻量档或标准档",
   "model.moreModels": "更多模型",
   "model.configCustom": "配置自定义模型",
   "set.models.intro": "自定义模型使用你自己的密钥：填入各家的 API Key 即可在聊天里选用，仅保存到本地引擎配置",
@@ -1247,7 +1247,7 @@ const zhCN: Table = {
   "set.restartUpdate": "重启更新",
   "set.updateInstallHint": "重启更新后，MCode 将关闭并完成安装，结束后自动重新打开，可能需要几分钟",
   "set.usageSub": "本机记录的 token 用量与费用",
-  "set.usageWindow": "近 {n} 天数据，按本机时区统计；标题、Smart 路由、上下文压缩等后台请求计入费用，不计回合",
+  "set.usageWindow": "近 {n} 天数据，按本机时区统计；标题、上下文压缩等后台请求计入费用，不计回合",
   "set.usageInput": "输入",
   "set.usageOutput": "输出",
   "set.usageTurns": "回合",
@@ -2569,6 +2569,16 @@ const zhCN: Table = {
   "edit.copyImageAddress": "复制图片地址",
   "errorBoundary.inlineError": "渲染出错",
   "edit.copyImage": "复制图片",
+  "set.smart": "Smart 智能路由",
+  "set.smartEnable": "启用 Smart 路由",
+  "set.smartEnableSub": "每轮自动选择轻量档或标准档。会话手动选模后，继续使用所选模型。",
+  "set.smartFast": "轻量档模型",
+  "set.smartMain": "标准档模型",
+  "set.smartFallback": "自动回退",
+  "set.smartThreshold": "复杂度阈值",
+  "set.smartThresholdSub": "复杂度分数达到阈值时使用标准档。降低阈值可更常使用标准档。",
+  "set.keywords.smart": "Smart 智能路由 轻量档 标准档 阈值 置信度",
+  "model.restoreSmart": "恢复 Smart",
 }
 
 const zhTW: Table = {
@@ -3490,7 +3500,7 @@ const zhTW: Table = {
   "providerLabels.zhipu": "智譜 GLM",
   "providerLabels.dashscope": "千問",
   "model.smart": "Smart",
-  "model.smartDesc": "依任務自動選擇快速或主力模型",
+  "model.smartDesc": "依每輪任務的複雜度自動選擇輕量檔或標準檔",
   "model.moreModels": "更多模型",
   "model.configCustom": "設定自訂模型",
   "set.models.intro": "自訂模型使用你自己的金鑰：填入各家的 API Key 即可在聊天裡選用，僅保存到本機引擎設定",
@@ -3714,7 +3724,7 @@ const zhTW: Table = {
   "set.restartUpdate": "重新啟動以更新",
   "set.updateInstallHint": "重新啟動更新後，MCode 將關閉並完成安裝，結束後自動重新開啟，可能需要幾分鐘",
   "set.usageSub": "本機記錄的 token 用量與費用",
-  "set.usageWindow": "近 {n} 天資料，按本機時區統計；標題、Smart 路由、上下文壓縮等背景請求計入費用，不計回合",
+  "set.usageWindow": "近 {n} 天資料，按本機時區統計；標題、上下文壓縮等背景請求計入費用，不計回合",
   "set.usageInput": "輸入",
   "set.usageOutput": "輸出",
   "set.usageTurns": "回合",
@@ -5035,6 +5045,16 @@ const zhTW: Table = {
   "edit.copyImageAddress": "複製圖片位址",
   "errorBoundary.inlineError": "渲染出錯",
   "edit.copyImage": "複製圖片",
+  "set.smart": "Smart 智慧路由",
+  "set.smartEnable": "啟用 Smart 路由",
+  "set.smartEnableSub": "每輪自動選擇輕量檔或標準檔。手動選擇模型後，該對話會繼續使用所選模型。",
+  "set.smartFast": "輕量檔模型",
+  "set.smartMain": "標準檔模型",
+  "set.smartFallback": "自動備用",
+  "set.smartThreshold": "複雜度閾值",
+  "set.smartThresholdSub": "複雜度分數達到閾值時使用標準檔。降低閾值可更常使用標準檔。",
+  "set.keywords.smart": "Smart 智慧路由 輕量檔 標準檔 閾值 信心",
+  "model.restoreSmart": "恢復 Smart",
 }
 
 const en: Table = {
@@ -5956,7 +5976,7 @@ const en: Table = {
   "providerLabels.zhipu": "Zhipu GLM",
   "providerLabels.dashscope": "Qwen",
   "model.smart": "Smart",
-  "model.smartDesc": "Picks a fast or main model for each task",
+  "model.smartDesc": "Picks a lightweight or standard model based on each turn’s complexity",
   "model.moreModels": "More models",
   "model.configCustom": "Configure custom models",
   "set.models.intro": "Custom models use your own API keys: add each provider's API key to use them in chat. Saved to your local engine config only.",
@@ -6180,7 +6200,7 @@ const en: Table = {
   "set.restartUpdate": "Restart to update",
   "set.updateInstallHint": "After you restart to update, MCode closes to finish installing and then opens again by itself. This can take a few minutes.",
   "set.usageSub": "Token usage and cost recorded on this computer",
-  "set.usageWindow": "Everything below covers the last {n} days, split by this computer's time zone. Background requests (titles, Smart routing, compaction) count toward spend, not turns.",
+  "set.usageWindow": "Everything below covers the last {n} days, split by this computer's time zone. Background requests such as titles and compaction count toward spend, not turns.",
   "set.usageInput": "Input",
   "set.usageOutput": "Output",
   "set.usageTurns": "Turns",
@@ -7502,6 +7522,16 @@ const en: Table = {
   "edit.copyImageAddress": "Copy Image Address",
   "errorBoundary.inlineError": "Render error",
   "edit.copyImage": "Copy image",
+  "set.smart": "Smart Routing",
+  "set.smartEnable": "Enable Smart routing",
+  "set.smartEnableSub": "Automatically choose a tier each turn. Picking a model manually pins it to that conversation.",
+  "set.smartFast": "Lightweight model",
+  "set.smartMain": "Standard model",
+  "set.smartFallback": "Automatic fallback",
+  "set.smartThreshold": "Complexity threshold",
+  "set.smartThresholdSub": "The standard tier is used when the complexity score reaches this threshold. Lower it to use the standard tier more often.",
+  "set.keywords.smart": "Smart routing lightweight standard tier threshold confidence",
+  "model.restoreSmart": "Restore Smart",
 }
 
 // --- generated language tables ---
@@ -9928,6 +9958,16 @@ const ar: Table = {
   "set.mcp.reconnectFailed": "فشلت إعادة الاتصال: ",
   "set.mcp.reconnectNeedsAuth": "{name} ما زال يحتاج إلى تفويض",
   "error.page.copied": "تم النسخ",
+  "set.smart": "توجيه Smart",
+  "set.smartEnable": "تفعيل توجيه Smart",
+  "set.smartEnableSub": "يختار فئة لكل دور. اختيار نموذج يدويًا يثبته لهذه المحادثة.",
+  "set.smartFast": "النموذج الخفيف",
+  "set.smartMain": "النموذج القياسي",
+  "set.smartFallback": "بديل تلقائي",
+  "set.smartThreshold": "عتبة التعقيد",
+  "set.smartThresholdSub": "تُستخدم الفئة القياسية عند بلوغ درجة التعقيد هذه العتبة. اخفضها لاستخدام الفئة القياسية أكثر.",
+  "set.keywords.smart": "Smart توجيه خفيف قياسي عتبة ثقة",
+  "model.restoreSmart": "استعادة Smart",
 }
 
 const bs: Table = {
@@ -12353,6 +12393,16 @@ const bs: Table = {
   "set.mcp.reconnectFailed": "Ponovno povezivanje nije uspjelo: ",
   "set.mcp.reconnectNeedsAuth": "{name} i dalje treba autorizaciju",
   "error.page.copied": "Kopirano",
+  "set.smart": "Smart usmjeravanje",
+  "set.smartEnable": "Uključi Smart usmjeravanje",
+  "set.smartEnableSub": "Bira nivo za svaki krug. Ručni izbor modela vrijedi za ovaj razgovor.",
+  "set.smartFast": "Lakši model",
+  "set.smartMain": "Standardni model",
+  "set.smartFallback": "Automatska zamjena",
+  "set.smartThreshold": "Prag složenosti",
+  "set.smartThresholdSub": "Standardni nivo se koristi kada ocjena složenosti dosegne prag. Niži prag ga koristi češće.",
+  "set.keywords.smart": "Smart usmjeravanje lakši standardni prag pouzdanost",
+  "model.restoreSmart": "Vrati Smart",
 }
 
 const da: Table = {
@@ -14778,6 +14828,16 @@ const da: Table = {
   "set.mcp.reconnectFailed": "Genopretning mislykkedes: ",
   "set.mcp.reconnectNeedsAuth": "{name} kræver stadig godkendelse",
   "error.page.copied": "Kopieret",
+  "set.smart": "Smart-modelvalg",
+  "set.smartEnable": "Slå Smart-modelvalg til",
+  "set.smartEnableSub": "Vælger et niveau ved hver besked. Manuelt valg af model gælder for samtalen.",
+  "set.smartFast": "Letvægtsmodel",
+  "set.smartMain": "Standardmodel",
+  "set.smartFallback": "Automatisk reserve",
+  "set.smartThreshold": "Tærskel for kompleksitet",
+  "set.smartThresholdSub": "Standardniveauet bruges, når kompleksiteten når tærsklen. Sænk den for at bruge standardniveauet oftere.",
+  "set.keywords.smart": "Smart modelvalg letvægt standard tærskel sikkerhed",
+  "model.restoreSmart": "Gendan Smart",
 }
 
 const de: Table = {
@@ -17203,6 +17263,16 @@ const de: Table = {
   "set.mcp.reconnectFailed": "Neuverbindung fehlgeschlagen: ",
   "set.mcp.reconnectNeedsAuth": "{name} braucht noch eine Autorisierung",
   "error.page.copied": "Kopiert",
+  "set.smart": "Smart-Modellwahl",
+  "set.smartEnable": "Smart-Modellwahl aktivieren",
+  "set.smartEnableSub": "Wählt pro Anfrage eine Stufe. Eine manuelle Modellwahl gilt für diese Unterhaltung.",
+  "set.smartFast": "Leichtes Modell",
+  "set.smartMain": "Standardmodell",
+  "set.smartFallback": "Automatischer Ersatz",
+  "set.smartThreshold": "Komplexitätsschwelle",
+  "set.smartThresholdSub": "Die Standardstufe wird verwendet, sobald der Komplexitätswert die Schwelle erreicht. Eine niedrigere Schwelle verwendet sie häufiger.",
+  "set.keywords.smart": "Smart Modellwahl leicht Standard Schwelle Konfidenz",
+  "model.restoreSmart": "Smart wiederherstellen",
 }
 
 const es: Table = {
@@ -19628,6 +19698,16 @@ const es: Table = {
   "set.mcp.reconnectFailed": "Falló la reconexión: ",
   "set.mcp.reconnectNeedsAuth": "{name} aún necesita autorización",
   "error.page.copied": "Copiado",
+  "set.smart": "Selección Smart",
+  "set.smartEnable": "Activar la selección Smart",
+  "set.smartEnableSub": "Elige un nivel en cada turno. La selección manual fija el modelo de la conversación.",
+  "set.smartFast": "Modelo ligero",
+  "set.smartMain": "Modelo estándar",
+  "set.smartFallback": "Alternativa automática",
+  "set.smartThreshold": "Umbral de complejidad",
+  "set.smartThresholdSub": "El nivel estándar se usa cuando la puntuación de complejidad alcanza el umbral. Bájalo para usarlo más a menudo.",
+  "set.keywords.smart": "Smart selección ligero estándar umbral confianza",
+  "model.restoreSmart": "Restaurar Smart",
 }
 
 const fr: Table = {
@@ -22053,6 +22133,16 @@ const fr: Table = {
   "set.mcp.reconnectFailed": "Échec de la reconnexion : ",
   "set.mcp.reconnectNeedsAuth": "{name} nécessite encore une autorisation",
   "error.page.copied": "Copié",
+  "set.smart": "Routage Smart",
+  "set.smartEnable": "Activer le routage Smart",
+  "set.smartEnableSub": "Choisit un niveau à chaque tour. Un choix manuel fixe le modèle de la conversation.",
+  "set.smartFast": "Modèle léger",
+  "set.smartMain": "Modèle standard",
+  "set.smartFallback": "Repli automatique",
+  "set.smartThreshold": "Seuil de complexité",
+  "set.smartThresholdSub": "Le niveau standard s’applique lorsque le score de complexité atteint le seuil. Abaissez-le pour utiliser ce niveau plus souvent.",
+  "set.keywords.smart": "Smart routage léger standard seuil confiance",
+  "model.restoreSmart": "Rétablir Smart",
 }
 
 const ja: Table = {
@@ -24478,6 +24568,16 @@ const ja: Table = {
   "set.mcp.reconnectFailed": "再接続に失敗しました: ",
   "set.mcp.reconnectNeedsAuth": "{name} はまだ認証が必要です",
   "error.page.copied": "コピーしました",
+  "set.smart": "Smart ルーティング",
+  "set.smartEnable": "Smart ルーティングを有効にする",
+  "set.smartEnableSub": "ターンごとにモデルのレベルを選びます。手動で選んだモデルはこの会話で固定されます。",
+  "set.smartFast": "軽量モデル",
+  "set.smartMain": "標準モデル",
+  "set.smartFallback": "自動フォールバック",
+  "set.smartThreshold": "複雑度のしきい値",
+  "set.smartThresholdSub": "複雑度スコアがしきい値に達すると標準モデルを使います。しきい値を下げると標準モデルを使う頻度が上がります。",
+  "set.keywords.smart": "Smart ルーティング 軽量 標準 しきい値 閾値 信頼度",
+  "model.restoreSmart": "Smart に戻す",
 }
 
 const ko: Table = {
@@ -26903,6 +27003,16 @@ const ko: Table = {
   "set.mcp.reconnectFailed": "다시 연결 실패: ",
   "set.mcp.reconnectNeedsAuth": "{name}에 아직 인증이 필요합니다",
   "error.page.copied": "복사됨",
+  "set.smart": "Smart 라우팅",
+  "set.smartEnable": "Smart 라우팅 켜기",
+  "set.smartEnableSub": "턴마다 모델 등급을 선택합니다. 직접 선택한 모델은 이 대화에 고정됩니다.",
+  "set.smartFast": "경량 모델",
+  "set.smartMain": "표준 모델",
+  "set.smartFallback": "자동 대체",
+  "set.smartThreshold": "복잡도 임계값",
+  "set.smartThresholdSub": "복잡도 점수가 임계값에 도달하면 표준 등급을 사용합니다. 임계값을 낮추면 표준 등급을 더 자주 사용합니다.",
+  "set.keywords.smart": "Smart 라우팅 경량 표준 임계값 신뢰도",
+  "model.restoreSmart": "Smart 복원",
 }
 
 const nb: Table = {
@@ -29328,6 +29438,16 @@ const nb: Table = {
   "set.mcp.reconnectFailed": "Ny tilkobling mislyktes: ",
   "set.mcp.reconnectNeedsAuth": "{name} trenger fortsatt godkjenning",
   "error.page.copied": "Kopiert",
+  "set.smart": "Smart-modellvalg",
+  "set.smartEnable": "Slå på Smart-modellvalg",
+  "set.smartEnableSub": "Velger et nivå for hver melding. Et manuelt modellvalg gjelder for denne samtalen.",
+  "set.smartFast": "Lett modell",
+  "set.smartMain": "Standardmodell",
+  "set.smartFallback": "Automatisk reserve",
+  "set.smartThreshold": "Terskel for kompleksitet",
+  "set.smartThresholdSub": "Standardnivået brukes når kompleksiteten når terskelen. Senk den for å bruke standardnivået oftere.",
+  "set.keywords.smart": "Smart modellvalg lett standard terskel konfidens",
+  "model.restoreSmart": "Gjenopprett Smart",
 }
 
 const pl: Table = {
@@ -31753,6 +31873,16 @@ const pl: Table = {
   "set.mcp.reconnectFailed": "Ponowne łączenie nie powiodło się: ",
   "set.mcp.reconnectNeedsAuth": "{name} nadal wymaga autoryzacji",
   "error.page.copied": "Skopiowano",
+  "set.smart": "Dobór modelu Smart",
+  "set.smartEnable": "Włącz dobór modelu Smart",
+  "set.smartEnableSub": "Wybiera poziom dla każdej wiadomości. Ręczny wybór przypisuje model do rozmowy.",
+  "set.smartFast": "Lekki model",
+  "set.smartMain": "Model standardowy",
+  "set.smartFallback": "Automatyczny zamiennik",
+  "set.smartThreshold": "Próg złożoności",
+  "set.smartThresholdSub": "Poziom standardowy jest używany po osiągnięciu progu złożoności. Obniż próg, aby korzystać z niego częściej.",
+  "set.keywords.smart": "Smart model lekki standardowy próg pewność",
+  "model.restoreSmart": "Przywróć Smart",
 }
 
 const ptBR: Table = {
@@ -34178,6 +34308,16 @@ const ptBR: Table = {
   "set.mcp.reconnectFailed": "Falha ao reconectar: ",
   "set.mcp.reconnectNeedsAuth": "{name} ainda precisa de autorização",
   "error.page.copied": "Copiado",
+  "set.smart": "Roteamento Smart",
+  "set.smartEnable": "Ativar roteamento Smart",
+  "set.smartEnableSub": "Escolhe um nível a cada turno. Escolher um modelo manualmente o fixa na conversa.",
+  "set.smartFast": "Modelo leve",
+  "set.smartMain": "Modelo padrão",
+  "set.smartFallback": "Alternativa automática",
+  "set.smartThreshold": "Limite de complexidade",
+  "set.smartThresholdSub": "O nível padrão é usado quando a pontuação de complexidade atinge o limite. Reduza o limite para usar esse nível com mais frequência.",
+  "set.keywords.smart": "Smart roteamento leve padrão limite confiança",
+  "model.restoreSmart": "Restaurar Smart",
 }
 
 const ru: Table = {
@@ -36603,6 +36743,16 @@ const ru: Table = {
   "set.mcp.reconnectFailed": "Не удалось переподключиться: ",
   "set.mcp.reconnectNeedsAuth": "{name} всё ещё требует авторизации",
   "error.page.copied": "Скопировано",
+  "set.smart": "Маршрутизация Smart",
+  "set.smartEnable": "Включить маршрутизацию Smart",
+  "set.smartEnableSub": "Выбирает уровень для каждого запроса. Ручной выбор закрепляет модель за диалогом.",
+  "set.smartFast": "Лёгкая модель",
+  "set.smartMain": "Стандартная модель",
+  "set.smartFallback": "Автоматическая замена",
+  "set.smartThreshold": "Порог сложности",
+  "set.smartThresholdSub": "Стандартный уровень используется, когда оценка сложности достигает порога. Снизьте порог, чтобы использовать его чаще.",
+  "set.keywords.smart": "Smart маршрутизация лёгкий стандартный порог уверенность",
+  "model.restoreSmart": "Восстановить Smart",
 }
 
 const th: Table = {
@@ -39028,6 +39178,16 @@ const th: Table = {
   "set.mcp.reconnectFailed": "เชื่อมต่อใหม่ไม่สำเร็จ: ",
   "set.mcp.reconnectNeedsAuth": "{name} ยังต้องได้รับอนุญาต",
   "error.page.copied": "คัดลอกแล้ว",
+  "set.smart": "การเลือกโมเดล Smart",
+  "set.smartEnable": "เปิดใช้การเลือกโมเดล Smart",
+  "set.smartEnableSub": "เลือกระดับโมเดลในแต่ละรอบ หากเลือกโมเดลเอง ระบบจะใช้โมเดลนั้นกับการสนทนานี้",
+  "set.smartFast": "โมเดลขนาดเล็ก",
+  "set.smartMain": "โมเดลมาตรฐาน",
+  "set.smartFallback": "เลือกโมเดลสำรองอัตโนมัติ",
+  "set.smartThreshold": "เกณฑ์ความซับซ้อน",
+  "set.smartThresholdSub": "ใช้ระดับมาตรฐานเมื่อคะแนนความซับซ้อนถึงเกณฑ์ ลดเกณฑ์เพื่อใช้ระดับมาตรฐานบ่อยขึ้น",
+  "set.keywords.smart": "Smart เลือกโมเดล ขนาดเล็ก มาตรฐาน เกณฑ์ ความมั่นใจ",
+  "model.restoreSmart": "คืนค่า Smart",
 }
 
 const tr: Table = {
@@ -41453,6 +41613,16 @@ const tr: Table = {
   "set.mcp.reconnectFailed": "Yeniden bağlanma başarısız: ",
   "set.mcp.reconnectNeedsAuth": "{name} hâlâ yetkilendirme gerektiriyor",
   "error.page.copied": "Kopyalandı",
+  "set.smart": "Smart yönlendirme",
+  "set.smartEnable": "Smart yönlendirmeyi etkinleştir",
+  "set.smartEnableSub": "Her turda bir katman seçer. Elle seçilen model bu sohbete sabitlenir.",
+  "set.smartFast": "Hafif model",
+  "set.smartMain": "Standart model",
+  "set.smartFallback": "Otomatik yedek",
+  "set.smartThreshold": "Karmaşıklık eşiği",
+  "set.smartThresholdSub": "Karmaşıklık puanı eşiğe ulaştığında standart katman kullanılır. Daha sık kullanmak için eşiği düşürün.",
+  "set.keywords.smart": "Smart yönlendirme hafif standart eşik güven",
+  "model.restoreSmart": "Smart’a dön",
 }
 
 const uk: Table = {
@@ -43878,6 +44048,16 @@ const uk: Table = {
   "set.mcp.reconnectFailed": "Не вдалося перепідключитися: ",
   "set.mcp.reconnectNeedsAuth": "{name} досі потребує авторизації",
   "error.page.copied": "Скопійовано",
+  "set.smart": "Маршрутизація Smart",
+  "set.smartEnable": "Увімкнути маршрутизацію Smart",
+  "set.smartEnableSub": "Вибирає рівень для кожного запиту. Ручний вибір закріплює модель за розмовою.",
+  "set.smartFast": "Легка модель",
+  "set.smartMain": "Стандартна модель",
+  "set.smartFallback": "Автоматична заміна",
+  "set.smartThreshold": "Поріг складності",
+  "set.smartThresholdSub": "Стандартний рівень використовується, коли оцінка складності досягає порога. Знизьте поріг, щоб використовувати його частіше.",
+  "set.keywords.smart": "Smart маршрутизація легка стандартна поріг упевненість",
+  "model.restoreSmart": "Відновити Smart",
 }
 // --- end generated language tables ---
 
