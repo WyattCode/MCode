@@ -1,7 +1,7 @@
 *.log
 .DS_Store
 dist/
-node_modules/
+node_modules
 out/
 
 # The 38 MB score soundfont; scripts/soundfont.mjs places and verifies it.
