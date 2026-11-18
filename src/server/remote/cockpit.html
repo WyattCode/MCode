@@ -796,7 +796,12 @@ function addPermissionCard(asked) {
   card.id = "pc-" + asked.id;
   const t = document.createElement("div"); t.className = "t"; t.textContent = "权限请求：" + (asked.kind || "tool");
   const d = document.createElement("div"); d.className = "d";
-  d.textContent = [asked.title, asked.meta && asked.meta.path, JSON.stringify(asked.input || "").slice(0, 200)].filter(Boolean).join(" · ");
+  if (asked.titleCode?.startsWith("perm.app.macos")) {
+    d.textContent = [asked.title, asked.subject].filter(Boolean).join("\n");
+    d.style.whiteSpace = "pre-wrap";
+  } else {
+    d.textContent = [asked.title, asked.meta && asked.meta.path, JSON.stringify(asked.input || "").slice(0, 200)].filter(Boolean).join(" · ");
+  }
   const btns = document.createElement("div"); btns.className = "btns";
   // A forced request is confirmed every time, so "always" is not offered: the
   // record would claim a standing allow the server never granted.

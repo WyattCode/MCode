@@ -31,6 +31,7 @@ const run = (cmd, args) => spawnSync(cmd, args, { stdio: "inherit", shell: proce
 let status = run("node", ["scripts/soundfont.mjs"])
 // A Windows package carries the bundled runtimes (see runtimes.mjs), verified the same way.
 if (status === 0 && target === "win32") status = run("node", ["scripts/runtimes.mjs"])
+if (status === 0 && target === "darwin") status = run("node", ["scripts/macctl-shim.mjs"])
 if (status === 0) status = run("node", ["scripts/bump-version.mjs"])
 if (status === 0) status = run("npx", ["electron-vite", "build"])
 // Nothing is uploaded from here: a release is published by hand (see electron-builder.yml).

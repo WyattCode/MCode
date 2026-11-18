@@ -281,6 +281,36 @@ async function toggleMcpReveal(slot: string) {
   mcpRevealed.value[slot] = true
 }
 
+const macOSControl = ref<Awaited<ReturnType<typeof window.mcode.macOSControlStatus>>>()
+const macOSControlBusy = ref(false)
+
+async function refreshMacOSControl() {
+  if (app.platform !== "darwin" || macOSControlBusy.value) return
+  macOSControl.value = await window.mcode.macOSControlStatus().catch(() => undefined)
+}
+
+async function toggleMacOSControl() {
+  if (!macOSControl.value || macOSControlBusy.value) return
+  macOSControlBusy.value = true
+  try {
+    macOSControl.value = await window.mcode.setMacOSControl(!macOSControl.value.enabled)
+  } catch {
+    notifyFailure(t("common.requestFailed"))
+  } finally {
+    macOSControlBusy.value = false
+  }
+}
+
+async function openMacOSControlSettings() {
+  const status = macOSControl.value
+  const pane = status?.capture !== "granted" ? "screen" : status.accessibility ? "automation" : "accessibility"
+  await window.mcode.openMacOSControlSettings(pane).catch(() => notifyFailure(t("common.requestFailed")))
+}
+
+watch(() => app.platform, refreshMacOSControl, { immediate: true })
+onMounted(() => window.addEventListener("focus", refreshMacOSControl))
+onBeforeUnmount(() => window.removeEventListener("focus", refreshMacOSControl))
+
 /* 开机自启: read from main, which asks the OS; a change shows what the OS then says. */
 const loginItem = ref({ supported: false, enabled: false })
 
@@ -2188,6 +2218,30 @@ onBeforeUnmount(() => {
                 :aria-checked="app.config?.tray ?? false"
                 :aria-label="t(app.platform === 'darwin' ? 'set.trayMac' : 'set.tray')"
                 @click="app.patchConfig({ tray: !(app.config?.tray ?? false) })"
+              >
+                <span class="knob" />
+              </button>
+            </div>
+
+            <div v-if="app.platform === 'darwin'" class="line" data-macctl-row>
+              <div class="line-text">
+                <div class="line-title">{{ t("set.macctl") }}</div>
+                <div class="line-sub macctl-badges" v-if="macOSControl">
+                  <span>{{ t(macOSControl.capture === "granted" ? "set.macctlScreenOn" : "set.macctlScreenOff") }}</span>
+                  <span>{{ t(macOSControl.accessibility ? "set.macctlAXOn" : "set.macctlAXOff") }}</span>
+                </div>
+                <div v-else class="line-sub">{{ t("set.macctlStatusUnavailable") }}</div>
+              </div>
+              <button type="button" class="macctl-settings" @click="openMacOSControlSettings">{{ t("set.macctlSettings") }}</button>
+              <button
+                type="button"
+                class="switch"
+                :class="{ on: macOSControl?.enabled }"
+                role="switch"
+                :aria-checked="macOSControl?.enabled ?? false"
+                :aria-label="t('set.macctl')"
+                :disabled="!macOSControl || macOSControlBusy"
+                @click="toggleMacOSControl"
               >
                 <span class="knob" />
               </button>
@@ -6563,5 +6617,19 @@ h3 {
   background: var(--surface-hover);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+.macctl-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.macctl-badges span, .macctl-settings {
+  border: 1px solid var(--border-weak);
+  border-radius: 6px;
+  padding: 2px 6px;
+}
+.macctl-settings {
+  color: inherit;
+  cursor: pointer;
 }
 </style>

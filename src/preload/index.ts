@@ -3,6 +3,12 @@ import type { SoundfontReply } from "../shared/soundfont"
 import type { InstallAnswer } from "../shared/update-reason"
 import type { PickerBusy } from "../shared/native-pick"
 
+export interface MacOSControlStatus {
+  enabled: boolean
+  capture: string
+  accessibility: boolean
+}
+
 export type OfficeVersionSource = "initial" | "ai" | "ai_local" | "user" | "external"
 export interface OfficeVersionState {
   versions: { id: string; ts: number; source: OfficeVersionSource; note: string }[]
@@ -29,6 +35,11 @@ const relayFileChange = (_event: unknown, target: string) => {
 }
 
 const api = {
+  macOSControlStatus: (): Promise<MacOSControlStatus> => ipcRenderer.invoke("mcode:macctl-status"),
+  setMacOSControl: (enabled: boolean): Promise<MacOSControlStatus> => ipcRenderer.invoke("mcode:macctl-toggle", enabled),
+  openMacOSControlSettings: (pane: "screen" | "accessibility" | "automation"): Promise<void> =>
+    ipcRenderer.invoke("mcode:macctl-settings", pane),
+
   bootstrap: (): Promise<{ port: number; secret: string; platform: string; home: string; version: string }> =>
     ipcRenderer.invoke("mcode:bootstrap"),
 
