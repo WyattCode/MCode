@@ -243,7 +243,7 @@ const REVIEW_OUTPUT_TOKENS = 64
  */
 const FANOUT_CONCURRENCY = 4
 /** fanout: the most a call may ask to run at once. */
-const FANOUT_MAX_CONCURRENCY = 8
+export const FANOUT_MAX_CONCURRENCY = 8
 /** fanout: the system text of a call that gave none; some providers refuse an empty one. */
 const FANOUT_SYSTEM = "Answer the request with exactly what it asks for, and nothing else."
 
@@ -4609,7 +4609,7 @@ export class SessionRunner {
    * what it writes and nothing else, and thinking can be switched off for the
    * ones whose job is to write what was already planned.
    */
-  private fanoutControl(call: { sessionID: string; signal: AbortSignal }): FanoutControl {
+  fanoutControl(call: { sessionID: string; signal: AbortSignal }): FanoutControl {
     return {
       generate: async (items, options, hooks) => {
         const session = await this.store.require(call.sessionID)

@@ -17,6 +17,7 @@ import { CHECKPOINT_PACK_EVERY_MS, CHECKPOINT_PACK_FIRST_MS } from "./session/sn
 import { ARTIFACT_SETTLE_MS, ArtifactStore } from "./artifact/store"
 import { readStorageLayout } from "./storage-layout"
 import { projectDirectoriesOf } from "@shared/projects"
+import { Lab } from "./lab"
 import { SessionRunner } from "./session/runner"
 import { Shells } from "./shell"
 import { stopBashCommands, prewarmBashShell } from "./tool/bash"
@@ -45,6 +46,7 @@ export interface Runtime {
   permissions: Permissions
   sessions: SessionStore
   runner: SessionRunner
+  lab?: Lab
   shells: Shells
   mcp: McpServers
   /** Produced files, kept rather than worked out again; absent if the store could not be opened. */
@@ -311,7 +313,7 @@ export async function startBackend(dataDirectory: string, options: BackendOption
   mcp.useBusy(() => runner.busySessions().length > 0)
   mcp.useBusyDirectories(() => runner.busyDirectories())
 
-  const runtime: Runtime = { storage, bus, config, auth, permissions, sessions, runner, shells, mcp, artifacts }
+  const runtime: Runtime = { storage, bus, config, auth, permissions, sessions, runner, shells, mcp, artifacts, lab: new Lab(storage, runner) }
 
   /*
    * Connecting is not awaited: a server that hangs on start would otherwise
@@ -467,6 +469,7 @@ export async function startBackend(dataDirectory: string, options: BackendOption
     async close() {
       // First: a turn the quit cuts off keeps its claim, so the next start carries it on.
       runner.closeTurns()
+      const labClosed = runtime.lab?.close()
       // The model's own commands go with the terminals: both are children this
       // process started, and neither has a window left to stop it.
       stopBashCommands()
@@ -474,7 +477,7 @@ export async function startBackend(dataDirectory: string, options: BackendOption
       catalog.stop()
       clearTimeout(packFirst)
       if (packEvery) clearInterval(packEvery)
-      await shells.closeAll()
+      await Promise.all([shells.closeAll(), labClosed])
       // The browsers the app tool opened close with the app; apps it attached to are only let go.
       await closeAllApps()
       // And the one that watches shell commands for windows they opened.
