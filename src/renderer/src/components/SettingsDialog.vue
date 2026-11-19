@@ -3477,7 +3477,10 @@ onBeforeUnmount(() => {
               </div>
               <span class="total-value small" data-usage-model-cost>{{ spent(entry) }}</span>
             </div>
-            <p v-if="usage && !usage.byModel.length" class="line-sub">{{ t("set.usageNone") }}</p>
+            <!-- In the same padded block the by-day card uses: bare in the card, the line had no room above or below it. -->
+            <div v-if="usage && !usage.byModel.length" class="usage-block">
+              <p class="line-sub">{{ t("set.usageNone") }}</p>
+            </div>
           </div>
         </template>
 
@@ -3523,7 +3526,7 @@ onBeforeUnmount(() => {
               <input
                 class="field font-field"
                 :value="app.config?.updateFeed ?? ''"
-                placeholder="https://example.com/latest.json"
+                placeholder="https://example.com/mcode/"
                 spellcheck="false"
                 @change="app.patchConfig({ updateFeed: ($event.target as HTMLInputElement).value.trim() })"
               />
@@ -4116,6 +4119,11 @@ h3 {
   font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 440;
   line-height: calc(20px * var(--ui-font-scale, 1));
+}
+
+/* The one slider on these pages: the page's ink rather than the browser's blue. */
+input[type="range"] {
+  accent-color: var(--text-strong);
 }
 
 /* Pill switch: filled and light when on, hollow when off. */

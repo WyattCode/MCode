@@ -157,30 +157,193 @@ function timestamp(time: number): string {
 </template>
 
 <style scoped>
-.evolve { display: grid; gap: 12px; margin-bottom: 24px; }
-h3, p, pre { margin: 0; }
-.options, .actions, .summary, .result { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.options { align-items: end; }
-label { display: grid; gap: 5px; }
-input { width: 76px; }
-button, input, select {
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  padding: 5px 8px;
-  color: inherit;
-  background: var(--surface-raised, transparent);
-  font: inherit;
+/*
+ * The settings pages' own look - title, sub-line, card and button - repeated
+ * here: SettingsDialog's rules are scoped and do not reach this component's
+ * markup, so this page used to draw with bare borders and browser defaults.
+ */
+.evolve {
+  --set-btn: #f1f1f1;
+  --set-btn-hover: #f1f0ec;
+  --set-btn-ink: #151c13;
+  --set-card: #ffffff;
+  --set-card-edge: #f3efeb;
+  --set-field-edge: #e3e3e0;
+  --set-field: transparent;
+  --set-title: var(--text-strong);
 }
-button:not(:disabled) { cursor: pointer; }
-button:disabled { opacity: .5; }
-button[aria-pressed="true"] { border-color: var(--interactive); }
-.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 8px; }
-.worker { display: grid; align-content: start; gap: 6px; border: 1px solid var(--border-strong); border-radius: 8px; padding: 10px; min-width: 0; }
-.badge { border: 1px solid currentColor; border-radius: 999px; padding: 1px 6px; }
-.accepted { color: var(--text-success); }
-.discarded, .error { color: var(--text-error); }
-.hint { color: var(--text-weak); }
-.error, pre { white-space: pre-wrap; overflow-wrap: anywhere; }
-.history { display: grid; gap: 4px; }
-.history button { display: flex; flex-wrap: wrap; gap: 4px 10px; text-align: start; }
+
+:root[data-theme="dark"] .evolve {
+  --set-btn: #2e2e2e;
+  --set-btn-hover: #ffffff1a;
+  --set-btn-ink: var(--text-strong);
+  --set-card: #282828;
+  --set-card-edge: #3d3d3d;
+  --set-field-edge: #3a3a3a;
+  --set-field: rgb(58 58 58 / 0.3);
+  --set-title: #f4f4f5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .evolve {
+    --set-btn: #2e2e2e;
+    --set-btn-hover: #ffffff1a;
+    --set-btn-ink: var(--text-strong);
+    --set-card: #282828;
+    --set-card-edge: #3d3d3d;
+    --set-field-edge: #3a3a3a;
+    --set-field: rgb(58 58 58 / 0.3);
+    --set-title: #f4f4f5;
+  }
+}
+
+.evolve {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+h3,
+p,
+pre {
+  margin: 0;
+}
+
+h3 {
+  color: var(--text-strong);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 500;
+  line-height: calc(22.4px * var(--ui-font-scale, 1));
+}
+
+.options,
+.actions,
+.summary,
+.result {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.options {
+  align-items: end;
+}
+
+label {
+  display: grid;
+  gap: 5px;
+  color: var(--text-base);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+
+input {
+  width: 76px;
+}
+
+button {
+  flex-shrink: 0;
+  height: calc(28px * var(--ui-font-scale, 1));
+  padding: 0 12px;
+  color: var(--set-btn-ink);
+  background: var(--set-btn);
+  border: 0;
+  border-radius: 8px;
+  font: inherit;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+button:not(:disabled) {
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: var(--set-btn-hover);
+}
+
+button:disabled {
+  opacity: 0.4;
+}
+
+input,
+select {
+  box-sizing: border-box;
+  height: calc(30px * var(--ui-font-scale, 1));
+  padding: 0 10px;
+  color: var(--text-strong);
+  background: var(--set-field);
+  border: 1px solid var(--set-field-edge);
+  border-radius: 8px;
+  outline: none;
+  font: inherit;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+input:focus-visible,
+select:focus-visible {
+  border-color: var(--text-base);
+}
+
+button[aria-pressed="true"] {
+  outline: 1px solid var(--interactive);
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
+  gap: 8px;
+}
+
+.worker {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px;
+  background: var(--set-card);
+  border: 1px solid var(--set-card-edge);
+  border-radius: 12px;
+}
+
+.badge {
+  padding: 1px 6px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+}
+
+.accepted {
+  color: var(--text-success);
+}
+
+.discarded,
+.error {
+  color: var(--text-error);
+}
+
+.hint {
+  color: var(--text-base);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+.error,
+pre {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.history {
+  display: grid;
+  gap: 4px;
+}
+
+.history button {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  height: auto;
+  padding: 6px 12px;
+  text-align: start;
+}
 </style>

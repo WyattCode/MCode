@@ -149,7 +149,7 @@ async function start(device: SshDevice) {
     <p>{{ t("set.ssh.description") }}</p>
     <button type="button" @click="edit()">{{ t("set.ssh.add") }}</button>
     <p v-if="error" role="alert">{{ error }}</p>
-    <p v-if="!devices.length && !error">{{ t("set.ssh.empty") }}</p>
+    <p v-if="!devices.length && !error" class="empty">{{ t("set.ssh.empty") }}</p>
     <article v-for="device in devices" :key="device.id" class="device">
       <div class="identity">
         <strong>{{ device.name }}</strong>
@@ -208,24 +208,220 @@ async function start(device: SshDevice) {
 </template>
 
 <style scoped>
-.devices { display: grid; justify-items: start; gap: 12px; }
-.devices h2, .devices p, .form h3 { margin: 0; }
-.device, .device-dialog { border: 1px solid var(--border-weak); border-radius: 10px; }
-.device { box-sizing: border-box; width: 100%; display: flex; flex-wrap: wrap; align-items: center; padding: 12px; gap: 10px; }
-.identity { min-width: 130px; flex: 1; display: grid; gap: 4px; overflow-wrap: anywhere; }
-.identity span, .badge { font-size: .85em; }
-.badge { padding: 3px 8px; border: 1px solid currentColor; border-radius: 16px; }
-.badge[data-status="connected"] { color: var(--text-success); }
-.badge[data-status="authFailed"], .badge[data-status="unreachable"] { color: var(--text-critical); }
-.actions { display: flex; flex-wrap: wrap; gap: 6px; }
-.result { flex-basis: 100%; overflow-wrap: anywhere; }
-.device-dialog { color: inherit; background: var(--surface-raised); width: min(390px, calc(100vw - 40px)); }
-.device-dialog::backdrop { background: var(--scrim); }
-.form { display: grid; gap: 12px; }
-fieldset { display: grid; padding: 0; margin: 0; border: 0; gap: 8px; }
-label { display: grid; gap: 4px; }
-input, select, button { color: inherit; font: inherit; background: transparent; border: 1px solid var(--border-button); border-radius: 6px; padding: 5px 8px; }
-select { background: var(--surface-raised); }
-button:not(:disabled) { cursor: pointer; }
-button:hover:not(:disabled) { background: var(--surface-hover); }
+/*
+ * The settings pages' own look - title, sub-line, card and button - repeated
+ * here: SettingsDialog's rules are scoped and do not reach this component's
+ * markup, so this page used to draw with bare borders and browser defaults.
+ */
+.devices {
+  --set-btn: #f1f1f1;
+  --set-btn-hover: #f1f0ec;
+  --set-btn-ink: #151c13;
+  --set-card: #ffffff;
+  --set-card-edge: #f3efeb;
+  --set-field-edge: #e3e3e0;
+  --set-field: transparent;
+  --set-title: var(--text-strong);
+}
+
+:root[data-theme="dark"] .devices {
+  --set-btn: #2e2e2e;
+  --set-btn-hover: #ffffff1a;
+  --set-btn-ink: var(--text-strong);
+  --set-card: #282828;
+  --set-card-edge: #3d3d3d;
+  --set-field-edge: #3a3a3a;
+  --set-field: rgb(58 58 58 / 0.3);
+  --set-title: #f4f4f5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .devices {
+    --set-btn: #2e2e2e;
+    --set-btn-hover: #ffffff1a;
+    --set-btn-ink: var(--text-strong);
+    --set-card: #282828;
+    --set-card-edge: #3d3d3d;
+    --set-field-edge: #3a3a3a;
+    --set-field: rgb(58 58 58 / 0.3);
+    --set-title: #f4f4f5;
+  }
+}
+
+.devices h2 {
+  margin: 0 0 26px;
+  color: var(--set-title);
+  font-size: calc(24px * var(--ui-font-scale, 1));
+  font-weight: 400;
+  line-height: calc(38.4px * var(--ui-font-scale, 1));
+}
+
+.devices p {
+  margin: 0 0 14px;
+  color: var(--text-base);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  line-height: calc(20px * var(--ui-font-scale, 1));
+}
+
+.devices > button {
+  margin-bottom: 14px;
+}
+
+/* The empty list is a card with one line in it, as every other empty list on these pages is. */
+.devices > .empty,
+.device {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 16px;
+  background: var(--set-card);
+  border: 1px solid var(--set-card-edge);
+  border-radius: 16px;
+}
+
+.device {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.identity {
+  display: grid;
+  flex: 1;
+  gap: 4px;
+  min-width: 130px;
+  overflow-wrap: anywhere;
+}
+
+.identity strong {
+  color: var(--text-strong);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  font-weight: 530;
+}
+
+.identity span,
+.badge {
+  color: var(--text-base);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+
+.badge {
+  padding: 2px 8px;
+  border: 1px solid currentColor;
+  border-radius: 16px;
+}
+
+.badge[data-status="connected"] {
+  color: var(--text-success);
+}
+
+.badge[data-status="authFailed"],
+.badge[data-status="unreachable"] {
+  color: var(--text-critical);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.devices .result {
+  flex-basis: 100%;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.device-dialog {
+  width: min(390px, calc(100vw - 40px));
+  padding: 20px;
+  color: var(--text-strong);
+  background: var(--surface-raised);
+  border: 1px solid var(--set-card-edge);
+  border-radius: 16px;
+}
+
+.device-dialog::backdrop {
+  background: var(--scrim);
+}
+
+.form {
+  display: grid;
+  gap: 14px;
+}
+
+.form h3 {
+  margin: 0;
+  font-size: calc(15px * var(--ui-font-scale, 1));
+  font-weight: 600;
+}
+
+.form p {
+  margin: 0;
+}
+
+.form .actions {
+  justify-content: flex-end;
+}
+
+fieldset {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+label {
+  display: grid;
+  gap: 5px;
+  color: var(--text-base);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+
+button {
+  flex-shrink: 0;
+  height: calc(28px * var(--ui-font-scale, 1));
+  padding: 0 12px;
+  color: var(--set-btn-ink);
+  background: var(--set-btn);
+  border: 0;
+  border-radius: 8px;
+  font: inherit;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+button:not(:disabled) {
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: var(--set-btn-hover);
+}
+
+button:disabled {
+  opacity: 0.4;
+}
+
+input,
+select {
+  box-sizing: border-box;
+  height: calc(30px * var(--ui-font-scale, 1));
+  padding: 0 10px;
+  color: var(--text-strong);
+  background: var(--set-field);
+  border: 1px solid var(--set-field-edge);
+  border-radius: 8px;
+  outline: none;
+  font: inherit;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+input:focus-visible,
+select:focus-visible {
+  border-color: var(--text-base);
+}
 </style>

@@ -348,7 +348,8 @@ defineExpose({ close })
           <button type="button" @click="search">{{ t("searchOverlay.retry") }}</button>
         </div>
         <div v-if="!flat.length && artifactStatus === 'loading'" class="sr-empty" role="status" aria-live="polite" data-search-loading>{{ t("searchOverlay.loading") }}</div>
-        <div v-else-if="!flat.length && artifactStatus !== 'error' && !messageFailed" class="sr-empty">{{ t("searchOverlay.empty") }}</div>
+        <!-- Only once something was asked for: with nothing typed there is nothing that failed to match. -->
+        <div v-else-if="!flat.length && query.trim() && artifactStatus !== 'error' && !messageFailed" class="sr-empty">{{ t("searchOverlay.empty") }}</div>
         <div v-for="group in groups" :key="group.kind" class="sr-group">
           <div class="sr-head">{{ t(HEAD[group.kind]) }}</div>
           <button
@@ -422,6 +423,15 @@ defineExpose({ close })
   gap: 10px;
   padding: 13px 16px;
   border-bottom: 1px solid var(--border-weak);
+}
+
+/* Nothing typed and nothing to list: the field stands alone, without an empty strip and a rule under it. */
+.search-results:empty {
+  display: none;
+}
+
+.search-bar:has(+ .search-results:empty) {
+  border-bottom-color: transparent;
 }
 
 .search-bar .i {
