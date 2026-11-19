@@ -306,28 +306,31 @@ export function showsPath(name: string): boolean {
 }
 
 /**
- * `text` at most `max` UTF-16 units long, with a "…" where it was cut. The cut
- * never falls between the halves of a surrogate pair, which would draw as a
- * replacement glyph.
+ * `text` cut to fit `max` UTF-16 units once the dots that show the cut are
+ * counted. The dots are not part of the text - a row draws them (steps.css), so
+ * that a copied or a read-out title is the title and not a title with dots on
+ * it. The cut never falls between the halves of a surrogate pair, which would
+ * draw as a replacement glyph.
  */
 export function cutTitle(text: string, max: number): string {
   if (text.length <= max) return text
   let end = Math.max(0, max - 1)
   const last = text.charCodeAt(end - 1)
   if (end > 0 && last >= 0xd800 && last <= 0xdbff) end -= 1
-  return `${text.slice(0, end)}…`
+  return text.slice(0, end)
 }
 
 /**
  * A path as the row draws it: the folders, which the row may cut, and the
  * separator and file name after them, which it keeps. A path that has no folder
- * to cut, or whose file name alone fills the row, is all head.
+ * to cut, or whose file name alone fills the row, is all head. `cut` says the
+ * head was cut, for the row to draw its dots after it.
  */
-export function pathTitleParts(path: string, max: number): { head: string; tail: string } {
+export function pathTitleParts(path: string, max: number): { head: string; tail: string; cut: boolean } {
   const found = /^([\s\S]+)([\\/][^\\/]+)$/.exec(path)
   const tail = found?.[2] ?? ""
-  if (!found || tail.length >= max - 1) return { head: cutTitle(path, max), tail: "" }
-  return { head: cutTitle(found[1]!, max - tail.length), tail }
+  if (!found || tail.length >= max - 1) return { head: cutTitle(path, max), tail: "", cut: path.length > max }
+  return { head: cutTitle(found[1]!, max - tail.length), tail, cut: found[1]!.length > max - tail.length }
 }
 
 export type Bucket = "read" | "edit" | "run" | "search" | "other"

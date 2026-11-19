@@ -137,6 +137,11 @@
   text-overflow: ellipsis;
 }
 
+/* The dots of a title cut to length are drawn here, not written into it: a copied title is the whole title as far as it goes. */
+.hs-head.cut::after {
+  content: "…";
+}
+
 .hs-tail {
   flex: none;
   max-width: 100%;
