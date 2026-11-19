@@ -1103,12 +1103,12 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
                 <label class="cp-tick">
                   <input type="checkbox" :checked="currentThinking.canOff" data-model-thinking="canOff"
                     @change="setCanOff(editor, ($event.target as HTMLInputElement).checked)" />
-                  {{ t("set.permAllow") }} {{ t("set.motion.off") }}
+                  {{ t("set.models.allowOff") }}
                 </label>
                 <label class="cp-thinking-default">
-                  {{ t("effort.default") }}
+                  {{ t("set.models.defaultEffort") }}
                   <select v-model="preferredLevel" data-model-effort-default>
-                    <option value="auto">{{ t("effort.default") }}</option>
+                    <option value="auto">{{ t("set.models.noDefault") }}</option>
                     <option v-for="level in selectedEfforts" :key="level" :value="level">{{ level }}</option>
                   </select>
                 </label>

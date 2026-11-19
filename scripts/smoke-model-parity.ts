@@ -8,6 +8,22 @@ import type { Check } from "./smoke-round5"
 
 export async function modelParityChecks(check: Check, section: (name: string) => void): Promise<void> {
   section("Model editor dialog")
+  const [formSource, i18nSource] = await Promise.all([
+    readFile("src/renderer/src/components/CustomProviderForm.vue", "utf8"),
+    readFile("src/renderer/src/lib/i18n.ts", "utf8"),
+  ])
+  check("thinking checkbox no longer joins two translations",
+    !formSource.includes('t("set.permAllow") }} {{ t("set.motion.off")'))
+  check("thinking checkbox uses the allow-off label",
+    /data-model-thinking="canOff"[^>]*>\s*{{ t\("set\.models\.allowOff"\) }}/.test(formSource))
+  check("thinking default selector uses the default-level label",
+    /{{ t\("set\.models\.defaultEffort"\) }}\s*<select[^>]*data-model-effort-default/.test(formSource))
+  check("thinking default selector uses the no-default label for auto",
+    formSource.includes('<option value="auto">{{ t("set.models.noDefault") }}</option>'))
+  for (const key of ["allowOff", "defaultEffort", "noDefault"]) {
+    const count = i18nSource.match(new RegExp(`^  "set\\.models\\.${key}":`, "gm"))?.length ?? 0
+    check(`set.models.${key} is defined in all 18 language tables`, count === 18, count)
+  }
   const probe = (body: unknown) => probeModels({
     baseURL: "https://example.test",
     apiKey: "",
@@ -25,6 +41,7 @@ export async function modelParityChecks(check: Check, section: (name: string) =>
     stdin: {
       contents: `export { default as Form } from "./src/renderer/src/components/CustomProviderForm.vue"
         export { createApp, nextTick } from "vue"
+        export { t } from "./src/renderer/src/lib/i18n"
         export { notices } from "./src/renderer/src/lib/toast"
         export { fixture } from "./src/renderer/src/stores/app"`,
       resolveDir: process.cwd(),
@@ -77,7 +94,8 @@ export async function modelParityChecks(check: Check, section: (name: string) =>
   new Function("module", "exports", "require", "document", "window", "SVGElement", "Element", "Document", outputFiles[0].text)(
     module, module.exports, require, window.document, window, window.SVGElement ?? class {}, window.Element, window.Document,
   )
-  const { createApp, nextTick, Form, fixture, notices } = module.exports as {
+  const { createApp, nextTick, Form, fixture, notices, t } = module.exports as {
+    t: typeof import("../src/renderer/src/lib/i18n").t
     notices: { warnings: string[]; failures: string[] }
     createApp: typeof import("vue").createApp
     nextTick: typeof import("vue").nextTick
@@ -310,6 +328,10 @@ export async function modelParityChecks(check: Check, section: (name: string) =>
       await event(canOff, "change")
     }
     const defaultSelect = () => document.querySelector<HTMLSelectElement>(preferred)
+    check("mounted thinking checkbox displays the translated allow-off label",
+      find(canOff)?.parentElement?.textContent?.trim() === t("set.models.allowOff"))
+    check("mounted thinking auto option displays the translated no-default label",
+      defaultSelect()?.querySelector('option[value="auto"]')?.textContent?.trim() === t("set.models.noDefault"))
     const selectedDefault = () => {
       const select = defaultSelect()
       return select?.options[select.selectedIndex]?.value
