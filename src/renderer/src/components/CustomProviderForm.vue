@@ -9,7 +9,7 @@ import { notice, notifyFailure } from "../lib/toast"
 import { useEscapeLayerWhile } from "../lib/escape-layer"
 import ConfirmDialog from "./ConfirmDialog.vue"
 import SelectMenu from "./SelectMenu.vue"
-import { LIMIT_PRESETS, MODALITIES, limitLabel, limitOf, modalitySummary, providerIdError, validEndpoint, type Modality } from "../lib/custom-model"
+import { LIMIT_PRESETS, MODALITIES, comboEnterValue, limitLabel, limitOf, modalitySummary, providerIdError, validEndpoint, type Modality } from "../lib/custom-model"
 import { providerIdProblem } from "@shared/provider-id"
 
 /**
@@ -415,8 +415,8 @@ const choiceStart = computed(() => windowedChoices.value
 const choiceEnd = computed(() => windowedChoices.value ? choiceStart.value + emptyQueryLimit : choices.value.length)
 const visibleChoices = computed(() => windowedChoices.value ? choices.value.slice(choiceStart.value, choiceEnd.value) : choices.value)
 
+watch(choices, () => (highlight.value = -1), { flush: "sync" })
 watch(choices, () => {
-  highlight.value = -1
   menuScrollTop.value = 0
   if (comboMenuEl.value) comboMenuEl.value.scrollTop = 0
 }, { flush: "sync" })
@@ -536,7 +536,8 @@ function comboKey(row: ModelRow, event: KeyboardEvent) {
     const choice = choices.value[index]
     if (choice) pickModel(row, choice)
     else {
-      setModelId(row, row.id)
+      const value = comboEnterValue(index, choices.value.map((pick) => pick.id), row.id)
+      setModelId(row, value)
       closeCombo()
     }
   }

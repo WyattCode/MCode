@@ -197,7 +197,7 @@ export async function roundTwentyOneLaneFTwoChecks(check: Check, section: (name:
     check("the provider fields keep their shared font while model IDs and limits use mono", !/cp-in mono/.test(form) && !/\.cp-in\[readonly\]/.test(formStyle) && /13px var\(--font-mono\)/.test(rule(formStyle, ".cp-model-fields .cp-limit-input")))
     check("the clone dialog matches, with MiMo's placeholder", /placeholder="my-provider-copy"/.test(clone) && !/font-family: var\(--font-mono\);/.test(clone))
 
-    check("the picker offers connection results and filters optional names", /for \(const result of probe\.value\.modelIds\)/.test(form) && /typeof result === "string" \? \{ id: result \}/.test(form) && /name\?\.toLowerCase\(\)\.includes\(needle\)/.test(form))
+    check("the picker offers connection results and filters optional names", /for \(const result of probeModelIds\.value\)/.test(form) && /typeof result === "string" \? \{ id: result \}/.test(form) && /name\?\.includes\(needle\)/.test(form) && /name: candidate\.name\?\.toLowerCase\(\)/.test(form))
     check("a row draws the id and its display name", /<span class="cp-option-id">\{\{ choice\.id \}\}<\/span>/.test(form) && /data-model-combo-name/.test(form) && /max-width: 45%;/.test(rule(formStyle, ".cp-option-name")))
     check("the picker list is compact and the limit preset grid has six-pixel gaps", /padding: 4px;/.test(rule(formStyle, ".cp-menu.combo")) && /gap: 6px;/.test(rule(formStyle, ".cp-efforts")))
     check("the picker is elevated under shadow-pop", /background: var\(--surface-page\);/.test(rule(formStyle, ".cp-menu.combo")) && /box-shadow: var\(--shadow-pop\);/.test(rule(formStyle, ".cp-menu.combo")))

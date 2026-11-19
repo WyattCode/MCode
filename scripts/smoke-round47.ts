@@ -114,7 +114,7 @@ export async function roundFortySevenChecks(check: Check, section: (name: string
   check("the reasoning fieldset is in the model dialog", /data-model-editor-dialog[\s\S]*?<fieldset data-model-reasoning>/.test(form) && !form.includes("data-model-thinking-menu") && !form.includes("data-model-thinking-panel"))
   check("quick settings are above the five columns of levels", /class="cp-quick-settings"[\s\S]*?class="cp-efforts"/.test(form) && /\.cp-efforts \{[^}]*grid-template-columns: repeat\(5, minmax\(0, 1fr\)\);/.test(form))
   check("and saved on the model only when thinking is on", /if \(row\.thinking\.on\) \{\s*model\.thinking = \{/.test(form))
-  check("effort edits retain the may-turn-off capability and a valid preferred level", /const \{ canOff, default: preferred \} = currentThinking\.value/.test(form) && /default: preferred && efforts\.includes\(preferred\)/.test(form))
+  check("effort edits retain the may-turn-off capability and a valid preferred level", /row\.thinking = \{ \.\.\.settings, on: efforts\.length > 0, efforts: \[\.\.\.efforts\] \}/.test(form) && /default: activeDefault\.value/.test(form) && /const activeDefault = computed\(\(\) => selectedEfforts\.value\.find\(\(level\) => level === currentThinking\.value\.default\)\)/.test(form))
   // A thinking model with no level has an empty menu and sends no effort - it silently stops thinking.
   check("the last level stays selected until the no-adjustment preset turns it off", /if \(efforts\.length\) setEfforts\(row, efforts\)/.test(form) && /:disabled="selectedEfforts\.length === 1 && selectedEfforts\.includes\(level\)"/.test(form))
 }
