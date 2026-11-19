@@ -32,7 +32,7 @@ import { chordOf, composing, formatChord, recordingChord, shownModText } from ".
 import { layerOpen } from "../lib/escape-layer"
 import { boundShortcut, shortcutChords } from "@shared/chord"
 import { bindingConflict, changeShortcut, pageRows, recordShortcutKey } from "../lib/shortcut-page"
-import { fullAccessOff } from "../lib/confirm-queue"
+import { accessPatch, fullAccessOff } from "../lib/confirm-queue"
 import { notifyFailure, notify } from "../lib/toast"
 import { installUpdate, updateState } from "./UpdatePill.vue"
 import { writeText } from "./../lib/clipboard"
@@ -1861,12 +1861,13 @@ const shortcutRows = computed(() => {
   })
 })
 
-/* MiMo's switch: turned off while at full access, the level drops to the default and says so. */
+const confirmingFullAccess = ref(false)
+const enablingFullAccess = ref(false)
 async function toggleFullAccess() {
   const config = app.config
   if (!config) return
   if (!config.allowFullAccess) {
-    await app.patchConfig({ allowFullAccess: true })
+    confirmingFullAccess.value = true
     return
   }
   const { patch, dropped } = fullAccessOff(config)
@@ -1875,6 +1876,21 @@ async function toggleFullAccess() {
     if (dropped) app.announceAccess("ask")
   } catch {
     /* patchConfig has said so */
+  }
+}
+
+async function enableFullAccess() {
+  const config = app.config
+  if (!config || enablingFullAccess.value) return
+  enablingFullAccess.value = true
+  try {
+    await app.patchConfig({ allowFullAccess: true, ...accessPatch(config, "full") })
+    app.announceAccess("full")
+    confirmingFullAccess.value = false
+  } catch {
+    // patchConfig already toasts; keep the confirm dialog open.
+  } finally {
+    enablingFullAccess.value = false
   }
 }
 
@@ -1952,6 +1968,10 @@ function onKeydown(event: KeyboardEvent) {
   if (event.key !== "Escape") return
   /* As in MiMo, the overlay closes only when nothing on top of it took the Escape. An open picker marks it taken. */
   if (event.defaultPrevented) return
+  if (confirmingFullAccess.value) {
+    confirmingFullAccess.value = false
+    return
+  }
   if (confirmingVoiceSend.value) {
     confirmingVoiceSend.value = false
     return
@@ -2301,10 +2321,8 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <!-- MiMo's 权限 section: its full access gate alone. -->
           <h3 data-section="permissions">{{ t("set.sectionPermissions") }}</h3>
           <div class="card">
-            <!-- MiMo's gate: full access can only be picked in the box once this is on. -->
             <div class="line">
               <div class="line-text">
                 <div class="line-title">{{ t("set.allowFullAccess") }}</div>
@@ -2322,6 +2340,25 @@ onBeforeUnmount(() => {
                 <span class="knob" />
               </button>
             </div>
+
+            <Teleport to="body">
+              <div v-if="confirmingFullAccess" class="vs-scrim" @mousedown.self="confirmingFullAccess = false">
+                <div v-modal class="vs-dialog" data-modal-keep-focus role="alertdialog" aria-modal="true" aria-labelledby="vs-full-access-title">
+                  <div class="vs-head">
+                    <svg class="vs-warn" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#d93025" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
+                      <path d="M12 9v4M12 17h.01" />
+                    </svg>
+                    <div id="vs-full-access-title" class="vs-title">{{ t("composer.access.confirmTitle") }}</div>
+                  </div>
+                  <p class="vs-body">{{ t("composer.access.confirmBody") }}</p>
+                  <div class="vs-actions">
+                    <button class="vs-cancel" type="button" @click="confirmingFullAccess = false">{{ t("common.cancel") }}</button>
+                    <button class="vs-ok" type="button" :disabled="enablingFullAccess" @click="enableFullAccess">{{ t("composer.access.confirmOk") }}</button>
+                  </div>
+                </div>
+              </div>
+            </Teleport>
 
             <div v-if="userVerify.supported" class="line" data-user-verify-row>
               <div class="line-text">
