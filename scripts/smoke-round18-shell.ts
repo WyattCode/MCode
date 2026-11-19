@@ -164,7 +164,7 @@ export async function roundEighteenShellChecks(check: Check, section: (name: str
     const composer = await read("src/renderer/src/components/Composer.vue")
     const block = composer.slice(composer.indexOf('<template v-if="customRows.length">'), composer.indexOf('<div class="rule" />\n              <button', composer.indexOf('<template v-if="customRows.length">')))
     check("R18-U10: one group per custom provider, keyed by its id", /v-for="group in customGroups" :key="group\.id"[^>]*:data-model-provider="group\.id"/.test(block), block.slice(0, 300))
-    check("R18-U10: each headed by the provider's name", /<div class="provider-head" :data-model-provider-head="group\.id">\{\{ group\.name \}\}<\/div>/.test(block))
+    check("R18-U10: each headed by the provider's name (told apart by host when two share one)", /<div class="provider-head" :data-model-provider-head="group\.id">\{\{ providerHeadings\.get\(group\.id\) \?\? group\.name \}\}<\/div>/.test(block))
     check("R18-U10: and its rows under it, not one flat run", /v-for="row in group\.rows"/.test(block) && !/v-for="row in customRows"/.test(block))
     check("R18-U10: the groups come from the configured custom providers, named by display name", /const customGroups = computed\(\(\) =>\s*groups\.value\s*\.filter\(\(group\) => group\.provider\.custom\)\s*\.map\(\(group\) => \(\{ id: group\.provider\.id, name: group\.provider\.name \|\| group\.provider\.id, rows: rowsOf\(group\) \}\)\)/.test(composer))
     check("R18-U10: the keys still walk every custom row in drawn order", /const customRows = computed\(\(\) => customGroups\.value\.flatMap\(\(group\) => group\.rows\)\)/.test(composer) && /\.\.\.customRows\.value\.map\(\(row\) => row\.key\)/.test(composer))

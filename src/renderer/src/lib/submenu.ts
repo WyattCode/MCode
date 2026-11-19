@@ -20,7 +20,7 @@ export function besideRow(row: DOMRect, width: number, height: number, gap = 4, 
  * MiMo never lets a submenu rise into the title bar: on Windows and Linux the
  * bar overlays the page, so the top edge is its 46px plus 8. macOS keeps the edge.
  */
-function topEdge(edge: number): number {
+export function topEdge(edge: number): number {
   const mac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || navigator.userAgent)
   return mac ? edge : 46 + edge
 }

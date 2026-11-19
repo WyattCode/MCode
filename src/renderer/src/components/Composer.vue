@@ -38,7 +38,7 @@ import { annotationSend } from "../lib/annotate"
 import { openDocument } from "../lib/office-open"
 import AnnotationChips from "./AnnotationChips.vue"
 import ModelMenuRow from "./ModelMenuRow.vue"
-import { besideRow } from "../lib/submenu"
+import { besideRow, topEdge } from "../lib/submenu"
 import { isRovingKey, rovingStep, type RovingKey } from "../lib/composer-menu"
 import { focusRow } from "../lib/menu-keys"
 import { useEscapeLayerWhile } from "../lib/escape-layer"
@@ -49,6 +49,7 @@ import QueueBar from "./QueueBar.vue"
 import { deliveryKeys, runningDelivery } from "../lib/composer-delivery"
 import { readContext } from "./session-context"
 import { compactTokens, t, language } from "../lib/i18n"
+import { cutTitle, reducedTitle, showsPath, stepState, stepTitle, stepVerb } from "../lib/tool-meta"
 
 const emit = defineEmits<{
   terminal: []
@@ -834,13 +835,45 @@ const sendLabel = computed(() => {
   return t("composer.send")
 })
 
+/*
+ * What the running turn is doing, in the words the transcript's steps use:
+ * the tool call in flight - 「正在读取 App.vue」. It says nothing while the model
+ * is only thinking or writing, and the box then falls back to a plain line.
+ * A file is named by its file name; the folders are in the transcript.
+ */
+const runningText = computed(() => {
+  // The turn's own message, not the last one: a steer sent mid-turn waits after it as a user message.
+  const last = messagesHere.value.findLast((message) => message.role === "assistant")
+  if (last?.role !== "assistant") return ""
+  for (let at = last.parts.length - 1; at >= 0; at--) {
+    const part = last.parts[at]
+    if (part?.type !== "tool") continue
+    if (stepState(part) !== "running") break
+    const title = reducedTitle(stepTitle(part)).split("\n")[0]?.trim() ?? ""
+    const subject = showsPath(part.name) ? (title.split(/[\\/]/).pop() ?? title) : title
+    const verb = stepVerb(part, "running")
+    return subject ? `${verb} ${cutTitle(subject, 48)}` : verb
+  }
+  return ""
+})
+
+/** The running line: the step in flight, or the plain one. */
+const runningLine = computed(() => runningText.value || t("composer.runningIdle"))
+
+/*
+ * A native placeholder cannot cross-fade, but its pseudo-element can run an
+ * animation. Each new line flips between two identical ones, which restarts it,
+ * so the words fade in rather than swap.
+ */
+const statusPhase = ref(0)
+
 const placeholder = computed(() => {
   if (mode.value === "shell") return t("composer.shellPlaceholder")
   // MiMo 26.920's order: compacting, then sending, then a restricted conversation, then the mode's own line, then the everyday one. Attachments do not blank it.
   if (compactingHere.value) return t("composer.compacting")
   if (sending.value) return t("composer.sending")
   if (restrictedHere.value) return t("composer.reviewRestricted")
-  if (runningChat.value) return t("composer.runningPlaceholder", runningKeys.value)
+  if (runningChat.value) return runningLine.value
   if (!props.side && agent.value === "plan") return t("composer.placeholderPlan")
   return t("composer.placeholder")
 })
@@ -879,6 +912,8 @@ const compactingHere = computed(() => !props.side && !props.fresh && app.compact
 
 /* The conversation as it now stands, without anything rolled back. */
 const messagesHere = computed(() => (props.side ? sideMessages.value : app.visible))
+/* After `messagesHere`: a watch reads its source at once, and the running line reads the messages. */
+watch(runningLine, () => (statusPhase.value = statusPhase.value ? 0 : 1))
 
 /* MiMo keeps the AI note's room but hides it until the conversation has a reply. */
 const hasReply = computed(() => messagesHere.value.some((message) => message.role === "assistant"))
@@ -2764,18 +2799,66 @@ useEscapeLayerWhile(
   () => (menu.value = undefined),
 )
 const menuUp = ref(false)
+/** A height cap for the model menu when neither side of its chip has room for all of it; it then scrolls. */
+const menuMax = ref<number>()
+/** Space the menu keeps clear of the window's edge when it has to be fitted. */
+const MENU_EDGE = 8
+/** Under a conversation the box sits at the window's foot, so a menu within this of the bottom opens above. */
+const MENU_FOOT = 60
+
 watch(menu, async (value) => {
   menuUp.value = false
+  menuMax.value = undefined
   if (value !== "plus") {
     skillSubOpen.value = false
     skillQuery.value = ""
   }
-  if ((value !== "access" && value !== "model" && value !== "plus") || props.fresh) return
+  if (value !== "access" && value !== "model" && value !== "plus") return
   await nextTick()
   const shown = value === "access" ? accessMenu.value : value === "plus" ? plusMenu.value : modelMenu.value
-  const rect = shown?.getBoundingClientRect()
-  if (rect && rect.bottom > window.innerHeight - 60) menuUp.value = true
+  /* The menu is placed against its offset parent (`top: 100% + 4px`), not its DOM parent. */
+  const chip = shown?.offsetParent?.getBoundingClientRect()
+  if (!shown || !chip) return
+  /*
+   * Measured from the chip and the menu's own height, not from the menu's rect:
+   * for its first 150ms the menu is mid-entrance, scaled and slid by a
+   * transform, and its rect lies about both its size and its place.
+   *
+   * The room is the window's, cut to the nearest scrolling ancestor - the home
+   * screen's scroll area ends short of the window, and a menu that crosses its
+   * edge gives it a scrollbar, which shifts the centred content sideways.
+   */
+  const { top: limitTop, bottom: limitBottom } = props.fresh ? clipBounds(shown) : { top: 0, bottom: window.innerHeight }
+  const height = shown.offsetHeight
+  const roomBelow = limitBottom - (chip.bottom + 4) - MENU_EDGE
+  const roomAbove = chip.top - 4 - Math.max(limitTop, topEdge(MENU_EDGE))
+  /*
+   * The home screen keeps MiMo's rule that the menu opens below its chip as long
+   * as it fits there; it used to never flip, so a long model list ran past the
+   * window's foot. Under a conversation the box sits at the foot, so a menu
+   * within MENU_FOOT of it opens above. Either way, one that fits neither side
+   * is capped to the side it opens on and scrolls.
+   */
+  const foot = props.fresh ? 0 : MENU_FOOT - MENU_EDGE
+  if (height <= roomBelow - foot) return
+  if (!props.fresh || height <= roomAbove || roomAbove > roomBelow) menuUp.value = true
+  const room = menuUp.value ? roomAbove : roomBelow
+  if (value === "model" && height > room) menuMax.value = Math.max(160, Math.floor(room))
 })
+
+/** The viewport's top and bottom, narrowed to the nearest ancestor that scrolls or clips. */
+function clipBounds(el: HTMLElement): { top: number; bottom: number } {
+  let top = 0
+  let bottom = window.innerHeight
+  for (let node = el.parentElement; node && node !== document.body; node = node.parentElement) {
+    const overflow = getComputedStyle(node).overflowY
+    if (overflow === "visible") continue
+    const rect = node.getBoundingClientRect()
+    top = Math.max(top, rect.top)
+    bottom = Math.min(bottom, rect.bottom)
+  }
+  return { top, bottom }
+}
 
 /**
  * Full turns every bucket that is not denied to allow, and keeps the map it
@@ -2996,6 +3079,31 @@ const customGroups = computed(() =>
 )
 const customRows = computed(() => customGroups.value.flatMap((group) => group.rows))
 
+/*
+ * Two providers can carry one display name (two "Qwen"s on different servers);
+ * then their headings would read the same over different lists. A name that
+ * repeats is followed by the host its provider talks to, so they tell apart.
+ */
+const providerHeadings = computed(() => {
+  const count = new Map<string, number>()
+  for (const group of customGroups.value) count.set(group.name, (count.get(group.name) ?? 0) + 1)
+  const hostOf = (id: string) => {
+    const url = app.providers.find((p) => p.id === id)?.baseURL
+    if (!url) return ""
+    try {
+      return new URL(url).host
+    } catch {
+      return ""
+    }
+  }
+  return new Map(
+    customGroups.value.map((group) => {
+      const host = (count.get(group.name) ?? 0) > 1 ? hostOf(group.id) : ""
+      return [group.id, host ? `${group.name} · ${host}` : group.name] as const
+    }),
+  )
+})
+
 function closeModelSubs() {
   modelSub.value = undefined
   moreSub.value = undefined
@@ -3076,9 +3184,21 @@ function sub2Items(): string[] {
 
 function scrollActiveIntoView() {
   void nextTick(() => {
+    const menuEl = modelMenu.value
     for (const key of [activeKey.value, subKey.value]) {
       if (!key || levelOf(key)) continue
-      modelMenu.value?.querySelector(`[data-key="${CSS.escape(key)}"]`)?.scrollIntoView({ block: "nearest" })
+      const row = menuEl?.querySelector<HTMLElement>(`[data-key="${CSS.escape(key)}"]`)
+      if (!row || !menuEl) continue
+      // A row in the menu itself scrolls only the menu, and only when the menu scrolls (it is capped to the room it has);
+      // scrollIntoView would also scroll the page around it. A row in "more models" is in its own scroller.
+      if (row.closest(".more-menu")) {
+        row.scrollIntoView({ block: "nearest" })
+      } else if (menuEl.scrollHeight > menuEl.clientHeight) {
+        const rowRect = row.getBoundingClientRect()
+        const menuRect = menuEl.getBoundingClientRect()
+        if (rowRect.top < menuRect.top) menuEl.scrollTop -= menuRect.top - rowRect.top
+        else if (rowRect.bottom > menuRect.bottom) menuEl.scrollTop += rowRect.bottom - menuRect.bottom
+      }
     }
   })
 }
@@ -3210,7 +3330,8 @@ function openModelMenu() {
   menu.value = "model"
   activeKey.value = modelKeys.value.includes(currentKey.value) ? currentKey.value : modelKeys.value[0]
   void nextTick(() => {
-    modelMenu.value?.focus()
+    // Focus without scrolling: the default scrolls every ancestor to bring the menu into view, which moved the home screen's content.
+    modelMenu.value?.focus({ preventScroll: true })
     scrollActiveIntoView()
   })
 }
@@ -3662,6 +3783,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           ref="input"
           v-model="text"
           class="input"
+          :class="runningChat && placeholder === runningLine ? (statusPhase ? 'status-b' : 'status-a') : undefined"
           rows="1"
           spellcheck="false"
           :placeholder="placeholder"
@@ -3897,6 +4019,10 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           </button>
           </div>
 
+          <!-- What Enter and the steer key do, once there is something to send into the turn: in the bar's free space, so no line is added and nothing moves. -->
+          <span class="running-keys" :class="{ on: runningChat && hasContent }" data-running-send-hint aria-hidden="true"
+            ><span>{{ t("composer.runningHint", runningKeys) }}</span></span
+          >
           <div ref="rowEnd" class="row-end">
 
           <!--
@@ -3945,7 +4071,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               v-if="menu === 'model'"
               ref="modelMenu"
               class="menu model-menu"
-              :class="{ up: menuUp }"
+              :class="{ up: menuUp, capped: menuMax !== undefined }"
+              :style="menuMax !== undefined ? { maxHeight: `${menuMax}px` } : undefined"
               tabindex="-1"
               @keydown="onModelKeys"
               @focusout="onMenuFocusOut"
@@ -4045,7 +4172,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               <template v-if="customRows.length">
                 <div class="rule" />
                 <div v-for="group in customGroups" :key="group.id" class="provider-group" :data-model-provider="group.id">
-                  <div class="provider-head" :data-model-provider-head="group.id">{{ group.name }}</div>
+                  <div class="provider-head" :data-model-provider-head="group.id">{{ providerHeadings.get(group.id) ?? group.name }}</div>
                   <ModelMenuRow
                     v-for="row in group.rows"
                     :key="row.key"
@@ -4241,8 +4368,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
         </div>
       </div>
     </div>
-
-    <p v-if="runningChat" class="ai-note running-send-hint" data-running-send-hint>{{ t("composer.runningHint", runningKeys) }}</p>
 
     <!--
       Under a conversation's box, as MiMo has one: answers are generated and can
@@ -5507,6 +5632,22 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   bottom: calc(100% + 4px);
 }
 
+/* Fitted to the room beside the chip: the rows scroll inside it. Submenus are fixed, so this does not clip them. */
+.menu.model-menu.capped {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /*
+   * The glass layer is the menu's own ::before, which scrolls away with the
+   * rows once the menu scrolls; the surface goes on the menu itself instead
+   * (no blur: it would hold the fixed submenus to the menu, see .menu::before).
+   */
+  background: color-mix(in srgb, var(--surface-menu) 92%, transparent);
+}
+
+.menu.model-menu.capped::before {
+  display: none;
+}
+
 .model-menu:focus {
   outline: none;
 }
@@ -5565,6 +5706,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   font-size: calc(11px * var(--ui-font-scale, 1));
   line-height: 1.3;
   white-space: normal;
+  /* Two even lines rather than one long one and a word-part left over (「标 / 准档」). */
+  text-wrap: balance;
 }
 
 .model-check path,
@@ -5793,8 +5936,70 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 }
 
 /* Not under the floating chat's box, as in MiMo. */
-#float-dock .ai-note:not(.running-send-hint) {
+#float-dock .ai-note {
   display: none;
+}
+
+/* The running line is the placeholder: each new one fades in (see statusPhase). */
+.input.status-a::placeholder {
+  animation: status-in-a 0.3s ease-out;
+}
+
+.input.status-b::placeholder {
+  animation: status-in-b 0.3s ease-out;
+}
+
+@keyframes status-in-a {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes status-in-b {
+  from {
+    opacity: 0;
+  }
+}
+
+/* The keys hint takes the bar's free space and gives way first; it fades in with the first word typed. */
+.running-keys {
+  /* Basis 0 and no padding of its own: it never asks the bar for width, so it cannot make the bar wrap to another line. */
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-weak);
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  text-align: end;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+  user-select: none;
+}
+
+.running-keys > span {
+  display: inline-block;
+  box-sizing: border-box;
+  max-width: 100%;
+  padding-inline: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: top;
+}
+
+.running-keys.on {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .input.status-a::placeholder,
+  .input.status-b::placeholder {
+    animation: none;
+  }
+
+  .running-keys {
+    transition: none;
+  }
 }
 
 /*
