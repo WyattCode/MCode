@@ -40,10 +40,10 @@ export type Modality = (typeof MODALITIES)[number]
  * all read, otherwise the ones that are, joined with a dot; PDF after either;
  * a dash for none. MiMo's `omni` leaves PDF out of the test, and so does this.
  */
-export function modalitySummary(on: Record<Modality, boolean>, label: (key: Modality | "omni") => string): string {
+export function modalitySummary(on: Record<Modality, boolean>, label: (key: Modality | "omni") => string, separator = "·"): string {
   const media = (["image", "audio", "video"] as const).filter((key) => on[key])
-  const head = media.length === 3 ? label("omni") : media.map(label).join("·")
-  return [head, on.pdf ? label("pdf") : ""].filter(Boolean).join("·") || "—"
+  const head = media.length === 3 ? label("omni") : media.map(label).join(separator)
+  return [head, on.pdf ? label("pdf") : ""].filter(Boolean).join(separator) || "—"
 }
 
 /** A free id for a clone, MiMo's way: `<id>-copy`, then `-copy-2`, `-copy-3`... (free without regard to case). */

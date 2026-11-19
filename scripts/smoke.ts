@@ -17,6 +17,7 @@
  */
 import "./fenced-home"
 import "./safe-listen"
+import { modelParityChecks } from "./smoke-model-parity"
 import { createRequire } from "node:module"
 import fs from "node:fs/promises"
 import os from "node:os"
@@ -349,6 +350,8 @@ section("A second look at 1.0.6: notices keep to their conversation, and the pie
   check("the spine moves focus without scrolling the clipped rail", spine.includes("focus({ preventScroll: true })"))
   check("full access cannot be confirmed twice at once", composer.includes("applyingFull") && composer.includes(':busy="applyingFull"'))
 }
+
+await modelParityChecks(check, section)
 
 section("This suite stays reviewable")
 {

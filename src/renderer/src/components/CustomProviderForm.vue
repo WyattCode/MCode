@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from "vue"
 import type { CustomModel, CustomProvider, Effort, ModelInfo } from "@shared/protocol"
 import { THINKING_LEVELS } from "@shared/effort-menu"
 import { modelLimitProblem, normalizeBaseURL, normalizeModelId, normalizeProviderProtocol, PROVIDER_PRESETS } from "@shared/custom-endpoint"
@@ -13,8 +13,7 @@ import { LIMIT_PRESETS, MODALITIES, comboEnterValue, limitLabel, limitOf, modali
 import { providerIdProblem } from "@shared/provider-id"
 
 /**
- * A custom provider, laid out as MiMo 26.920's models page lays one out: the
- * provider's connection fields, then a model picker and an editor per model.
+ * A custom provider's connection fields and model list with a modal editor.
  * A preset supplies the provider identity, endpoint and protocol.
  *
  * Two hosts: the models page, which draws its own action bar and calls
@@ -109,26 +108,24 @@ function storedRow(model: CustomModel): ModelRow {
   }
 }
 
-function newRow(id: string): ModelRow {
-  const hint = known(id)
-  const context = String(hint?.contextWindow || "")
-  const output = String(hint?.maxOutput || "")
-  const defaults = modelLimitProblem(context, output) === undefined
+const blankMods = (): Mods => ({ image: false, audio: false, video: false, pdf: false })
+
+function newRow(): ModelRow {
   return {
     key: nextKey++,
-    id,
-    name: hint && hint.name !== hint.id ? hint.name : "",
-    context: defaults ? context : "",
-    output: defaults ? output : "",
-    mods: { image: hint?.inputs.image ?? false, audio: hint?.inputs.audio ?? false, video: hint?.inputs.video ?? false, pdf: hint?.inputs.pdf ?? false },
+    id: "",
+    name: "",
+    context: "",
+    output: "",
+    mods: blankMods(),
     thinking: blankThinking(),
-    // A model the catalog knows arrives with its inputs stated; one it does not is left for the backend's catalog.
-    touched: Boolean(hint),
+    touched: false,
   }
 }
 
 const editing = props.editing
-type Probe = { status: "idle" | "busy" | "ok" | "fail"; modelIds: string[]; text: string }
+type ModelCandidate = Pick<ModelInfo, "id"> & Partial<Pick<ModelInfo, "name" | "contextWindow" | "maxOutput" | "inputs">>
+type Probe = { status: "idle" | "busy" | "ok" | "fail"; modelIds: (string | ModelCandidate)[]; text: string }
 const idleProbe = (): Probe => ({ status: "idle", modelIds: [], text: "" })
 const preset = computed(() => {
   if (!editing) return props.preset ?? "custom"
@@ -335,78 +332,197 @@ onMounted(() => {
   if (props.autofocus) providerIdEl.value?.focus()
 })
 
-/* ------------------------------------------------------------ the model picker */
+/* ------------------------------------------------------------ the model editor */
 
-const query = ref("")
-const queryError = ref(false)
-const expandedModel = ref<number>()
-watch(query, () => (queryError.value = false))
-const openMenu = ref<string>()
-/* The suggestion moved to; none until the arrows or the pointer pick one. */
+type ModelField = "name" | "context" | "output" | "modalities"
+type ErrorField = "modelId" | "context" | "output"
+const editor = ref<ModelRow>()
+const editorMode = ref<"add" | "edit">("add")
+const fieldErrors = ref<Partial<Record<ErrorField, string>>>({})
+const dirtyFields = new Set<ModelField>()
+const autoFilled = new Set<ModelField>()
+let selectedId: string | undefined
+const comboOpen = ref(false)
+const composing = ref(false)
 const highlight = ref(-1)
-
-/**
- * What the picker offers, as MiMo fills its own: everything the connection test
- * found, then every model this app already knows - so a provider whose endpoint
- * has no /models still has a list to pick from - each with the display name to
- * show beside its id. Ids already added drop out, and the typed text narrows on
- * either part.
- */
-const choices = computed(() => {
-  const merged = new Map<string, string>()
-  for (const id of probe.value.modelIds) merged.set(id, known(id)?.name ?? "")
-  for (const provider of app.providers) {
-    if (provider.id === props.editing?.id) continue
-    for (const model of provider.models) if (!merged.has(model.id)) merged.set(model.id, model.name)
+const comboEl = ref<HTMLInputElement>()
+const comboMenuEl = ref<HTMLElement>()
+const recommendation = computed<Thinking | undefined>(() => {
+  const row = editor.value
+  if (!row) return
+  const stored = row.stored?.id === normalizeModelId(row.id) ? row.stored?.thinking : undefined
+  if (stored?.default) {
+    return { on: true, efforts: stored.efforts, canOff: stored.canOff === true, default: stored.default }
   }
-  const needle = query.value.trim().toLowerCase()
-  const added = new Set(form.value.models.map((row) => normalizeModelId(row.id)))
-  return [...merged]
-    .filter(([id, name]) => !added.has(id) && (!needle || id.toLowerCase().includes(needle) || name.toLowerCase().includes(needle)))
-    .map(([id, name]) => ({ id, name: name === id ? "" : name }))
+  const hint = known(row.id)
+  const efforts = THINKING_LEVELS.filter((level) => hint?.variants.includes(level))
+  if (efforts.length) return { on: true, efforts, canOff: hint?.variants.includes("none") ?? false, default: hint?.defaultEffort }
+})
+const reasoningChanged = ref(false)
+const currentThinking = computed(() => {
+  if (editorMode.value === "add" && !reasoningChanged.value && recommendation.value) return recommendation.value
+  return editor.value?.thinking ?? blankThinking()
 })
 
-/* Synchronous, so an ArrowDown that opens the list lands on its first row rather than being reset after. */
-watch([query, () => openMenu.value === "combo"], () => (highlight.value = -1), { flush: "sync" })
-const comboMenuEl = ref<HTMLElement>()
+const choices = computed(() => {
+  const needle = editor.value?.id.trim().toLowerCase() ?? ""
+  const candidates = new Map<string, ModelCandidate>()
+  for (const result of probe.value.modelIds) {
+    const candidate = typeof result === "string" ? { id: result } : result
+    candidates.set(candidate.id, candidate)
+  }
+  return [...candidates.values()].filter(({ id, name }) =>
+    id.toLowerCase().includes(needle) || name?.toLowerCase().includes(needle),
+  )
+})
 
-/* The row the keyboard moved to is scrolled into the list's view; a row under the pointer is already in it. */
-function revealHighlight() {
-  void nextTick(() => comboMenuEl.value?.querySelector<HTMLElement>(".cp-option.on")?.scrollIntoView({ block: "nearest" }))
+watch(choices, () => (highlight.value = -1), { flush: "sync" })
+
+function closeCombo() {
+  comboOpen.value = false
+  highlight.value = -1
 }
 
-function addModel(raw: string) {
-  const id = normalizeModelId(raw)
-  if (!id) {
-    queryError.value = true
-    return
-  }
-  if (form.value.models.some((row) => normalizeModelId(row.id) === id)) {
-    notice.warning(t("set.models.modelExists"))
-    return
-  }
-  const row = newRow(id)
-  form.value.models.push(row)
-  expandedModel.value = row.key
-  query.value = ""
-  openMenu.value = undefined
+function closeEditor() {
+  closeCombo()
+  editor.value = undefined
+  composing.value = false
 }
 
-function comboKey(event: KeyboardEvent) {
-  if (event.isComposing) return
-  if (event.key === "ArrowDown") {
+useEscapeLayerWhile(() => editor.value, () => {
+  if (comboOpen.value) closeCombo()
+  else closeEditor()
+})
+
+function openEditor(row?: ModelRow) {
+  editorMode.value = row ? "edit" : "add"
+  editor.value = row
+    ? { ...row, mods: { ...row.mods }, thinking: { ...row.thinking, efforts: [...row.thinking.efforts] } }
+    : newRow()
+  dirtyFields.clear()
+  autoFilled.clear()
+  selectedId = undefined
+  fieldErrors.value = {}
+  reasoningChanged.value = false
+  void nextTick(() => (row ? nameEl.value : comboEl.value)?.focus())
+}
+
+const nameEl = ref<HTMLInputElement>()
+const dialogId = useId()
+const comboId = `${dialogId}-combo`
+const limitFields = ["context", "output"] as const
+
+function setModelId(row: ModelRow, id: string) {
+  if (selectedId !== undefined && normalizeModelId(id) !== normalizeModelId(selectedId)) {
+    for (const field of autoFilled) {
+      if (dirtyFields.has(field)) continue
+      if (field === "modalities") {
+        row.mods = blankMods()
+        row.touched = Boolean(row.stored)
+      } else {
+        row[field] = ""
+        if (field !== "name") delete fieldErrors.value[field]
+      }
+    }
+    selectedId = undefined
+    autoFilled.clear()
+  }
+  row.id = id
+  delete fieldErrors.value.modelId
+}
+
+function inputModelId(row: ModelRow, event: Event) {
+  if (composing.value) return
+  setModelId(row, (event.target as HTMLInputElement).value)
+  comboOpen.value = true
+}
+
+function endComposition(row: ModelRow, event: CompositionEvent) {
+  composing.value = false
+  inputModelId(row, event)
+}
+
+function pickModel(row: ModelRow, candidate: ModelCandidate) {
+  setModelId(row, candidate.id)
+  selectedId = candidate.id
+  if (candidate.name) {
+    row.name = candidate.name
+    autoFilled.add("name")
+    dirtyFields.delete("name")
+  }
+  for (const [field, value] of [["context", candidate.contextWindow], ["output", candidate.maxOutput]] as const) {
+    if (value !== undefined && value > 0) {
+      row[field] = String(value)
+      delete fieldErrors.value.context
+      delete fieldErrors.value.output
+      autoFilled.add(field)
+      dirtyFields.delete(field)
+    }
+  }
+  if (candidate.inputs) {
+    row.mods = { ...blankMods(), ...candidate.inputs }
+    row.touched = true
+    autoFilled.add("modalities")
+    dirtyFields.delete("modalities")
+  }
+  closeCombo()
+}
+
+function comboKey(row: ModelRow, event: KeyboardEvent) {
+  if (composing.value || event.isComposing || event.keyCode === 229) return
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
     event.preventDefault()
-    openMenu.value = "combo"
-    highlight.value = Math.min(highlight.value + 1, Math.max(choices.value.length - 1, 0))
-    revealHighlight()
-  } else if (event.key === "ArrowUp") {
-    event.preventDefault()
-    if (highlight.value > 0) highlight.value -= 1
-    revealHighlight()
+    comboOpen.value = true
+    if (!choices.value.length) return
+    const step = event.key === "ArrowDown" ? 1 : -1
+    highlight.value = Math.max(0, Math.min(highlight.value + step, choices.value.length - 1))
+    void nextTick(() => comboMenuEl.value?.querySelector<HTMLElement>(".cp-option.on")?.scrollIntoView?.({ block: "nearest" }))
   } else if (event.key === "Enter") {
     event.preventDefault()
-    addModel(comboEnterValue(openMenu.value === "combo" ? highlight.value : -1, choices.value.map((choice) => choice.id), query.value))
+    const index = comboOpen.value ? highlight.value : -1
+    const value = comboEnterValue(index, choices.value.map((choice) => choice.id), row.id)
+    const choice = choices.value[index]
+    if (choice) pickModel(row, choice)
+    else {
+      setModelId(row, value)
+      closeCombo()
+    }
   }
+}
+
+function onOutside(event: MouseEvent) {
+  if (!(event.target as Element | null)?.closest?.("[data-model-combo-root]")) closeCombo()
+}
+onMounted(() => document.addEventListener("mousedown", onOutside, true))
+onBeforeUnmount(() => document.removeEventListener("mousedown", onOutside, true))
+
+function setLimit(row: ModelRow, field: (typeof limitFields)[number], value: string) {
+  row[field] = value
+  dirtyFields.add(field)
+  delete fieldErrors.value.context
+  delete fieldErrors.value.output
+}
+
+function commitModel() {
+  const row = editor.value
+  if (!row) return
+  const errors: Partial<Record<ErrorField, string>> = {}
+  const idError = modelIdError(row)
+  if (idError) errors.modelId = idError
+  for (const field of limitFields) {
+    if (!limitOf(row[field]).ok) errors[field] = t("set.models.limitInvalid")
+  }
+  if (limitProblem(row) === "pair") errors[row.context.trim() ? "output" : "context"] = t("set.models.limitPair")
+  fieldErrors.value = errors
+  if (Object.keys(errors).length) return
+
+  row.id = normalizeModelId(row.id)
+  row.name = row.name.trim()
+  row.thinking = { ...currentThinking.value, efforts: [...currentThinking.value.efforts] }
+  const index = form.value.models.findIndex((model) => model.key === row.key)
+  if (index < 0) form.value.models.push(row)
+  else form.value.models.splice(index, 1, row)
+  closeEditor()
 }
 
 /*
@@ -439,41 +555,51 @@ async function confirmRemoveModel() {
   removingModel.value = undefined
 }
 
-/* ------------------------------------------------------------ limits and inputs */
-
 function toggleMod(row: ModelRow, key: Modality, on: boolean) {
   row.mods[key] = on
   row.touched = true
+  dirtyFields.add("modalities")
 }
 
-/* ------------------------------------------------------------ thinking */
+const reasoningPresets = [
+  { id: "none", efforts: [], label: () => t("set.models.reasoningNone") },
+  { id: "low-high", efforts: ["low", "medium", "high"], label: () => "low–high" },
+  { id: "low-max", efforts: THINKING_LEVELS, label: () => "low–max" },
+] as const
 
-const levelLabel = (level: Effort) => t(`effort.gpt.${level}`)
+const selectedEfforts = computed(() => currentThinking.value.on ? currentThinking.value.efforts : [])
 
-const standardEfforts: Effort[] = ["low", "medium", "high"]
+function sameEfforts(efforts: readonly Effort[]): boolean {
+  return selectedEfforts.value.length === efforts.length && efforts.every((level) => selectedEfforts.value.includes(level))
+}
 
 function setEfforts(row: ModelRow, efforts: readonly Effort[]) {
-  row.thinking.on = efforts.length > 0
-  if (!efforts.length) return
-  row.thinking.efforts = [...efforts]
-  if (row.thinking.default && !efforts.includes(row.thinking.default)) row.thinking.default = undefined
+  const { canOff, default: preferred } = currentThinking.value
+  reasoningChanged.value = true
+  row.thinking = {
+    on: efforts.length > 0,
+    efforts: [...efforts],
+    canOff,
+    default: preferred && efforts.includes(preferred) ? preferred : undefined,
+  }
 }
 
 function toggleLevel(row: ModelRow, level: Effort) {
-  const efforts = THINKING_LEVELS.filter((one) => (one === level) !== row.thinking.efforts.includes(one))
+  const efforts = THINKING_LEVELS.filter((one) => (one === level) !== selectedEfforts.value.includes(one))
   if (efforts.length) setEfforts(row, efforts)
 }
 
-/* "Thinking only" and "may be turned off" are the two ends of one switch: the model either can be told not to think or cannot. */
-function setCanOff(row: ModelRow, canOff: boolean) {
-  row.thinking.canOff = canOff
+function resetRecommendation(row: ModelRow) {
+  const settings = recommendation.value
+  if (!settings) return
+  reasoningChanged.value = true
+  row.thinking = { ...settings, efforts: [...settings.efforts] }
 }
 
-/* The default is "auto" (the model's first fallback, medium) or one of the levels the model takes. */
-const defaultOptions = (row: ModelRow) => [
-  { value: "auto", label: t("set.models.thinkingAuto") },
-  ...row.thinking.efforts.map((level) => ({ value: level, label: levelLabel(level) })),
-]
+const usesRecommendation = computed(() => {
+  const recommended = recommendation.value
+  return Boolean(recommended && sameEfforts(recommended.efforts) && recommended.default === currentThinking.value.default)
+})
 
 const modLabel = (key: Modality | "omni") =>
   t(
@@ -487,25 +613,6 @@ const modLabel = (key: Modality | "omni") =>
             ? "set.models.modalityVideo"
             : "set.models.modalityPdf",
   )
-
-/* One menu open at a time; a press outside its anchor closes it, and Escape closes it alone. */
-function onOutside(event: MouseEvent) {
-  const key = openMenu.value
-  if (!key) return
-  const anchor = (event.target as Element | null)?.closest?.("[data-menu-anchor]")
-  if (anchor?.getAttribute("data-menu-anchor") !== key) openMenu.value = undefined
-}
-onMounted(() => document.addEventListener("mousedown", onOutside, true))
-onBeforeUnmount(() => document.removeEventListener("mousedown", onOutside, true))
-useEscapeLayerWhile(
-  () => openMenu.value,
-  () => (openMenu.value = undefined),
-  () => (openMenu.value = undefined),
-)
-
-function toggleMenu(key: string) {
-  openMenu.value = openMenu.value === key ? undefined : key
-}
 
 /* ------------------------------------------------------------ headers */
 
@@ -553,7 +660,7 @@ function modelOf(row: ModelRow): CustomModel {
  */
 async function submit(): Promise<boolean> {
   tried.value = true
-  if (busy.value || !canSave.value) {
+  if (busy.value || editor.value || !canSave.value) {
     if (!form.value.models.length) notice.warning(t("set.models.needModel"))
     return false
   }
@@ -719,185 +826,39 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
       </div>
     </div>
 
-    <div class="cp-section">{{ t("set.models.modelList") }}</div>
-    <div class="cp-combo" data-menu-anchor="combo">
-      <input
-        v-model="query"
-        class="cp-in"
-        role="combobox"
-        :aria-expanded="openMenu === 'combo'"
-        :aria-label="t('set.models.comboPlaceholder')"
-        :aria-controls="openMenu === 'combo' ? 'cp-combo-menu' : undefined"
-        :aria-activedescendant="openMenu === 'combo' && choices[highlight] ? `cp-combo-option-${highlight}` : undefined"
-        aria-autocomplete="list"
-        :placeholder="t('set.models.comboPlaceholder')"
-        spellcheck="false"
-        autocomplete="off"
-        data-model-combo
-        @focus="openMenu = 'combo'"
-        @input="openMenu = 'combo'"
-        @keydown="comboKey"
-      />
-      <button type="button" class="cp-btn" data-model-add @click="addModel(query)">{{ t("provider.custom.models.add") }}</button>
-      <div v-if="openMenu === 'combo'" id="cp-combo-menu" ref="comboMenuEl" class="cp-menu combo" role="listbox" data-model-combo-menu>
-        <div v-if="!choices.length" class="cp-menu-empty" data-model-combo-empty>{{ t("set.models.comboEmpty") }}</div>
-        <button
-          v-for="(choice, at) in choices"
-          :key="choice.id"
-          :id="`cp-combo-option-${at}`"
-          type="button"
-          role="option"
-          class="cp-option"
-          :class="{ on: at === highlight }"
-          :aria-selected="at === highlight"
-          :data-model-combo-option="choice.id"
-          @mouseenter="highlight = at"
-          @click="addModel(choice.id)"
-        >
-          <span class="cp-option-id">{{ choice.id }}</span>
-          <span v-if="choice.name" class="cp-option-name" data-model-combo-name>{{ choice.name }}</span>
+    <section class="cp-model-section" data-model-section>
+      <header class="cp-model-list-header" data-model-list-header>
+        <h3>{{ t("set.models.modelList") }}</h3>
+        <button type="button" class="cp-btn cp-model-add" data-model-add @click="openEditor()">
+          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M7 2v10M2 7h10" stroke="currentColor" stroke-linecap="round" /></svg>
+          {{ t("set.models.addModel") }}
         </button>
-      </div>
-    </div>
-    <div v-if="queryError" class="cp-error" role="alert">{{ t("set.models.modelIdRequired") }}</div>
-    <div v-if="!form.models.length" class="cp-menu-empty">{{ t("set.models.modelEmpty") }}</div>
-    <div v-if="tried && !form.models.length" class="cp-error" data-model-needed>{{ t("set.models.needModel") }}</div>
+      </header>
 
-    <div v-for="row in form.models" :key="row.key" class="cp-model" :data-model-card="row.id">
-      <button
-        type="button"
-        class="cp-model-remove"
-        :aria-label="t('provider.custom.models.remove')"
-        :title="t('provider.custom.models.remove')"
-        :data-model-remove="row.id"
-        @click="removingModel = row"
-      >
-        <svg width="15" height="15" viewBox="0 0 14 14" aria-hidden="true">
-          <path d="M3 3.6h8M5.6 3.6V2.4h2.8v1.2M4.2 3.6l.5 7.4h4.6l.5-7.4" stroke="currentColor" stroke-width="1.1" fill="none" stroke-linecap="round" stroke-linejoin="round" />
-        </svg>
-      </button>
-      <div class="cp-model-heading">
-        <span>{{ row.name.trim() || row.id }}</span>
-        <button type="button" class="cp-btn" :aria-expanded="expandedModel === row.key" @click="expandedModel = expandedModel === row.key ? undefined : row.key">
-          {{ t("set.models.editModel") }}
-        </button>
+      <div v-if="form.models.length" class="cp-model-list" data-model-list>
+        <div v-for="row in form.models" :key="row.key" class="cp-model" :data-model-card="row.id">
+          <div class="cp-model-copy">
+            <div class="cp-model-meta">
+              <span class="cp-model-id" :data-model-id="row.id" :title="row.id">{{ row.id }}</span>
+              <span v-if="limitOf(row.context).value !== undefined" class="cp-badge cp-limit-badge" :title="`${t('set.models.limitContext')} ${limitLabel(limitOf(row.context).value)}`">{{ limitLabel(limitOf(row.context).value) }}</span>
+              <span v-if="limitOf(row.output).value !== undefined" class="cp-badge cp-limit-badge">{{ t("set.models.limitOutput") }} {{ limitLabel(limitOf(row.output).value) }}</span>
+              <span v-if="MODALITIES.some((key) => row.mods[key])" class="cp-badge cp-mod-badge" data-model-modality-summary>{{ modalitySummary(row.mods, modLabel, " · ") }}</span>
+            </div>
+            <span v-if="row.name && row.name !== row.id" class="cp-model-name" :title="row.name">{{ row.name }}</span>
+          </div>
+          <div class="cp-model-actions">
+            <button type="button" class="cp-model-icon" :data-model-edit="row.id" :title="t('set.models.editModel')" :aria-label="t('set.models.editModel')" @click="openEditor(row)">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8.8 3.2 2 2M2 12l.5-3.1 7-7a1.4 1.4 0 0 1 2 2l-7 7L2 12Z" /></svg>
+            </button>
+            <button type="button" class="cp-model-icon danger" :data-model-rm="row.id" :title="t('set.models.remove')" :aria-label="t('set.models.remove')" @click="removingModel = row">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h9M5.5 3.5V2h3v1.5M4 3.5l.5 8.5h5l.5-8.5M6 5.5v4.5M8 5.5v4.5" /></svg>
+            </button>
+          </div>
+        </div>
       </div>
-      <template v-if="expandedModel === row.key">
-        <div class="cp-model-names">
-          <label class="cp-cell">
-            {{ t("set.models.modelId") }}
-            <input v-model="row.id" class="cp-in small" spellcheck="false" :data-model-id="row.id" />
-          </label>
-          <label class="cp-cell">
-            {{ t("set.models.displayName") }}
-            <input v-model="row.name" class="cp-in small" :placeholder="row.id" spellcheck="false" :data-model-name="row.id" />
-          </label>
-        </div>
-        <div class="cp-model-options">
-          <div v-for="field in (['context', 'output'] as const)" :key="field" class="cp-pick" :data-menu-anchor="`${field}:${row.key}`">
-            <button type="button" class="cp-pick-btn" :data-model-limit="field" :aria-expanded="openMenu === `${field}:${row.key}`" aria-haspopup="menu" @click="toggleMenu(`${field}:${row.key}`)">
-              <span class="cp-pick-label">{{ t(field === "context" ? "set.models.limitContext" : "set.models.limitOutput") }}</span>
-              <span class="cp-pick-value">
-                {{ limitLabel(limitOf(row[field]).value) }}
-                <svg class="cp-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="m6 9.5 6 6 6-6" />
-                </svg>
-              </span>
-            </button>
-            <div v-if="openMenu === `${field}:${row.key}`" class="cp-menu" role="menu" :data-model-limit-menu="field">
-              <button
-                v-for="value in LIMIT_PRESETS[field]"
-                :key="value"
-                type="button"
-                role="menuitemradio"
-                class="cp-option"
-                :aria-checked="row[field] === String(value)"
-                :data-model-limit-option="`${field}-${value}`"
-                @click="(row[field] = String(value)), (openMenu = undefined)"
-              >
-                <span>{{ value }} ({{ limitLabel(value) }})</span>
-                <span v-if="row[field] === String(value)" class="cp-check">✓</span>
-              </button>
-              <!-- The number itself, preset or not, as MiMo's field shows it: typing 128000 never blanks it. -->
-              <div class="cp-menu-custom">
-                <input
-                  class="cp-in tiny"
-                  inputmode="numeric"
-                  v-model="row[field]"
-                  :placeholder="t('set.models.limitCustom')"
-                  :aria-label="t('set.models.limitCustom')"
-                  :data-model-limit-custom="field"
-                />
-              </div>
-            </div>
-          </div>
-          <div class="cp-pick" :data-menu-anchor="`mods:${row.key}`">
-            <button type="button" class="cp-pick-btn wide" data-model-modality-menu :aria-expanded="openMenu === `mods:${row.key}`" aria-haspopup="menu" @click="toggleMenu(`mods:${row.key}`)">
-              <span class="cp-pick-label">{{ t("set.models.modalities") }}</span>
-              <span class="cp-pick-value">
-                <span data-model-modality-summary>{{ modalitySummary(row.mods, modLabel) }}</span>
-                <svg class="cp-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="m6 9.5 6 6 6-6" />
-                </svg>
-              </span>
-            </button>
-            <div v-if="openMenu === `mods:${row.key}`" class="cp-menu" role="menu" data-model-modality-panel>
-              <label v-for="key in MODALITIES" :key="key" class="cp-option">
-                <input type="checkbox" :checked="row.mods[key]" :data-model-modality="key" @change="toggleMod(row, key, ($event.target as HTMLInputElement).checked)" />
-                {{ modLabel(key) }}
-              </label>
-            </div>
-          </div>
-        </div>
-        <!-- WB's layout: the switches in a row, the default as a drop-down, the levels in three columns - all in the card, not behind a button. -->
-        <div class="cp-think" data-model-thinking-block>
-          <div class="cp-think-switches">
-            <button type="button" class="cp-chip" :aria-pressed="!row.thinking.on" @click="setEfforts(row, [])">{{ t("set.models.reasoningNone") }}</button>
-            <button type="button" class="cp-chip" :aria-pressed="row.thinking.on && row.thinking.efforts.join() === standardEfforts.join()" @click="setEfforts(row, standardEfforts)">low·medium·high</button>
-            <button type="button" class="cp-chip" :aria-pressed="row.thinking.on && row.thinking.efforts.join() === THINKING_LEVELS.join()" @click="setEfforts(row, THINKING_LEVELS)">{{ t("set.models.reasoningAll") }}</button>
-          </div>
-          <div class="cp-think-switches">
-            <label class="cp-tick">
-              <input v-model="row.thinking.on" type="checkbox" data-model-thinking="on" />
-              {{ t("set.models.thinkingOn") }}
-            </label>
-            <template v-if="row.thinking.on">
-              <label class="cp-tick">
-                <input type="checkbox" :checked="!row.thinking.canOff" data-model-thinking="only" @change="setCanOff(row, !($event.target as HTMLInputElement).checked)" />
-                {{ t("set.models.thinkingOnly") }}
-              </label>
-              <label class="cp-tick">
-                <input type="checkbox" :checked="row.thinking.canOff" data-model-thinking="canOff" @change="setCanOff(row, ($event.target as HTMLInputElement).checked)" />
-                {{ t("set.models.thinkingCanOff") }}
-              </label>
-            </template>
-          </div>
-          <template v-if="row.thinking.on">
-            <div class="cp-think-field">
-              <div class="cp-think-label">{{ t("set.models.thinkingDefault") }}</div>
-              <SelectMenu
-                class="cp-select"
-                :model-value="row.thinking.default ?? 'auto'"
-                :options="defaultOptions(row)"
-                match-width
-                :data-model-effort-default="row.id"
-                @update:model-value="row.thinking.default = $event === 'auto' ? undefined : ($event as Effort)"
-              />
-            </div>
-            <div class="cp-think-field">
-              <div class="cp-think-label">{{ t("set.models.thinkingEfforts") }}</div>
-              <div class="cp-think-grid">
-                <button v-for="level in THINKING_LEVELS" :key="level" type="button" class="cp-chip" :aria-pressed="row.thinking.efforts.includes(level)" :disabled="row.thinking.efforts.length === 1 && row.thinking.efforts.includes(level)" :data-model-effort="level" @click="toggleLevel(row, level)">
-                  {{ levelLabel(level) }}
-                </button>
-              </div>
-            </div>
-          </template>
-        </div>
-      </template>
-      <div v-if="modelIdError(row)" class="cp-error" role="alert">{{ modelIdError(row) }}</div>
-      <div v-if="limitProblem(row)" class="cp-error" data-model-limit-error>{{ t(limitProblem(row) === "integer" ? "provider.custom.limitInvalid" : "set.models.limitPair") }}</div>
-    </div>
+      <div v-else class="cp-model-empty" data-model-list-empty>{{ t("set.models.modelEmpty") }}</div>
+      <div v-if="tried && !form.models.length" class="cp-error" data-model-needed>{{ t("set.models.needModel") }}</div>
+    </section>
 
     <details class="cp-headers" :open="preset === 'custom' || Boolean(editing?.headers)">
       <summary class="cp-section">{{ t("provider.custom.headers.label") }}</summary>
@@ -945,6 +906,119 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
     </button>
 
     <Teleport to="body">
+      <div v-if="editor" class="cp-model-scrim" @mousedown.self="closeEditor">
+        <div v-modal class="cp-model-dialog" data-model-editor-dialog :data-model-editor-mode="editorMode" role="dialog" aria-modal="true" :aria-labelledby="`${dialogId}-title`">
+          <h2 :id="`${dialogId}-title`">{{ t(editorMode === "add" ? "set.models.addModel" : "set.models.editModel") }}</h2>
+          <div class="cp-model-fields">
+            <div>
+              <label class="cp-field-label" :for="comboId">{{ t("set.models.modelId") }}</label>
+              <div class="cp-combo" data-model-combo-root>
+                <input
+                  :id="comboId"
+                  ref="comboEl"
+                  :value="editor.id"
+                  class="cp-in"
+                  :class="{ bad: fieldErrors.modelId }"
+                  :placeholder="t('set.models.comboPlaceholder')"
+                  :aria-invalid="Boolean(fieldErrors.modelId)"
+                  :aria-describedby="fieldErrors.modelId ? `${comboId}-error` : undefined"
+                  :aria-controls="comboOpen ? `${comboId}-menu` : undefined"
+                  :aria-activedescendant="comboOpen && choices[highlight] ? `${comboId}-${highlight}` : undefined"
+                  :aria-expanded="comboOpen"
+                  role="combobox"
+                  aria-autocomplete="list"
+                  autocomplete="off"
+                  spellcheck="false"
+                  data-model-combo
+                  @focus="comboOpen = true"
+                  @blur="closeCombo"
+                  @input="inputModelId(editor, $event)"
+                  @compositionstart="composing = true"
+                  @compositionend="endComposition(editor, $event)"
+                  @keydown="comboKey(editor, $event)"
+                />
+                <div v-if="comboOpen" :id="`${comboId}-menu`" ref="comboMenuEl" class="cp-menu combo" role="listbox" data-model-combo-menu :aria-label="t('set.models.modelId')">
+                  <div v-if="!choices.length" class="cp-menu-empty" data-model-combo-empty>{{ t("set.models.comboEmpty") }}</div>
+                  <button v-for="(choice, index) in choices" :id="`${comboId}-${index}`" :key="choice.id" type="button" role="option" tabindex="-1"
+                    class="cp-option" :class="{ on: highlight === index }" :aria-selected="highlight === index"
+                    :data-model-combo-option="choice.id" @mouseenter="highlight = index" @mousedown.prevent @click="pickModel(editor, choice)">
+                    <span class="cp-option-id">{{ choice.id }}</span>
+                    <span v-if="choice.name" class="cp-option-name" data-model-combo-name>{{ choice.name }}</span>
+                  </button>
+                </div>
+              </div>
+              <div v-if="fieldErrors.modelId" :id="`${comboId}-error`" role="alert" class="cp-error" data-model-field-error="modelId">{{ fieldErrors.modelId }}</div>
+            </div>
+            <div>
+              <label class="cp-field-label" :for="`${dialogId}-name`">{{ t("set.models.displayName") }}</label>
+              <input :id="`${dialogId}-name`" ref="nameEl" v-model="editor.name" class="cp-in" spellcheck="false" data-model-name-editor @input="dirtyFields.add('name')" />
+            </div>
+            <div class="cp-limits">
+              <div v-for="field in limitFields" :key="field">
+                <label class="cp-field-label" :for="`${dialogId}-${field}`">{{ t(field === "context" ? "set.models.limitContext" : "set.models.limitOutput") }}</label>
+                <input
+                  :id="`${dialogId}-${field}`"
+                  :value="editor[field]"
+                  class="cp-in cp-limit-input"
+                  :class="{ bad: fieldErrors[field] }"
+                  inputmode="numeric"
+                  :placeholder="t('set.models.limitCustom')"
+                  :aria-invalid="Boolean(fieldErrors[field])"
+                  :aria-describedby="fieldErrors[field] ? `${dialogId}-${field}-error` : undefined"
+                  :data-model-limit="field"
+                  :data-model-limit-custom="field"
+                  @input="setLimit(editor, field, ($event.target as HTMLInputElement).value)"
+                />
+                <div class="cp-limit-presets" role="group" :aria-label="t(field === 'context' ? 'set.models.limitContext' : 'set.models.limitOutput')">
+                  <button v-for="value in LIMIT_PRESETS[field]" :key="value" type="button" class="cp-chip cp-limit-chip"
+                    :data-model-limit-option="`${field}-${value}`" :aria-pressed="editor[field].trim() === String(value)"
+                    :title="`${value} (${limitLabel(value)})`" @click="setLimit(editor, field, String(value))">{{ limitLabel(value) }}</button>
+                </div>
+                <div v-if="fieldErrors[field]" :id="`${dialogId}-${field}-error`" role="alert" class="cp-error" :data-model-field-error="field">{{ fieldErrors[field] }}</div>
+              </div>
+            </div>
+            <fieldset>
+              <legend>{{ t("set.models.inputTypes") }}</legend>
+              <div class="cp-modalities" data-model-input-types>
+                <label class="cp-mod-card" data-model-modality-card="text" data-state="checked">
+                  <input type="checkbox" checked disabled data-model-modality="text" />
+                  {{ t("set.models.modalityText") }}
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" aria-hidden="true"><rect x="3" y="6" width="8" height="6" rx="1" /><path d="M5 6V4a2 2 0 0 1 4 0v2" /></svg>
+                </label>
+                <label v-for="key in MODALITIES" :key="key" class="cp-mod-card" :data-model-modality-card="key" :data-state="editor.mods[key] ? 'checked' : 'unchecked'">
+                  <input type="checkbox" :checked="editor.mods[key]" :data-model-modality="key" @change="toggleMod(editor, key, ($event.target as HTMLInputElement).checked)" />
+                  {{ modLabel(key) }}
+                </label>
+              </div>
+            </fieldset>
+            <fieldset data-model-reasoning>
+              <legend>
+                <span class="cp-reasoning-legend">
+                  <span>{{ t("set.models.reasoning") }}</span>
+                  <span v-if="recommendation" class="cp-recommendation">
+                    <span data-model-reasoning-state>{{ t(usesRecommendation ? "set.models.reasoningRecommended" : "set.models.reasoningCustom") }}</span>
+                    <button v-if="!usesRecommendation" type="button" class="cp-reset" data-model-reasoning-reset @click="resetRecommendation(editor)">{{ t("set.models.reasoningReset") }}</button>
+                  </span>
+                </span>
+              </legend>
+              <div class="cp-quick-settings">
+                <span>{{ t("set.models.reasoningPresets") }}</span>
+                <button v-for="option in reasoningPresets" :key="option.id" type="button" class="cp-chip" :data-model-reasoning-preset="option.id"
+                  :aria-pressed="sameEfforts(option.efforts)" @click="setEfforts(editor, option.efforts)">{{ option.label() }}</button>
+              </div>
+              <div class="cp-efforts" role="group" :aria-label="t('set.models.reasoning')">
+                <button v-for="level in THINKING_LEVELS" :key="level" type="button" class="cp-chip" :data-model-reasoning-level="level"
+                  :aria-pressed="selectedEfforts.includes(level)" :disabled="selectedEfforts.length === 1 && selectedEfforts.includes(level)"
+                  @click="toggleLevel(editor, level)">{{ level }}</button>
+              </div>
+            </fieldset>
+          </div>
+          <footer class="cp-model-footer" data-model-editor-footer>
+            <button type="button" class="cp-chip" data-model-editor-cancel @click="closeEditor">{{ t("common.cancel") }}</button>
+            <button type="button" class="cp-submit" data-model-editor-save @click="commitModel">{{ t("common.save") }}</button>
+          </footer>
+        </div>
+      </div>
       <ConfirmDialog
         v-if="removingModel"
         :title="t('set.models.deleteModelTitle')"
@@ -963,38 +1037,11 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
   margin-top: 8px;
 }
 
-.cp-model-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  overflow-wrap: anywhere;
-}
-
-.cp-chip {
-  padding: 4px 8px;
-  border: 1px solid var(--text-weaker);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--text-base);
-  cursor: pointer;
-}
-
-.cp-chip[aria-pressed="true"] {
-  color: var(--text-strong);
-  border-color: var(--text-strong);
-  background: var(--surface-hover);
-}
-
-/* MiMo's page body: 16 between the blocks, 8 between one model card and the next. */
+/* Spacing between the provider fields, model list and request headers. */
 .cp {
   display: flex;
   flex-direction: column;
   gap: 16px;
-}
-
-.cp-model + .cp-model {
-  margin-top: -8px;
 }
 
 /*
@@ -1089,11 +1136,6 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
 }
 
 /* MiMo's custom-limit field is the shortest of the three. */
-.cp-in.tiny {
-  height: calc(28px * var(--ui-font-scale, 1));
-  font-size: calc(12px * var(--ui-font-scale, 1));
-}
-
 .cp-in:focus {
   border-color: var(--text-weak);
 }
@@ -1347,279 +1389,365 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
   font-weight: 500;
 }
 
-.cp-combo {
-  position: relative;
+.cp-model-list-header,
+.cp-model-add,
+.cp-model-actions,
+.cp-model-meta {
   display: flex;
   align-items: center;
-  gap: 8px;
-  width: 420px;
+  gap: 6px;
+}
+
+.cp-model-list-header {
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.cp-model-list-header h3 {
+  margin: 0;
+  color: var(--text-base);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.cp-model-list,
+.cp-model-empty {
+  background: var(--surface-page);
+  border: 1px solid var(--border-weak);
+  border-radius: 10px;
+}
+
+.cp-model-empty {
+  padding: 16px;
+  border-style: dashed;
+  color: var(--text-base);
+  font-size: 12px;
+}
+
+.cp-model {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 8px 12px;
+}
+
+.cp-model + .cp-model {
+  border-top: 1px solid var(--border-weak);
+}
+
+.cp-model-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.cp-model-meta {
+  flex-wrap: wrap;
+}
+
+.cp-model-id,
+.cp-model-name,
+.cp-option-id,
+.cp-option-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cp-model-id {
+  font: 500 13px var(--font-mono);
+  color: var(--text-strong);
   max-width: 100%;
 }
 
-.cp-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  inset-inline-start: 0;
-  z-index: 20;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  box-sizing: border-box;
-  min-width: 200px;
-  max-height: 240px;
-  padding: 6px;
-  overflow-y: auto;
-  background: #fffefd;
-  border: 1px solid #f0ebe5;
-  border-radius: 10px;
-  box-shadow: 0 12px 40px #00000024;
+.cp-model-name {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-base);
+  font-size: 12px;
 }
 
-/* MiMo's picker list is the tighter of the two: 4 of padding, and full width. */
-.cp-menu.combo {
-  inset-inline-end: 0;
-  padding: 4px;
+.cp-badge {
+  padding: 1px 6px;
+  border-radius: 4px;
+  color: var(--text-base);
+  font-size: 11px;
+  white-space: nowrap;
 }
 
-:root[data-theme="dark"] .cp-menu {
-  background: #282828;
-  border-color: #2e2e2e;
+.cp-limit-badge {
+  border: 1px solid var(--border-weak);
+  font-family: var(--font-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .cp-menu {
-    background: #282828;
-    border-color: #2e2e2e;
-  }
+.cp-mod-badge {
+  background: var(--surface-hover);
 }
 
-/* MiMo rules the number off from the presets above it. */
-.cp-think {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.cp-think-switches {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 20px;
-}
-
-.cp-tick {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-strong);
-  font-size: calc(13px * var(--ui-font-scale, 1));
+.cp-model-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-base);
   cursor: pointer;
 }
 
-.cp-think-label {
-  margin-block-end: 6px;
-  color: var(--text-weak);
-  font-size: calc(12px * var(--ui-font-scale, 1));
+.cp-model-icon:hover {
+  background: var(--surface-hover);
 }
 
-.cp-think-grid {
+.cp-model-icon.danger:hover {
+  color: var(--text-critical);
+}
+
+.cp-model-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 130;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px 12px;
+  place-items: center;
+  background: #00000080;
 }
 
-.cp-menu-custom {
-  margin-top: 4px;
-  padding-top: 6px;
-  border-top: 1px solid #f0ebe5;
+.cp-model-dialog {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(600px, 100vw - 32px);
+  max-height: min(720px, 100vh - 32px);
+  box-sizing: border-box;
+  padding: 20px;
+  border: 1px solid var(--border-weak);
+  border-radius: 12px;
+  background: var(--surface-page);
+  box-shadow: var(--shadow-pop);
+  color: var(--text-strong);
 }
 
-:root[data-theme="dark"] .cp-menu-custom {
-  border-color: #2e2e2e;
+.cp-model-dialog h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .cp-menu-custom {
-    border-color: #2e2e2e;
-  }
+.cp-model-fields {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  margin-top: 16px;
+  padding: 2px 4px 2px 2px;
+  overflow-y: auto;
+}
+
+.cp-model-fields .cp-in {
+  width: 100%;
+  min-width: 0;
+}
+
+.cp-model-fields .cp-limit-input {
+  font: 500 13px var(--font-mono);
+}
+
+.cp-model-fields fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.cp-field-label,
+.cp-model-fields legend {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0;
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.cp-combo {
+  position: relative;
+}
+
+.cp-menu.combo {
+  position: absolute;
+  z-index: 2;
+  inset: calc(100% + 4px) 0 auto;
+  box-sizing: border-box;
+  max-height: 220px;
+  padding: 4px;
+  overflow-y: auto;
+  background: var(--surface-page);
+  border: 1px solid var(--border-weak);
+  border-radius: 8px;
+  box-shadow: var(--shadow-pop);
+}
+
+.cp-menu-empty,
+.cp-option,
+.cp-model-fields .cp-error {
+  font-size: 12px;
 }
 
 .cp-menu-empty {
   padding: 8px;
   color: var(--text-base);
-  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 .cp-option {
   display: flex;
-  align-items: center;
   justify-content: space-between;
   gap: 8px;
-  min-width: 0;
-  padding: 6px 8px;
-  color: var(--text-base);
-  background: transparent;
+  width: 100%;
+  padding: 7px 8px;
   border: 0;
-  border-radius: 6px;
-  font-size: calc(12px * var(--ui-font-scale, 1));
-  text-align: start;
+  border-radius: 4px;
+  color: var(--text-strong);
+  background: transparent;
   cursor: pointer;
 }
 
-/* A row in the picker: the id, medium and truncated, then its name at the end. */
-.cp-menu.combo .cp-option {
-  padding: 7px 8px;
-}
-
 .cp-option-id {
-  overflow: hidden;
   font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .cp-option-name {
   flex: none;
   max-width: 45%;
-  overflow: hidden;
   color: var(--text-base);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-label.cp-option {
-  justify-content: flex-start;
 }
 
 .cp-option:hover,
 .cp-option.on {
-  color: var(--text-strong);
   background: var(--surface-hover);
 }
 
-.cp-check {
-  color: var(--text-weak);
-}
-
-/* One card per model: the id and its display name, then the three menus; the bin in the corner. */
-.cp-model {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 12px 48px 12px 14px;
-  background: #fffefd;
-  border: 1px solid #f0ebe5;
-  border-radius: 12px;
-}
-
-:root[data-theme="dark"] .cp-model {
-  background: #282828;
-  border-color: #2e2e2e;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .cp-model {
-    background: #282828;
-    border-color: #2e2e2e;
-  }
-}
-
-.cp-model-remove {
-  position: absolute;
-  top: 10px;
-  inset-inline-end: 10px;
+.cp-limits,
+.cp-limit-presets,
+.cp-efforts {
   display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  color: var(--text-base);
-  background: transparent;
-  border: 0;
+  gap: 6px;
+}
+
+.cp-limits {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+@media (max-width: 480px) {
+  .cp-limits {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.cp-limit-presets {
+  margin-top: 6px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.cp-chip {
+  min-height: 26px;
+  padding: 3px 5px;
+  border: 1px solid var(--border-weak);
   border-radius: 6px;
+  background: transparent;
+  color: var(--text-base);
+  font-size: 12px;
   cursor: pointer;
 }
 
-.cp-model-remove:hover {
-  color: #fb2c36;
+.cp-limit-chip {
+  font-family: var(--font-mono);
 }
 
-.cp-model-names,
-.cp-model-options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.cp-model-names .cp-in {
-  width: 220px;
-  max-width: 100%;
-}
-
-/* MiMo's chevron after a picker's value: 14 square in the muted colour. */
-.cp-caret {
-  flex: none;
-  width: 14px;
-  height: 14px;
-  color: var(--text-base);
-}
-
-.cp-pick {
-  position: relative;
-}
-
-.cp-pick-btn {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-width: 148px;
-  height: calc(32px * var(--ui-font-scale, 1));
-  padding: 0 10px;
-  background: #fffefd;
-  border: 1px solid #f0ebe5;
-  border-radius: 8px;
-  font-size: calc(12px * var(--ui-font-scale, 1));
-  cursor: pointer;
-}
-
-:root[data-theme="dark"] .cp-pick-btn {
-  background: #282828;
-  border-color: #2e2e2e;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .cp-pick-btn {
-    background: #282828;
-    border-color: #2e2e2e;
-  }
-}
-
-.cp-pick-btn.wide {
-  min-width: 180px;
-}
-
-/* The explicit-dark twin was written and the media one was not, so this hover worked for someone who picked Dark and not for the default, which follows the system. */
-.cp-pick-btn:hover,
-:root[data-theme="dark"] .cp-pick-btn:hover {
-  border-color: var(--text-weak);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .cp-pick-btn:hover {
-    border-color: var(--text-weak);
-  }
-}
-
-.cp-pick-label {
-  color: var(--text-base);
-}
-
-.cp-pick-value {
-  display: flex;
-  align-items: center;
-  gap: 4px;
+.cp-chip[aria-pressed="true"],
+.cp-mod-card[data-state="checked"] {
   color: var(--text-strong);
-  font-weight: 500;
+  border-color: var(--interactive);
+  background: color-mix(in srgb, var(--interactive) 9%, var(--surface-page));
+}
+
+.cp-reasoning-legend,
+.cp-recommendation,
+.cp-modalities,
+.cp-quick-settings,
+.cp-model-footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cp-reasoning-legend {
+  justify-content: space-between;
+}
+
+.cp-recommendation,
+.cp-quick-settings > span {
+  color: var(--text-base);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.cp-reset {
+  padding: 0;
+  border: 0;
+  color: var(--interactive);
+  background: transparent;
+  font-size: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.cp-efforts {
+  margin-top: 8px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.cp-mod-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--border-weak);
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.cp-mod-card input {
+  margin: 0;
+  accent-color: var(--interactive);
+}
+
+.cp-mod-card:has(:disabled),
+.cp-chip:disabled {
+  cursor: default;
+}
+
+.cp-model-footer {
+  justify-content: flex-end;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-weak);
+}
+
+.cp-model-footer button {
+  height: auto;
+  min-height: 32px;
+  padding: 6px 14px;
+  font-size: 13px;
+}
+
+.cp-model-icon:focus-visible,
+.cp-model-dialog button:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 .cp-header {
@@ -1714,9 +1842,7 @@ label.cp-option {
 }
 
 .cp-btn:focus-visible,
-.cp-pick-btn:focus-visible,
-.cp-eye:focus-visible,
-.cp-model-remove:focus-visible {
+.cp-eye:focus-visible {
   outline: 2px solid var(--interactive);
   outline-offset: 2px;
 }

@@ -2758,7 +2758,7 @@
     "zhCN": "value",
     "zhTW": "value"
   },
-  "provider.custom.models.add": {
+  "set.models.addModel": {
     "ar": "إضافة نموذج",
     "bs": "Dodaj model",
     "da": "Tilføj model",

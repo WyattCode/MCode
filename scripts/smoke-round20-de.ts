@@ -32,7 +32,7 @@ export async function roundTwentyDeChecks(check: Check, section: (name: string) 
     }
     const form = await read("src/renderer/src/components/CustomProviderForm.vue")
     check("D-2: the list opens and changes with nothing highlighted", /const highlight = ref\(-1\)/.test(form) && /\(\) => \(highlight\.value = -1\)[,)]/.test(form))
-    check("D-2: Enter goes through the rule", /addModel\(comboEnterValue\(/.test(form))
+    check("D-2: Enter goes through the rule", /const value = comboEnterValue\(/.test(form) && /setModelId\(row, value\)/.test(form))
     check("D-2: an ArrowDown that opens the list is not reset after it moves", /\(\) => \(highlight\.value = -1\), \{ flush: "sync" \}\)/.test(form))
   }
 
@@ -40,11 +40,9 @@ export async function roundTwentyDeChecks(check: Check, section: (name: string) 
   {
     const form = await read("src/renderer/src/components/CustomProviderForm.vue")
     const key = /function comboKey\([^)]*\) \{([\s\S]*?)\n\}/.exec(form)?.[1] ?? ""
-    const down = /"ArrowDown"\) \{([\s\S]*?)\} else if/.exec(key)?.[1] ?? ""
-    const up = /"ArrowUp"\) \{([\s\S]*?)\} else if/.exec(key)?.[1] ?? ""
-    const reveal = /function revealHighlight\(\) \{([\s\S]*?)\n\}/.exec(form)?.[1] ?? ""
-    check("D-5: both arrows reveal the row they land on", down.includes("revealHighlight()") && up.includes("revealHighlight()"), key)
-    check("D-5: the row is scrolled into the list's view, the nearest way", /comboMenuEl\.value\?\.querySelector<HTMLElement>\("\.cp-option\.on"\)\?\.scrollIntoView\(\{ block: "nearest" \}\)/.test(reveal), reveal)
+    check("D-5: both arrows reveal the row they land on", /event.key === "ArrowDown" \|\| event.key === "ArrowUp"/.test(key) &&
+      key.indexOf("highlight.value = Math.max") < key.indexOf("scrollIntoView") && key.includes("highlight.value = Math.max"), key)
+    check("D-5: the row is scrolled into the list's view, the nearest way", key.includes('comboMenuEl.value?.querySelector<HTMLElement>(".cp-option.on")?.scrollIntoView?.({ block: "nearest" })'), key)
     check("D-5: the list is the element held", /ref="comboMenuEl" class="cp-menu combo"/.test(form))
   }
 
@@ -52,7 +50,7 @@ export async function roundTwentyDeChecks(check: Check, section: (name: string) 
   {
     const form = await read("src/renderer/src/components/CustomProviderForm.vue")
     const field = /<input[^>]*data-model-limit-custom[^>]*\/>/.exec(form)?.[0] ?? ""
-    check("D-4: the field shows the limit itself, a preset included", /v-model="row\[field\]"/.test(field), field)
+    check("D-4: the field shows the limit itself, a preset included", /:value="editor\[field\]"/.test(field), field)
     check("D-4: no preset test blanks it while typing", !/LIMIT_PRESETS/.test(field), field)
   }
 

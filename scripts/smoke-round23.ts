@@ -175,7 +175,7 @@ export async function roundTwentyThreeChecks(check: Check, section: (name: strin
      * why twenty-two rounds of sweeps went past them.
      */
     for (const [file, selectors] of [
-      ["src/renderer/src/components/CustomProviderForm.vue", [".cp-in:focus", ".cp-in.bad", ".cp-pick-btn:hover"]],
+      ["src/renderer/src/components/CustomProviderForm.vue", [".cp-in:focus", ".cp-in.bad"]],
       ["src/renderer/src/components/ProviderCloneDialog.vue", [".field-in:focus", ".field-in.bad"]],
       ["src/renderer/src/components/SettingsDialog.vue", [".ci-input:focus", ".nav-search:focus", ".keys-search-mode:hover"]],
       ["src/renderer/src/components/EditedFilesCard.vue", [".fc-review:hover"]],
@@ -189,6 +189,10 @@ export async function roundTwentyThreeChecks(check: Check, section: (name: strin
         check(`${file.slice(file.lastIndexOf("/") + 1)} ${selector} survives in both dark schemes`, explicit && media, { explicit, media })
       }
     }
+    const form = await read("src/renderer/src/components/CustomProviderForm.vue")
+    check("model row hover uses a themed token in both dark schemes",
+      /\.cp-model-icon:hover \{\s*background: var\(--surface-hover\);/.test(form) &&
+      !/:root[^\n]*\.cp-model-icon/.test(form))
     const settings = await read("src/renderer/src/components/SettingsDialog.vue")
     // Faded rather than recoloured: opacity is the one answer a theme rule on the plain element cannot cancel.
     check("a disabled secondary button fades, so no theme rule can draw it as an enabled one", /\.ctl-btn:disabled \{\s*\n\s*opacity: 0\.4;/.test(settings))
