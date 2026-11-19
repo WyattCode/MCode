@@ -147,9 +147,28 @@ export async function roundTenPlatformChecks(check: Check, section: (name: strin
     check("M10-3: prose naming both spellings keeps the Mac glyph on a Mac", modText("任务进行时按 Enter 的默认行为；Ctrl/⌘+Enter 为另一种", "darwin") === "任务进行时按 Enter 的默认行为；⌘+Enter 为另一种", modText("任务进行时按 Enter 的默认行为；Ctrl/⌘+Enter 为另一种", "darwin"))
     check("M10-3: and keeps Ctrl on Windows, in either written order", modText("Default action when pressing Enter while a task is running. Ctrl/⌘+Enter does the other.", "win32") === "Default action when pressing Enter while a task is running. Ctrl+Enter does the other." && modText("⌘/Ctrl+点击打开", "win32") === "Ctrl+点击打开")
     check("M10-3: the composer-send note is spelled for the platform", /shownModText\(t\("set\.composer\.runningSendSub"\)\)/.test(settings))
+    for (const platform of ["darwin", "win32", "linux"]) {
+      const ctrl = platform === "darwin" ? "⌘" : "Ctrl"
+      const strg = platform === "darwin" ? "⌘" : "Strg"
+      check(`M10-3 (${platform}): Ctrl prose works in both written orders`, modText("Ctrl/⌘+Enter, ⌘/Ctrl+点击打开", platform) === `${ctrl}+Enter, ${ctrl}+点击打开`)
+      check(`M10-3 (${platform}): German composer prose uses the local modifier`, modText("Strg/⌘+Enter", platform) === `${strg}+Enter`)
+      check(`M10-3 (${platform}): German path-open prose uses the local modifier`, modText("⌘/Strg+Klick", platform) === `${strg}+Klick`)
+    }
+    const translations = await fs.readFile(path.join(root, "src/renderer/src/lib/i18n.ts"), "utf8")
+    check("M10-3: the German composer translation contains Strg/⌘+Enter", /"set\.composer\.runningSendSub": "[^"\n]*Strg\/⌘\+Enter/.test(translations))
+    check("M10-3: the German path-open translation contains ⌘/Strg+Klick", /"stepList\.cmdClickOpen": "[^"\n]*⌘\/Strg\+Klick/.test(translations))
     check("M10-3: the path-open tip is spelled for the platform", /shownModText\(t\("stepList\.cmdClickOpen"\)\)/.test(await fs.readFile(path.join(root, "src/renderer/src/components/parts/ToolPart.vue"), "utf8")))
     const dialogCss = settings.slice(settings.indexOf(".font-field {"))
     check("M10-3: the update-feed field is wide for a wide- metrics face too", /min-width: 3[0-9]ch/.test(dialogCss), dialogCss.slice(0, 160))
+  }
+
+  section("Round 10: custom provider form isolation")
+  {
+    const modelsPage = await fs.readFile(path.join(root, "src/renderer/src/components/ModelsPage.vue"), "utf8")
+    const addForm = modelsPage.match(/<CustomProviderForm\b[^>]*:preset="preset"[^>]*>/)?.[0] ?? ""
+    const savedForm = modelsPage.match(/<CustomProviderForm\b[^>]*:editing="customEntry"[^>]*>/)?.[0] ?? ""
+    check("custom provider: switching presets remounts the add form", /\s:key="[^"]*\bpreset\b[^"]*"/.test(addForm), addForm)
+    check("custom provider: switching saved providers remounts the edit form by ID", /\s:key="current\.id"/.test(savedForm), savedForm)
   }
 
   section("Round 10 (platforms): M10-4 / M10-5 / M10-6 what the macOS and Linux packages declare")
