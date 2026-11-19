@@ -14,7 +14,7 @@ import { useEscapeLayer } from "../lib/escape-layer"
  * over a 13px message that keeps its line breaks, and 14px buttons. The confirm
  * button is light red for something destructive and plain otherwise.
  */
-withDefaults(defineProps<{ title: string; body: string; confirmLabel: string; danger?: boolean }>(), { danger: true })
+withDefaults(defineProps<{ title: string; body: string; confirmLabel: string; danger?: boolean; pending?: boolean }>(), { danger: true })
 const emit = defineEmits<{ close: []; confirm: [] }>()
 
 /*
@@ -36,8 +36,8 @@ onMounted(() => {
       <h2 id="confirm-title">{{ title }}</h2>
       <p class="body">{{ body }}</p>
       <footer>
-        <button type="button" class="ghost" @click="emit('close')">{{ t("common.cancel") }}</button>
-        <button type="button" ref="confirmButton" class="confirm" :class="{ danger }" data-confirm @click="emit('confirm')">{{ confirmLabel }}</button>
+        <button type="button" class="ghost" :disabled="pending" @click="emit('close')">{{ t("common.cancel") }}</button>
+        <button type="button" ref="confirmButton" class="confirm" :class="{ danger }" :disabled="pending" data-confirm @click="emit('confirm')">{{ confirmLabel }}</button>
       </footer>
     </div>
   </div>

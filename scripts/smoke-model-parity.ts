@@ -25,6 +25,7 @@ export async function modelParityChecks(check: Check, section: (name: string) =>
     stdin: {
       contents: `export { default as Form } from "./src/renderer/src/components/CustomProviderForm.vue"
         export { createApp, nextTick } from "vue"
+        export { notices } from "./src/renderer/src/lib/toast"
         export { fixture } from "./src/renderer/src/stores/app"`,
       resolveDir: process.cwd(),
     },
@@ -54,7 +55,13 @@ export async function modelParityChecks(check: Check, section: (name: string) =>
                 updateCustomProvider: async (entry) => fixture.updated.push(entry),
                 removeCustomModel: async (...args) => fixture.removed.push(args) }
               export const useApp = () => fixture`
-            : "export const notice = { warning() {}, danger() {}, success() {} }; export const notifyFailure = () => {}",
+            : `export const notices = { warnings: [], failures: [] }
+              export const notice = {
+                warning(message) { notices.warnings.push(message) },
+                danger(message) { notices.failures.push(message) },
+                success() {}
+              }
+              export const notifyFailure = () => {}`,
         }))
         builder.onLoad({ filter: /\.vue$/ }, async ({ path }) => ({
           contents: compileScript(parse(await readFile(path, "utf8"), { filename: path }).descriptor, {
@@ -70,7 +77,8 @@ export async function modelParityChecks(check: Check, section: (name: string) =>
   new Function("module", "exports", "require", "document", "window", "SVGElement", "Element", "Document", outputFiles[0].text)(
     module, module.exports, require, window.document, window, window.SVGElement ?? class {}, window.Element, window.Document,
   )
-  const { createApp, nextTick, Form, fixture } = module.exports as {
+  const { createApp, nextTick, Form, fixture, notices } = module.exports as {
+    notices: { warnings: string[]; failures: string[] }
     createApp: typeof import("vue").createApp
     nextTick: typeof import("vue").nextTick
     Form: typeof import("../src/renderer/src/components/CustomProviderForm.vue").default
@@ -78,6 +86,8 @@ export async function modelParityChecks(check: Check, section: (name: string) =>
       saved: CustomProvider[]
       updated: CustomProvider[]
       removed: string[][]
+      updateCustomProvider: (entry: CustomProvider) => Promise<unknown>
+      removeCustomModel: (...args: string[]) => Promise<unknown>
       probeProvider: () => Promise<unknown>
     }
   }
@@ -285,7 +295,7 @@ export async function modelParityChecks(check: Check, section: (name: string) =>
   } satisfies CustomProvider
   const editApp = createApp(Form, { editing })
   editApp.directive("modal", {})
-  const editForm = editApp.mount(host) as unknown as typeof form
+  const editForm = editApp.mount(host) as unknown as typeof form & { dirty: boolean }
   try {
     await click('[data-model-edit="alpha"]')
     check("editing hydrates the saved name and limits", find(name)?.value === "Existing display name" &&
@@ -345,6 +355,101 @@ export async function modelParityChecks(check: Check, section: (name: string) =>
     const thinking = saved?.models[0]?.thinking
     check("manual level click persists the exact effort set and default", thinking?.efforts.join() === "low,medium,high" && thinking.default === "high", thinking)
     check("the canOff switch persists in the update", thinking?.canOff === true, thinking)
+
+    const originalUpdate = fixture.updateCustomProvider
+    const originalRemove = fixture.removeCustomModel
+    const pendingSave = Promise.withResolvers<void>()
+    const pendingDelete = Promise.withResolvers<void>()
+    fixture.updateCustomProvider = async (entry) => {
+      await originalUpdate(entry)
+      await pendingSave.promise
+    }
+    fixture.removeCustomModel = (...args) => {
+      void originalRemove(...args)
+      return pendingDelete.promise
+    }
+    await click('[data-model-rm="new-one"]')
+    const saving = editForm.submit()
+    const removalCount = fixture.removed.length
+    await Promise.all([click("[data-confirm]"), click("[data-confirm]")])
+    check("double confirmation starts only one immediate deletion", fixture.removed.length === removalCount + 1)
+    check("confirmation and cancel buttons are disabled during deletion",
+      find("[data-confirm]")?.disabled === true && find("[data-confirm-dialog] button.ghost")?.disabled === true)
+    await click("[data-confirm-dialog] button.ghost")
+    const stayedAfterCancel = Boolean(find("[data-confirm-dialog]"))
+    if (find("[data-confirm]")) await event("[data-confirm]", "keydown", { key: "Escape" })
+    const stayedAfterEscape = Boolean(find("[data-confirm-dialog]"))
+    if (find("[data-confirm-dialog]")) await event(".scrim", "mousedown")
+    check("cancel, Escape, and scrim leave the pending confirmation open",
+      stayedAfterCancel && stayedAfterEscape && Boolean(find("[data-confirm-dialog]")))
+    pendingSave.resolve()
+    await saving
+    const updateCount = fixture.updated.length
+    const warningCount = notices.warnings.length
+    const blocked = await editForm.submit()
+    check("pending deletion blocks provider updates and warns", blocked === false &&
+      fixture.updated.length === updateCount && notices.warnings.length === warningCount + 1)
+    pendingDelete.resolve()
+    await pendingDelete.promise
+    await nextTick()
+
+    const overlappingSave = Promise.withResolvers<void>()
+    const overlappingDelete = Promise.withResolvers<void>()
+    fixture.updateCustomProvider = async (entry) => {
+      await originalUpdate(entry)
+      await overlappingSave.promise
+    }
+    fixture.removeCustomModel = (...args) => {
+      void originalRemove(...args)
+      return overlappingDelete.promise
+    }
+    await click("[data-model-add]")
+    await input(combo, "last")
+    await click(save)
+    await click('[data-model-rm="new-two"]')
+    const savingWithMiddleRow = editForm.submit()
+    await click("[data-confirm]")
+    overlappingDelete.resolve()
+    await overlappingDelete.promise
+    await nextTick()
+    const removedBeforeSave = !find('[data-model-card="new-two"]')
+    overlappingSave.resolve()
+    await savingWithMiddleRow
+    const remainingIds = () => Array.from(document.querySelectorAll("[data-model-card]"), (card) => card.getAttribute("data-model-card")).join()
+    const correctlyBound = removedBeforeSave && remainingIds() === "alpha,last" && !editForm.dirty
+    fixture.removeCustomModel = originalRemove
+    if (correctlyBound) {
+      await click('[data-model-rm="last"]')
+      await click("[data-confirm]")
+      await nextTick()
+    }
+    check("overlapping save keeps surviving row ids and stored models bound to their keys",
+      correctlyBound && fixture.removed.at(-1)?.join("/") === `${editing.id}/last` &&
+      remainingIds() === "alpha")
+
+    fixture.updateCustomProvider = originalUpdate
+    await click("[data-model-add]")
+    await input(combo, "retry")
+    await click(save)
+    await editForm.submit()
+    await click('[data-model-edit="alpha"]')
+    await input(name, "Unsaved display name")
+    await click(save)
+    const pendingFailure = Promise.withResolvers<void>()
+    fixture.removeCustomModel = () => pendingFailure.promise
+    await click('[data-model-rm="retry"]')
+    await click("[data-confirm]")
+    pendingFailure.reject(new Error("fixture delete failed"))
+    await pendingFailure.promise.catch(() => {})
+    await nextTick()
+    check("failed deletion reports danger, keeps the row and unlocks confirmation",
+      notices.failures.at(-1) === "fixture delete failed" && Boolean(find('[data-model-card="retry"]')) &&
+      find("[data-confirm]")?.disabled === false)
+    fixture.removeCustomModel = originalRemove
+    await click("[data-confirm]")
+    await nextTick()
+    check("retry persists the deletion while leaving other draft edits dirty",
+      fixture.removed.at(-1)?.join("/") === `${editing.id}/retry` && !find('[data-model-card="retry"]') && editForm.dirty)
   } finally {
     editApp.unmount()
   }

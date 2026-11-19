@@ -186,6 +186,7 @@ const protocolOptions = computed(() =>
 )
 
 const busy = ref(false)
+const removing = ref(false)
 const tried = ref(false)
 const idTouched = ref(false)
 const endpointTouched = ref(false)
@@ -270,6 +271,7 @@ const headerProblems = computed(() =>
 )
 
 const canSave = computed(() => {
+  if (removing.value) return false
   const value = form.value
   if (idProblem.value || !value.providerId.trim() || !validEndpoint(value.baseURL)) return false
   if (!value.models.length || value.models.some((row) => limitProblem(row) || modelIdError(row))) return false
@@ -584,27 +586,32 @@ function commitModel() {
  */
 const removingModel = ref<ModelRow>()
 
+function closeRemoveModel() {
+  if (!removing.value) removingModel.value = undefined
+}
+
 async function confirmRemoveModel() {
   const row = removingModel.value
-  if (!row) return
-  const saved = JSON.parse(pristine.value) as typeof form.value
+  if (!row || removing.value) return
+  const persisted = JSON.parse(pristine.value) as typeof form.value
   const stored = row.stored
-  const removeNow = saved.models.length > 1
-  if (editing && stored && removeNow) {
+  if (editing && stored && persisted.models.length > 1) {
+    removing.value = true
     try {
       await app.removeCustomModel(editing.id, stored.id)
+      // A save may have completed while deletion was pending.
+      const saved = JSON.parse(pristine.value) as typeof form.value
+      saved.models = saved.models.filter((entry) => entry.key !== row.key)
+      pristine.value = JSON.stringify(saved)
     } catch (err) {
       notice.danger((err instanceof Error ? err.message : String(err)) || t("set.models.removeFailed"))
       return
+    } finally {
+      removing.value = false
     }
   }
   form.value.models = form.value.models.filter((entry) => entry.key !== row.key)
-  if (editing && stored && removeNow) {
-    // Keep the rest of the draft dirty after an immediate removal.
-    saved.models = saved.models.filter((entry) => entry.key !== row.key)
-    pristine.value = JSON.stringify(saved)
-  }
-  removingModel.value = undefined
+  closeRemoveModel()
 }
 
 function toggleMod(row: ModelRow, key: Modality, on: boolean) {
@@ -724,12 +731,17 @@ function modelOf(row: ModelRow): CustomModel {
  * use, the open conversation's or the default for the next one.
  */
 async function submit(): Promise<boolean> {
+  if (removing.value) {
+    notice.warning(t("common.saving"))
+    return false
+  }
   tried.value = true
   if (busy.value || editor.value || !canSave.value) {
     if (!form.value.models.length) notice.warning(t("set.models.needModel"))
     return false
   }
   busy.value = true
+  const rowKeys = form.value.models.map((row) => row.key)
   const id = form.value.providerId.trim()
   const entry = {
     id,
@@ -745,10 +757,13 @@ async function submit(): Promise<boolean> {
   try {
     if (editing) await app.updateCustomProvider(entry)
     else await app.addCustomProvider(entry)
-    form.value.models.forEach((row, index) => {
-      row.id = entry.models[index].id
-      row.stored = entry.models[index]
-    })
+    const savedModels = new Map(rowKeys.map((key, index) => [key, entry.models[index]]))
+    for (const row of form.value.models) {
+      const model = savedModels.get(row.key)
+      if (!model) continue
+      row.id = model.id
+      row.stored = model
+    }
     pristine.value = snapshot()
     if (props.standalone) {
       const model = { provider: id, model: entry.models[0].id }
@@ -772,7 +787,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
 </script>
 
 <template>
-  <form class="cp" :inert="busy" data-custom-provider-form @submit.prevent="submit">
+  <form class="cp" :inert="busy || removing" data-custom-provider-form @submit.prevent="submit">
     <div class="cp-card">
       <div v-if="preset === 'custom'" class="cp-row">
         <label class="cp-label" for="cp-provider-id">{{ t("provider.custom.field.providerID.label") }}</label>
@@ -1110,8 +1125,9 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
         :title="t('set.models.deleteModelTitle')"
         :body="t('set.models.deleteBody', { name: removingModel.name.trim() || removingModel.id })"
         :confirm-label="t('set.models.remove')"
+        :pending="removing"
         @confirm="confirmRemoveModel"
-        @close="removingModel = undefined"
+        @close="closeRemoveModel"
       />
     </Teleport>
   </form>
