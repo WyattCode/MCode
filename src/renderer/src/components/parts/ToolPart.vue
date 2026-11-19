@@ -11,6 +11,7 @@ import SubagentActivity from "./SubagentActivity.vue"
 import SubagentAvatar from "./SubagentAvatar.vue"
 import "./steps.css"
 import { t } from "../../lib/i18n"
+import { shownModText } from "../../lib/keys"
 import { childFor, isPill } from "../../lib/subagents"
 import { useApp } from "../../stores/app"
 import { openStepPath } from "../../lib/open-step-path"
@@ -166,7 +167,7 @@ const diffstat = computed(() => {
 
 /* Ctrl/⌘+click on a path opens it; a plain click still folds the row. */
 const openable = computed(() => opensPath(props.part.name) && Boolean(title.value))
-const codeTip = computed(() => (openable.value ? `${title.value}\n${t("stepList.cmdClickOpen")}` : title.value))
+const codeTip = computed(() => (openable.value ? `${title.value}\n${shownModText(t("stepList.cmdClickOpen"))}` : title.value))
 
 /* Ctrl or Cmd with a click on the path, or with Enter on the head from the keyboard (the path sits inside the head's button). */
 function onTitleClick(event: MouseEvent | KeyboardEvent) {

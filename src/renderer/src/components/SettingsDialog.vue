@@ -28,7 +28,7 @@ import { skillPathCompat } from "@shared/protocol"
 import type { McpImportItem, McpImportSource, McpServerConfig, McpStatus, McpToolInfo } from "@shared/protocol"
 import { MCP_STATUS_TONE, isMcpStatus, mcpNeedsSignIn, mcpStatusLabel } from "../lib/mcp-status"
 import { homePath } from "../lib/home-path"
-import { chordOf, composing, formatChord, recordingChord } from "../lib/keys"
+import { chordOf, composing, formatChord, recordingChord, shownModText } from "../lib/keys"
 import { layerOpen } from "../lib/escape-layer"
 import { boundShortcut, shortcutChords } from "@shared/chord"
 import { bindingConflict, changeShortcut, pageRows, recordShortcutKey } from "../lib/shortcut-page"
@@ -2603,7 +2603,7 @@ onBeforeUnmount(() => {
             <div class="line">
               <div class="line-text">
                 <label class="line-title" for="running-send">{{ t("set.composer.runningSend") }}</label>
-                <div class="line-sub">{{ t("set.composer.runningSendSub") }}</div>
+                <div class="line-sub">{{ shownModText(t("set.composer.runningSendSub")) }}</div>
               </div>
               <SelectMenu
                 :model-value="app.config?.runningSend ?? 'queue'"
@@ -3928,7 +3928,10 @@ onBeforeUnmount(() => {
 }
 
 .font-field {
-  width: 220px;
+  /* Segoe UI at 13px runs wider than the Mac's system face, and the URL example
+   * was cut on the right there; the ch floor keeps the whole placeholder in view. */
+  width: min(280px, 100%);
+  min-width: 34ch;
   color: var(--text-strong);
   background: var(--surface-raised);
   box-shadow: none;

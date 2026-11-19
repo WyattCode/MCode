@@ -172,6 +172,14 @@ export function formatChord(chord: string, platform: string): string {
   return mods.sort((a, b) => order.indexOf(a) - order.indexOf(b)).map((part) => name[part]).join("") + shown
 }
 
+/**
+ * Prose that names the modifier both ways (「Ctrl/⌘+Enter」, 「⌘/Ctrl+点击」) keeps
+ * only the spelling this system uses: the command glyph on macOS, `Ctrl` elsewhere.
+ */
+export function modText(text: string, platform: string): string {
+  return text.replace(/Ctrl\/⌘|⌘\/Ctrl/g, isMac(platform) ? "⌘" : "Ctrl")
+}
+
 /** Whether the shortcuts page is recording a chord; the application menu drops its own chords meanwhile. */
 export const recordingChord = ref(false)
 
@@ -189,4 +197,9 @@ export function setChordPlatform(platform: string): void {
  */
 export function shownChord(chord: string): string {
   return formatChord(chord, shownOn.value)
+}
+
+/** `modText` for the platform the chords are drawn on, so a translated line redraws when it is learned. */
+export function shownModText(text: string): string {
+  return modText(text, shownOn.value)
 }
