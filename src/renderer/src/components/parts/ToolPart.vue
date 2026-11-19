@@ -100,7 +100,7 @@ const runs = computed(() => props.part.name === "bash" || props.part.name === "e
 const titleParts = computed(() => {
   const reduced = reducedTitle(title.value)
   const line = runs.value ? (reduced.split("\n", 1)[0] ?? "") : reduced
-  return showsPath(props.part.name) ? pathTitleParts(line, props.titleMax) : { head: cutTitle(line, props.titleMax), tail: "" }
+  return showsPath(props.part.name) ? pathTitleParts(line, props.titleMax) : { head: cutTitle(line, props.titleMax), tail: "", cut: line.length > props.titleMax }
 })
 const showTitle = computed(() => Boolean(title.value) && props.part.name !== "exec_command" && !webLike.value)
 
@@ -231,7 +231,7 @@ const avatarSeed = computed(() => {
             class="hs-title"
             :class="{ 'hs-struck': state === 'skipped' }"
             data-step-title
-          ><code :class="{ openable }" :dir="titleParts.tail ? 'ltr' : 'auto'" :title="codeTip" @click="onTitleClick"><span class="hs-head">{{ titleParts.head }}</span><span v-if="titleParts.tail" class="hs-tail">{{ titleParts.tail }}</span></code></span>
+          ><code :class="{ openable }" :dir="titleParts.tail ? 'ltr' : 'auto'" :title="codeTip" @click="onTitleClick"><span class="hs-head" :class="{ cut: titleParts.cut }">{{ titleParts.head }}</span><span v-if="titleParts.tail" class="hs-tail">{{ titleParts.tail }}</span></code></span>
           <!-- MiMo's hs-diffstat: what the step added and took away, zeroes left out. -->
           <span
             v-if="diffstat.add || diffstat.del"

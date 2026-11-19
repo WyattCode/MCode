@@ -203,20 +203,15 @@ export function groupSummary(items: StepItem[]): { bucket: Bucket; count: number
   if (!tools.length) return [{ bucket: "other", count: Math.max(1, items.length) }]
   const order: Bucket[] = []
   const calls = new Map<Bucket, number>()
-  const paths = new Map<Bucket, Set<string>>()
+  const files = new Map<Bucket, string[]>()
   for (const part of tools) {
     const bucket = bucketOf(part.name)
     if (!order.includes(bucket)) order.push(bucket)
-    const title = bucket === "read" || bucket === "edit" ? fileKey(part) : ""
-    if (title) {
-      const seen = paths.get(bucket) ?? new Set<string>()
-      seen.add(title)
-      paths.set(bucket, seen)
-    } else {
-      calls.set(bucket, (calls.get(bucket) ?? 0) + 1)
-    }
+    const key = bucket === "read" || bucket === "edit" ? fileKey(part) : ""
+    if (key) files.set(bucket, [...(files.get(bucket) ?? []), key])
+    else calls.set(bucket, (calls.get(bucket) ?? 0) + 1)
   }
-  return order.map((bucket) => ({ bucket, count: (paths.get(bucket)?.size ?? 0) + (calls.get(bucket) ?? 0) }))
+  return order.map((bucket) => ({ bucket, count: distinctFiles(files.get(bucket) ?? []).length + (calls.get(bucket) ?? 0) }))
 }
 
 /**
@@ -233,9 +228,38 @@ function fileKey(part: ToolPart): string {
   const input = part.input ?? {}
   for (const name of ["path", "filePath", "file_path", "notebook_path"]) {
     const value = input[name]
-    if (typeof value === "string" && value.trim()) return value.trim().replace(/[\\/]+/g, "/")
+    if (typeof value === "string" && value.trim()) return spelled(value)
   }
-  return stepTitle(part)
+  return spelled(stepTitle(part))
+}
+
+/** A path with its slashes made alike, a leading "./" dropped and its case folded (macOS and Windows do not tell Foo.ts from foo.ts). */
+const spelled = (path: string) => path.trim().replace(/[\\/]+/g, "/").replace(/^\.\//, "").toLowerCase()
+
+const isAbsolutePath = (path: string) => path.startsWith("/") || /^[a-z]:\//.test(path)
+
+/**
+ * Whether two spellings name one file: the same, or an absolute path and a
+ * path from the project that it ends with. Two relative paths never merge, so
+ * `a.ts` and `lib/a.ts` stay two files.
+ */
+function sameFile(a: string, b: string): boolean {
+  if (a === b) return true
+  if (isAbsolutePath(a) === isAbsolutePath(b)) return false
+  const [absolute, relative] = isAbsolutePath(a) ? [a, b] : [b, a]
+  return absolute.endsWith(`/${relative}`)
+}
+
+/** The files that `keys` name, a file spelled in two ways counted once. */
+function distinctFiles(keys: string[]): string[] {
+  const found: string[] = []
+  for (const key of keys) {
+    const at = found.findIndex((entry) => sameFile(entry, key))
+    // Keep the absolute spelling: it is the one a later relative one is matched against.
+    if (at < 0) found.push(key)
+    else if (isAbsolutePath(key)) found[at] = key
+  }
+  return found
 }
 
 /** A failed call or an error inside the group; a skipped or refused call is not a failure. */
