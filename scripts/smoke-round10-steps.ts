@@ -80,12 +80,28 @@ export async function roundTenStepsChecks(check: Check, section: (name: string) 
     )
     check("two different files stay two", editCount(edited("f6", "D:/p/a.mjs", true), edited("f7", "D:/p/b.mjs", true)) === 2)
     const at = (id: string, file: string, status: "completed" | "error") => tool(id, "edit", status, { input: { filePath: file } })
-    check(
-      "a file edited by its absolute path and by its path from the project is one file, in either order, and in any case",
-      editCount(at("k1", "/p/src/a.ts", "completed"), at("k2", "src/a.ts", "completed")) === 1 &&
-        editCount(at("k3", "./src/a.ts", "completed"), at("k4", "/p/src/a.ts", "completed")) === 1 &&
-        editCount(at("k5", "/p/src/Foo.ts", "error"), at("k6", "src/foo.ts", "completed")) === 1,
-    )
+    const files = (paths: string[]) => paths.map((file, index) => at(`k${index}`, file, "completed"))
+    const editCountAt = (root: string, paths: string[], caseInsensitive?: boolean) =>
+      groupSummary(groupOf(...files(paths)), { root, caseInsensitive })[0]?.count
+    const absolute = "/p/lib/a.ts"
+    const bare = "a.ts"
+    const relative = "lib/a.ts"
+    check("an absolute path and a different file at the root stay separate", editCountAt("/p", [absolute, bare]) === 2)
+    check("a known root identifies an absolute path and its project-relative spelling", editCountAt("/p", [absolute, "./lib/a.ts"]) === 1)
+    for (const paths of [
+      [absolute, bare, relative], [absolute, relative, bare],
+      [bare, absolute, relative], [bare, relative, absolute],
+      [relative, absolute, bare], [relative, bare, absolute],
+    ]) {
+      check(`a known root gives two files in order ${paths.join(", ")}`, editCountAt("/p", paths) === 2)
+    }
+    check("without a root, an absolute path and relative spellings stay separate", editCount(...files([absolute, bare, relative])) === 3)
+    check("without case information, different case stays separate", editCount(...files(["Foo.ts", "foo.ts"])) === 2)
+    check("a case-insensitive Windows project merges its absolute and relative spellings", editCountAt("D:\\p", ["D:\\p\\src\\A.ts", ".\\src\\a.ts"], true) === 1)
+    check("a case-sensitive project keeps differently cased names", editCountAt("/p", ["/p/Foo.ts", "foo.ts"], false) === 2)
+    check("paths outside the known root keep their case", editCountAt("D:/p", ["E:/other/Foo.ts", "E:/other/foo.ts"], true) === 2)
+    check("a root matches only on a directory boundary", editCountAt("/p", ["/project/lib/a.ts", "roject/lib/a.ts"]) === 2)
+    check("fallback titles have their own identity", editCount(at("path", "one.mjs", "completed"), tool("title", "apply_patch", "completed", { title: "one.mjs" })) === 2)
     check("but two relative paths that end alike are two files", editCount(at("k7", "a.ts", "completed"), at("k8", "lib/a.ts", "completed")) === 2)
     check("reading counts the same way", counts(tool("f8", "read", "completed", { input: { filePath: "D:\\p\\a.mjs" } }), tool("f9", "read", "completed", { input: { path: "D:/p/a.mjs" } }))[0]?.count === 1)
     check("a call with no path of its own is told apart by its title", editCount(tool("g1", "apply_patch", "completed", { title: "one.mjs" }), tool("g2", "apply_patch", "completed", { title: "two.mjs" })) === 2)

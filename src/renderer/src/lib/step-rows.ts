@@ -192,75 +192,65 @@ export function singleTool(items: StepItem[]): ToolPart | undefined {
   return stepTitle(only.part) || stepState(only.part) === "running" ? only.part : undefined
 }
 
+interface SummaryPathContext {
+  /** The absolute directory relative paths in this group were resolved from. */
+  root: string
+  /** Whether paths within this directory are known to be case-insensitive. */
+  caseInsensitive?: boolean
+}
+
 /**
  * The counts in a group's summary line, in the order each kind first appears.
  *
- * Reads and edits count the files they touched, so reading one file three
- * times is one file; commands, searches and anything else count calls.
+ * Reads and edits count distinct files; commands, searches and other tools count calls.
  */
-export function groupSummary(items: StepItem[]): { bucket: Bucket; count: number }[] {
-  const tools = items.flatMap((item) => (item.kind === "tool" ? [item.part] : []))
-  if (!tools.length) return [{ bucket: "other", count: Math.max(1, items.length) }]
-  const order: Bucket[] = []
-  const calls = new Map<Bucket, number>()
-  const files = new Map<Bucket, string[]>()
-  for (const part of tools) {
-    const bucket = bucketOf(part.name)
-    if (!order.includes(bucket)) order.push(bucket)
-    const key = bucket === "read" || bucket === "edit" ? fileKey(part) : ""
-    if (key) files.set(bucket, [...(files.get(bucket) ?? []), key])
-    else calls.set(bucket, (calls.get(bucket) ?? 0) + 1)
+export function groupSummary(items: StepItem[], context?: SummaryPathContext): { bucket: Bucket; count: number }[] {
+  const buckets = new Map<Bucket, { files: Set<string>; calls: number }>()
+  const root = spelled(context?.root ?? "")
+  const rootPrefix = isAbsolutePath(root) ? root.replace(/\/?$/, "/") : ""
+  const caseInsensitive = context?.caseInsensitive === true
+  const matchPrefix = caseInsensitive ? rootPrefix.toLowerCase() : rootPrefix
+
+  for (const item of items) {
+    if (item.kind !== "tool") continue
+    const bucket = bucketOf(item.part.name)
+    let counts = buckets.get(bucket)
+    if (!counts) {
+      counts = { files: new Set(), calls: 0 }
+      buckets.set(bucket, counts)
+    }
+    const key = bucket === "read" || bucket === "edit" ? fileKey(item.part, matchPrefix, caseInsensitive) : ""
+    if (key) counts.files.add(key)
+    else counts.calls++
   }
-  return order.map((bucket) => ({ bucket, count: distinctFiles(files.get(bucket) ?? []).length + (calls.get(bucket) ?? 0) }))
+  if (!buckets.size) return [{ bucket: "other", count: Math.max(1, items.length) }]
+  return Array.from(buckets, ([bucket, { files, calls }]) => ({ bucket, count: files.size + calls }))
 }
 
-/**
- * Which file a read or an edit touched, for counting files in a summary.
- *
- * The row's title is not it: the server writes a title (the path from the
- * project) only for a call that went through, so a failed edit of a file shows
- * the path as the model wrote it and the retry that worked shows the other
- * spelling - one file counted as two. The path the call was given is the same
- * on both, with its slashes made alike. A call with no path of its own (a
- * patch) is told apart by its title.
- */
-function fileKey(part: ToolPart): string {
+/** Prefer the tool input, which is available even when a failed call has no server title. */
+function fileKey(part: ToolPart, rootPrefix: string, caseInsensitive: boolean): string {
   const input = part.input ?? {}
   for (const name of ["path", "filePath", "file_path", "notebook_path"]) {
     const value = input[name]
-    if (typeof value === "string" && value.trim()) return spelled(value)
+    if (typeof value !== "string" || !value.trim()) continue
+    const path = spelled(value)
+    if (!rootPrefix || /(?:^|\/)\.\.(?:\/|$)/.test(path)) return `path:${path}`
+
+    const comparable = caseInsensitive ? path.toLowerCase() : path
+    if (isAbsolutePath(path)) {
+      return comparable.startsWith(rootPrefix) ? `path:${comparable}` : `path:${path}`
+    }
+    // A Windows drive-relative path is relative to that drive's working directory.
+    if (/^[a-z]:/i.test(path)) return `path:${path}`
+    return `path:${rootPrefix}${comparable}`
   }
-  return spelled(stepTitle(part))
+  const title = spelled(stepTitle(part))
+  return title ? `title:${title}` : ""
 }
 
-/** A path with its slashes made alike, a leading "./" dropped and its case folded (macOS and Windows do not tell Foo.ts from foo.ts). */
-const spelled = (path: string) => path.trim().replace(/[\\/]+/g, "/").replace(/^\.\//, "").toLowerCase()
-
-const isAbsolutePath = (path: string) => path.startsWith("/") || /^[a-z]:\//.test(path)
-
-/**
- * Whether two spellings name one file: the same, or an absolute path and a
- * path from the project that it ends with. Two relative paths never merge, so
- * `a.ts` and `lib/a.ts` stay two files.
- */
-function sameFile(a: string, b: string): boolean {
-  if (a === b) return true
-  if (isAbsolutePath(a) === isAbsolutePath(b)) return false
-  const [absolute, relative] = isAbsolutePath(a) ? [a, b] : [b, a]
-  return absolute.endsWith(`/${relative}`)
-}
-
-/** The files that `keys` name, a file spelled in two ways counted once. */
-function distinctFiles(keys: string[]): string[] {
-  const found: string[] = []
-  for (const key of keys) {
-    const at = found.findIndex((entry) => sameFile(entry, key))
-    // Keep the absolute spelling: it is the one a later relative one is matched against.
-    if (at < 0) found.push(key)
-    else if (isAbsolutePath(key)) found[at] = key
-  }
-  return found
-}
+/** Make slash spellings alike while preserving a network path's leading pair. */
+const spelled = (path: string) => path.trim().replace(/\\/g, "/").replace(/(?<!^)\/{2,}/g, "/").replace(/^(?:\.\/)+/, "")
+const isAbsolutePath = (path: string) => path.startsWith("/") || /^[a-z]:\//i.test(path)
 
 /** A failed call or an error inside the group; a skipped or refused call is not a failure. */
 export function groupFailed(items: StepItem[]): boolean {
