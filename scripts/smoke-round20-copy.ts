@@ -82,7 +82,7 @@ export const GROUP_C: Row[] = [
   ["set.mcp.unapplied", "配置已修改，尚未生效"],
   ["set.mcp.importDone", "已导入 {n} 个 MCP 服务器，下个新对话生效"],
   ["set.models.probeBusy", "测试中…", "Testing…"],
-  ["set.models.modelExists", "模型已存在", "Model already added"],
+  ["set.models.modelExists", "模型已存在", "Model already exists"],
   ["set.models.comboEmpty", "未找到模型，请手动输入 model-id", "No models found. Enter a model-id manually."],
   ["set.models.cloneDesc", "为副本指定新的供应商 ID", "Pick a new provider ID for the copy"],
   // R21-F2: MiMo's own sentence, taken from its shipped zh-CN table.

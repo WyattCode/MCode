@@ -42,7 +42,7 @@ export async function roundNineteenLaneAChecks(check: Check, section: (name: str
     const form = await read("src/renderer/src/components/CustomProviderForm.vue")
     const handlers = await read("src/server/handlers.ts")
     const store = await read("src/renderer/src/stores/app.ts")
-    const button = form.slice(form.indexOf('class="cp-model-remove"'), form.indexOf("</button>", form.indexOf('class="cp-model-remove"')))
+    const button = form.slice(form.indexOf(':data-model-rm="row.id"'), form.indexOf("</button>", form.indexOf(':data-model-rm="row.id"')))
     check("the trash button opens a confirmation instead of dropping the card", /@click="removingModel = row"/.test(button) && !/removeModel\(row\)/.test(button))
     check(
       "the confirmation is MiMo's: 删除自定义模型 over the model's name",
