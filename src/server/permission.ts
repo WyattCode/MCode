@@ -220,8 +220,6 @@ interface Pending {
   /** The project its "always" would be kept for, and what it asks about. */
   key: string
   patterns: string[]
-  /** Requires a current human response even at full access. */
-  humanOnly?: boolean
   /** What the user said when refusing, if anything. */
   reason?: string
   /** How it was closed, for the record the transcript keeps. */
@@ -405,6 +403,16 @@ export class Permissions {
     return this.decide(kind, level, resources)
   }
 
+  private requestAction(kind: string, level: Access, patterns: readonly string[]): PermissionAction {
+    if (level !== "full") return this.action(kind, level, patterns)
+    // MiMo's Ef() returns an automatic once for FullAccess regardless of kind.
+    // Keep explicit denials. Everything else runs without a card, including
+    // deletes, desktop controls and patterns covered by a user's Ask rule.
+    const bucket = bucketOf(kind)
+    if (bucket && accessAction(bucket, level, this.config.get()) === "deny") return "deny"
+    return patterns.some((pattern) => this.ruleFor(kind, pattern)?.effect === "deny") ? "deny" : "allow"
+  }
+
   /** How many times this call has consulted the gate, asked or waived. */
   asked(callID: string): number {
     return this.consultations.get(callID) ?? 0
@@ -494,9 +502,9 @@ export class Permissions {
     patterns?: string[]
     /** What "always" saves: `*` - the whole kind - when left out. */
     always?: string[]
-    /** Asked every time and never remembered, whatever was said before; decided from the command when left out. */
+    /** Below full access, asked every time and never remembered; inferred from the command when left out. */
     forced?: boolean
-    /** Requires a current human response even at full access. */
+    /** Requires a current human response below full access. */
     humanOnly?: boolean
     /** A pattern rule asks for this call even where its bucket allows it - a `.env` read - except at full access. */
     patternAsks?: boolean
@@ -513,34 +521,16 @@ export class Permissions {
      * matched against, so `git push *` covers a command however its arguments
      * are spelled and a path rule covers the file the question names.
      */
-    let action = this.action(input.kind, level, patterns)
-    const explicitAsk = patterns.some((pattern) => this.ruleFor(input.kind, pattern)?.effect === "ask")
-    if (action === "allow" && (input.humanOnly || (input.patternAsks && level !== "full"))) action = "ask"
-    /*
-     * Read first, before anything remembered. A bucket switched to Deny has to
-     * beat an "always" granted earlier in the same session, or turning a tool
-     * off would not take effect until the app was restarted.
-     */
+    let action = this.requestAction(input.kind, level, patterns)
+    if (level !== "full" && action === "allow" && (input.humanOnly || input.patternAsks)) action = "ask"
+    // Check policy before any remembered approval.
     if (action === "deny") throw new PermissionDenied(input.subject, refusal(input.kind, input.subject))
-    /*
-     * A command that loses work is asked about every time, whatever was said
-     * for the bucket before: "always run commands" was an answer about builds
-     * and tests, not about deleting things. As MiMo forces its delete question,
-     * that holds when commands are allowed and at full access too, and neither
-     * the middle level nor the model's review ever answers it.
-     */
+    // Below full access, a delete always needs a fresh answer. Neither the
+    // middle level nor the model's review can answer it.
     const risk = input.kind === "bash" ? commandRisk(input.subject) : undefined
     const forced = input.humanOnly || (input.forced ?? (risk !== undefined && LOST_WORK.includes(risk)))
-    /*
-     * Except at full access. MiMo asks about a delete there too; the user chose
-     * otherwise (2026-09-26): full access is the reader saying "do not ask me",
-     * and a question at that level, deletes included, is one they have already
-     * answered. A deliberate difference from MiMo - see HANDOFF. Every other
-     * level, and "always allow commands" at any of them, still asks each time.
-     */
-    if (!input.humanOnly) {
-      if (action === "allow" && (!forced || level === "full")) return
-    }
+    if (action === "allow" && (!forced || level === "full")) return
+    const explicitAsk = patterns.some((pattern) => this.ruleFor(input.kind, pattern)?.effect === "ask")
     // MiMo's read-only allowlist: a command made only of reading pieces runs once without a question.
     // Except one naming a file the read rules ask about (`type .env`): reading it through a shell asks too,
     // and except a command a user rule deliberately put to them.
@@ -580,7 +570,7 @@ export class Permissions {
 
     let entry: Pending | undefined
     const response = await new Promise<PermissionResponse>((resolve) => {
-      entry = { request, resolve, key, patterns, humanOnly: input.humanOnly }
+      entry = { request, resolve, key, patterns }
       this.pending.set(request.id, entry)
       this.bus.publish({ type: "permission.requested", request })
     })
@@ -605,7 +595,7 @@ export class Permissions {
        * model can act on the difference: one says try something else, the other
        * says this particular thing was not wanted.
        */
-      if (this.action(input.kind, level, patterns) === "deny") {
+      if (entry?.decided === "policy" || this.action(input.kind, level, patterns) === "deny") {
         throw new PermissionDenied(input.subject, refusal(input.kind, input.subject))
       }
       // A person said no; anything else here is a question closed by Stop, which ends the turn by itself.
@@ -720,7 +710,7 @@ export class Permissions {
       const level = found instanceof Promise ? await found : found
       // Answered, or settled by another pass, while the level was read.
       if (this.pending.get(id) !== pending) continue
-      const action = this.action(pending.request.kind, level, pending.patterns)
+      const action = this.requestAction(pending.request.kind, level, pending.patterns)
       /*
        * A delete waiting for its answer is settled by a person, or by the
        * reader switching this conversation to full access - never by a bucket
@@ -729,7 +719,7 @@ export class Permissions {
        * to "always allow" was answered "once" by the next unrelated update,
        * with nobody having pressed anything (R28-8).
        */
-      if (pending.request.forced && action === "allow" && (pending.humanOnly || level !== "full")) continue
+      if (pending.request.forced && action === "allow" && level !== "full") continue
       const auto = level === "auto"
       /*
        * The middle level switched on while a question was up - MiMo's 帮我审批 -
