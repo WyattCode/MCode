@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from "vue"
-import type { CustomModel, CustomProvider, Effort, ModelInfo } from "@shared/protocol"
+import type { CustomModel, CustomProvider, Effort, ModelCandidate, ModelInfo } from "@shared/protocol"
 import { THINKING_LEVELS } from "@shared/effort-menu"
 import { modelLimitProblem, normalizeBaseURL, normalizeModelId, normalizeProviderProtocol, PROVIDER_PRESETS } from "@shared/custom-endpoint"
 import { useApp } from "../stores/app"
@@ -9,7 +9,7 @@ import { notice, notifyFailure } from "../lib/toast"
 import { useEscapeLayerWhile } from "../lib/escape-layer"
 import ConfirmDialog from "./ConfirmDialog.vue"
 import SelectMenu from "./SelectMenu.vue"
-import { LIMIT_PRESETS, MODALITIES, comboEnterValue, limitLabel, limitOf, modalitySummary, providerIdError, validEndpoint, type Modality } from "../lib/custom-model"
+import { LIMIT_PRESETS, MODALITIES, limitLabel, limitOf, modalitySummary, providerIdError, validEndpoint, type Modality } from "../lib/custom-model"
 import { providerIdProblem } from "@shared/provider-id"
 
 /**
@@ -74,16 +74,25 @@ interface HeaderRow {
 let nextKey = 0
 const headerRow = (): HeaderRow => ({ key: "", value: "", err: {} })
 
-/** What a model this app already knows reads, by id - the catalog behind every other provider. */
+const catalog = computed(() => app.providers
+  .filter((provider) => provider.id !== props.editing?.id)
+  .map((provider) => {
+    const byId = new Map<string, ModelInfo>()
+    for (const model of provider.models) {
+      const id = model.id.toLowerCase()
+      if (!byId.has(id)) byId.set(id, model)
+    }
+    return byId
+  }))
+
+/** Look up the full or gateway-qualified id in provider order. */
 function known(id: string): ModelInfo | undefined {
   const wanted = id.trim().toLowerCase()
-  const tail = wanted.includes("/") ? wanted.slice(wanted.lastIndexOf("/") + 1) : wanted
-  for (const provider of app.providers) {
-    if (provider.id === props.editing?.id) continue
-    const hit = provider.models.find((model) => model.id.toLowerCase() === wanted) ?? provider.models.find((model) => model.id.toLowerCase() === tail)
+  const tail = wanted.slice(wanted.lastIndexOf("/") + 1)
+  for (const provider of catalog.value) {
+    const hit = provider.get(wanted) ?? provider.get(tail)
     if (hit) return hit
   }
-  return undefined
 }
 
 function storedRow(model: CustomModel): ModelRow {
@@ -124,7 +133,6 @@ function newRow(): ModelRow {
 }
 
 const editing = props.editing
-type ModelCandidate = Pick<ModelInfo, "id"> & Partial<Pick<ModelInfo, "name" | "contextWindow" | "maxOutput" | "inputs">>
 type Probe = { status: "idle" | "busy" | "ok" | "fail"; modelIds: (string | ModelCandidate)[]; text: string }
 const idleProbe = (): Probe => ({ status: "idle", modelIds: [], text: "" })
 const preset = computed(() => {
@@ -350,13 +358,9 @@ const comboMenuEl = ref<HTMLElement>()
 const recommendation = computed<Thinking | undefined>(() => {
   const row = editor.value
   if (!row) return
-  const stored = row.stored?.id === normalizeModelId(row.id) ? row.stored?.thinking : undefined
-  if (stored?.default) {
-    return { on: true, efforts: stored.efforts, canOff: stored.canOff === true, default: stored.default }
-  }
   const hint = known(row.id)
   const efforts = THINKING_LEVELS.filter((level) => hint?.variants.includes(level))
-  if (efforts.length) return { on: true, efforts, canOff: hint?.variants.includes("none") ?? false, default: hint?.defaultEffort }
+  if (efforts.length) return { on: true, efforts, canOff: hint?.variants.includes("none") ?? false, default: efforts.find((level) => level === hint?.defaultEffort) }
 })
 const reasoningChanged = ref(false)
 const currentThinking = computed(() => {
@@ -364,23 +368,68 @@ const currentThinking = computed(() => {
   return editor.value?.thinking ?? blankThinking()
 })
 
-const choices = computed(() => {
-  const needle = editor.value?.id.trim().toLowerCase() ?? ""
+const probeModelIds = computed(() => probe.value.modelIds)
+const candidateIndex = computed(() => {
   const candidates = new Map<string, ModelCandidate>()
-  for (const result of probe.value.modelIds) {
-    const candidate = typeof result === "string" ? { id: result } : result
-    candidates.set(candidate.id, candidate)
+  if (probeModelIds.value.length) {
+    for (const result of probeModelIds.value) {
+      const candidate = typeof result === "string" ? { id: result } : result
+      const hint = known(candidate.id)
+      candidates.set(candidate.id, {
+        id: candidate.id,
+        name: candidate.name ?? hint?.name,
+        contextWindow: candidate.contextWindow ?? hint?.contextWindow,
+        maxOutput: candidate.maxOutput ?? hint?.maxOutput,
+        inputs: hint?.inputs ? { ...hint.inputs, ...candidate.inputs } : candidate.inputs,
+      })
+    }
+  } else {
+    for (const provider of catalog.value) {
+      for (const model of provider.values()) {
+        if (!candidates.has(model.id)) candidates.set(model.id, model)
+      }
+    }
   }
-  return [...candidates.values()].filter(({ id, name }) =>
-    id.toLowerCase().includes(needle) || name?.toLowerCase().includes(needle),
-  )
+  return Array.from(candidates.values(), (candidate) => ({
+    candidate,
+    id: candidate.id.toLowerCase(),
+    name: candidate.name?.toLowerCase(),
+  }))
 })
+const query = computed(() => editor.value?.id.trim().toLowerCase() ?? "")
+const choices = computed(() => {
+  const needle = query.value
+  const matches: ModelCandidate[] = []
+  for (const { candidate, id, name } of candidateIndex.value) {
+    if (!needle || id.includes(needle) || name?.includes(needle)) matches.push(candidate)
+  }
+  return matches
+})
+const emptyQueryLimit = 200
+const optionHeight = 30
+const menuScrollTop = ref(0)
+const windowedChoices = computed(() => !query.value && choices.value.length > emptyQueryLimit)
+const choiceStart = computed(() => windowedChoices.value
+  ? Math.min(Math.max(0, Math.floor(menuScrollTop.value / optionHeight) - 10), choices.value.length - emptyQueryLimit)
+  : 0)
+const choiceEnd = computed(() => windowedChoices.value ? choiceStart.value + emptyQueryLimit : choices.value.length)
+const visibleChoices = computed(() => windowedChoices.value ? choices.value.slice(choiceStart.value, choiceEnd.value) : choices.value)
 
-watch(choices, () => (highlight.value = -1), { flush: "sync" })
+watch(choices, () => {
+  highlight.value = -1
+  menuScrollTop.value = 0
+  if (comboMenuEl.value) comboMenuEl.value.scrollTop = 0
+}, { flush: "sync" })
+
+function onComboScroll(event: Event) {
+  menuScrollTop.value = (event.currentTarget as HTMLElement).scrollTop
+  if (highlight.value >= 0 && (highlight.value < choiceStart.value || highlight.value >= choiceEnd.value)) highlight.value = -1
+}
 
 function closeCombo() {
   comboOpen.value = false
   highlight.value = -1
+  menuScrollTop.value = 0
 }
 
 function closeEditor() {
@@ -476,15 +525,18 @@ function comboKey(row: ModelRow, event: KeyboardEvent) {
     if (!choices.value.length) return
     const step = event.key === "ArrowDown" ? 1 : -1
     highlight.value = Math.max(0, Math.min(highlight.value + step, choices.value.length - 1))
+    if (highlight.value < choiceStart.value || highlight.value >= choiceEnd.value) {
+      menuScrollTop.value = highlight.value * optionHeight
+      if (comboMenuEl.value) comboMenuEl.value.scrollTop = menuScrollTop.value
+    }
     void nextTick(() => comboMenuEl.value?.querySelector<HTMLElement>(".cp-option.on")?.scrollIntoView?.({ block: "nearest" }))
   } else if (event.key === "Enter") {
     event.preventDefault()
     const index = comboOpen.value ? highlight.value : -1
-    const value = comboEnterValue(index, choices.value.map((choice) => choice.id), row.id)
     const choice = choices.value[index]
     if (choice) pickModel(row, choice)
     else {
-      setModelId(row, value)
+      setModelId(row, row.id)
       closeCombo()
     }
   }
@@ -518,7 +570,7 @@ function commitModel() {
 
   row.id = normalizeModelId(row.id)
   row.name = row.name.trim()
-  row.thinking = { ...currentThinking.value, efforts: [...currentThinking.value.efforts] }
+  row.thinking = { ...currentThinking.value, efforts: [...currentThinking.value.efforts], default: activeDefault.value }
   const index = form.value.models.findIndex((model) => model.key === row.key)
   if (index < 0) form.value.models.push(row)
   else form.value.models.splice(index, 1, row)
@@ -568,21 +620,33 @@ const reasoningPresets = [
 ] as const
 
 const selectedEfforts = computed(() => currentThinking.value.on ? currentThinking.value.efforts : [])
+const activeDefault = computed(() => selectedEfforts.value.find((level) => level === currentThinking.value.default))
 
 function sameEfforts(efforts: readonly Effort[]): boolean {
   return selectedEfforts.value.length === efforts.length && efforts.every((level) => selectedEfforts.value.includes(level))
 }
 
 function setEfforts(row: ModelRow, efforts: readonly Effort[]) {
-  const { canOff, default: preferred } = currentThinking.value
+  const settings = currentThinking.value
   reasoningChanged.value = true
-  row.thinking = {
-    on: efforts.length > 0,
-    efforts: [...efforts],
-    canOff,
-    default: preferred && efforts.includes(preferred) ? preferred : undefined,
-  }
+  // Keep the preferred level in the draft so removing and readding it restores it.
+  row.thinking = { ...settings, on: efforts.length > 0, efforts: [...efforts] }
 }
+
+function setCanOff(row: ModelRow, canOff: boolean) {
+  row.thinking = { ...currentThinking.value, canOff }
+  reasoningChanged.value = true
+}
+
+const preferredLevel = computed({
+  get: () => activeDefault.value ?? "auto",
+  set: (value: string) => {
+    const row = editor.value
+    if (!row) return
+    row.thinking = { ...currentThinking.value, default: selectedEfforts.value.find((level) => level === value) }
+    reasoningChanged.value = true
+  },
+})
 
 function toggleLevel(row: ModelRow, level: Effort) {
   const efforts = THINKING_LEVELS.filter((one) => (one === level) !== selectedEfforts.value.includes(one))
@@ -598,7 +662,8 @@ function resetRecommendation(row: ModelRow) {
 
 const usesRecommendation = computed(() => {
   const recommended = recommendation.value
-  return Boolean(recommended && sameEfforts(recommended.efforts) && recommended.default === currentThinking.value.default)
+  return Boolean(recommended && sameEfforts(recommended.efforts) && recommended.default === activeDefault.value &&
+    recommended.canOff === currentThinking.value.canOff)
 })
 
 const modLabel = (key: Modality | "omni") =>
@@ -937,14 +1002,20 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
                   @compositionend="endComposition(editor, $event)"
                   @keydown="comboKey(editor, $event)"
                 />
-                <div v-if="comboOpen" :id="`${comboId}-menu`" ref="comboMenuEl" class="cp-menu combo" role="listbox" data-model-combo-menu :aria-label="t('set.models.modelId')">
+                <div v-if="comboOpen" :id="`${comboId}-menu`" ref="comboMenuEl" class="cp-menu combo" role="listbox" data-model-combo-menu :aria-label="t('set.models.modelId')" @scroll="onComboScroll">
                   <div v-if="!choices.length" class="cp-menu-empty" data-model-combo-empty>{{ t("set.models.comboEmpty") }}</div>
-                  <button v-for="(choice, index) in choices" :id="`${comboId}-${index}`" :key="choice.id" type="button" role="option" tabindex="-1"
-                    class="cp-option" :class="{ on: highlight === index }" :aria-selected="highlight === index"
-                    :data-model-combo-option="choice.id" @mouseenter="highlight = index" @mousedown.prevent @click="pickModel(editor, choice)">
+                  <div v-if="choiceStart" role="presentation" aria-hidden="true" :style="{ height: `${choiceStart * optionHeight}px` }"></div>
+                  <button v-for="(choice, index) in visibleChoices" :id="`${comboId}-${choiceStart + index}`" :key="choice.id" type="button" role="option" tabindex="-1"
+                    class="cp-option" :class="{ on: highlight === choiceStart + index }" :aria-selected="highlight === choiceStart + index"
+                    :style="windowedChoices ? { height: `${optionHeight}px` } : undefined"
+                    :aria-posinset="windowedChoices ? choiceStart + index + 1 : undefined"
+                    :aria-setsize="windowedChoices ? choices.length : undefined"
+                    :data-model-combo-option="choice.id" @mouseenter="highlight = choiceStart + index" @mousedown.prevent @click="pickModel(editor, choice)">
                     <span class="cp-option-id">{{ choice.id }}</span>
                     <span v-if="choice.name" class="cp-option-name" data-model-combo-name>{{ choice.name }}</span>
                   </button>
+                  <div v-if="choiceEnd < choices.length" role="presentation" aria-hidden="true"
+                    :style="{ height: `${(choices.length - choiceEnd) * optionHeight}px` }"></div>
                 </div>
               </div>
               <div v-if="fieldErrors.modelId" :id="`${comboId}-error`" role="alert" class="cp-error" data-model-field-error="modelId">{{ fieldErrors.modelId }}</div>
@@ -971,7 +1042,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
                 />
                 <div class="cp-limit-presets" role="group" :aria-label="t(field === 'context' ? 'set.models.limitContext' : 'set.models.limitOutput')">
                   <button v-for="value in LIMIT_PRESETS[field]" :key="value" type="button" class="cp-chip cp-limit-chip"
-                    :data-model-limit-option="`${field}-${value}`" :aria-pressed="editor[field].trim() === String(value)"
+                    :data-model-limit-option="`${field}-${value}`" :aria-pressed="limitOf(editor[field]).value === value"
                     :title="`${value} (${limitLabel(value)})`" @click="setLimit(editor, field, String(value))">{{ limitLabel(value) }}</button>
                 </div>
                 <div v-if="fieldErrors[field]" :id="`${dialogId}-${field}-error`" role="alert" class="cp-error" :data-model-field-error="field">{{ fieldErrors[field] }}</div>
@@ -1011,6 +1082,21 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
                   :aria-pressed="selectedEfforts.includes(level)" :disabled="selectedEfforts.length === 1 && selectedEfforts.includes(level)"
                   @click="toggleLevel(editor, level)">{{ level }}</button>
               </div>
+              <details v-if="currentThinking.on" class="cp-thinking-advanced">
+                <summary>{{ t("set.advanced") }}</summary>
+                <label class="cp-tick">
+                  <input type="checkbox" :checked="currentThinking.canOff" data-model-thinking="canOff"
+                    @change="setCanOff(editor, ($event.target as HTMLInputElement).checked)" />
+                  {{ t("set.permAllow") }} {{ t("set.motion.off") }}
+                </label>
+                <label class="cp-thinking-default">
+                  {{ t("effort.default") }}
+                  <select v-model="preferredLevel" data-model-effort-default>
+                    <option value="auto">{{ t("effort.default") }}</option>
+                    <option v-for="level in selectedEfforts" :key="level" :value="level">{{ level }}</option>
+                  </select>
+                </label>
+              </details>
             </fieldset>
           </div>
           <footer class="cp-model-footer" data-model-editor-footer>
@@ -1625,6 +1711,29 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
 .cp-option:hover,
 .cp-option.on {
   background: var(--surface-hover);
+}
+
+.cp-thinking-advanced {
+  margin-top: 8px;
+}
+
+.cp-thinking-advanced > summary {
+  cursor: pointer;
+}
+
+.cp-thinking-advanced label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.cp-thinking-default select {
+  color: inherit;
+  background: var(--surface-page);
+  border: 1px solid var(--border-weak);
+  border-radius: 6px;
+  padding: 4px 8px;
 }
 
 .cp-limits,

@@ -1,4 +1,5 @@
 import { normalizeProviderProtocol, validEndpoint } from "@shared/custom-endpoint"
+import type { ModelCandidate } from "@shared/protocol"
 import type { ModelEntry, ProviderDefinition } from "./catalog"
 import { nameFromId } from "./model-name"
 
@@ -224,14 +225,18 @@ export async function discoverModels(
 /** MiMo 26.920's 测试连接: ten seconds for `/models` to answer. */
 export const PROBE_TIMEOUT = 10_000
 
-/** What 测试连接 reports: the ids the endpoint lists, or which way it failed. */
-export type ProbeResult = { ok: true; models: string[] } | { ok: false; reason: "http"; status: number } | { ok: false; reason: "json" | "timeout" } | { ok: false; reason: "network"; message: string }
+function positiveLimit(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0
+}
+
+/** The model candidates returned by the endpoint, or the probe failure. */
+export type ProbeResult = { ok: true; models: (string | ModelCandidate)[] } | { ok: false; reason: "http"; status: number } | { ok: false; reason: "json" | "timeout" } | { ok: false; reason: "network"; message: string }
 
 /**
  * MiMo 26.920's 测试连接: `GET <base>/models` with the key, and the ids it
- * lists - strings, or rows carrying `id` or `model`, under `data` or `models`.
+ * lists - strings, or rows carrying `id` or `model`, in an array or wrapped under `data` or `models`.
  * Every id is kept, chat model or not: this is a check that the address and key
- * work, and the list only offers ids to pick from.
+ * work, and the list offers candidates with whatever metadata the endpoint provides.
  *
  * An Anthropic gateway takes its key as `x-api-key` with a version header, so
  * the other protocols use bearer authentication.
@@ -277,13 +282,41 @@ export async function probeModels(input: {
     return err instanceof SyntaxError ? { ok: false, reason: "json" } : { ok: false, reason: "network", message: "Could not read response" }
   }
   const record = body && typeof body === "object" ? (body as { data?: unknown; models?: unknown }) : {}
-  const rows = Array.isArray(record.data) ? record.data : Array.isArray(record.models) ? record.models : []
-  const models: string[] = []
+  const rows: unknown[] = Array.isArray(body) ? body : Array.isArray(record.data) ? record.data : Array.isArray(record.models) ? record.models : []
+  const models = new Map<string, string | ModelCandidate>()
   for (const row of rows) {
-    const id = typeof row === "string" ? row : row && typeof row === "object" ? ((row as { id?: unknown }).id ?? (row as { model?: unknown }).model) : undefined
-    if (typeof id === "string" && id && !models.includes(id)) models.push(id)
+    if (typeof row === "string") {
+      if (row && !models.has(row)) models.set(row, row)
+      continue
+    }
+    if (!row || typeof row !== "object") continue
+    const fields = row as Record<string, unknown>
+    const id = fields.id ?? fields.model
+    if (typeof id !== "string" || !id) continue
+    const name = [fields.name, fields.display_name].find((value): value is string => typeof value === "string" && Boolean(value.trim()))
+    const contextWindow = [fields.contextWindow, fields.context_length, fields.context_window, fields.max_model_len].find(positiveLimit)
+    const maxOutput = [fields.maxOutput, fields.max_output_length].find(positiveLimit)
+    const explicit = fields.inputs && typeof fields.inputs === "object" ? fields.inputs as Record<string, unknown> : undefined
+    const inputs: NonNullable<ModelCandidate["inputs"]> = {}
+    for (const modality of ["image", "audio", "video", "pdf"] as const) {
+      const supported = explicit?.[modality]
+      if (typeof supported === "boolean") inputs[modality] = supported
+      else if (Array.isArray(fields.input_modalities)) inputs[modality] = fields.input_modalities.includes(modality)
+    }
+    const metadata = {
+      ...(name ? { name: name.trim() } : {}),
+      ...(contextWindow ? { contextWindow } : {}),
+      ...(maxOutput ? { maxOutput } : {}),
+      ...(Object.keys(inputs).length ? { inputs } : {}),
+    }
+    const previous = models.get(id)
+    if (Object.keys(metadata).length) {
+      models.set(id, { id, ...(typeof previous === "object" ? previous : {}), ...metadata })
+    } else if (!previous) {
+      models.set(id, id)
+    }
   }
-  return { ok: true, models }
+  return { ok: true, models: [...models.values()] }
 }
 
 /**

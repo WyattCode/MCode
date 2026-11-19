@@ -2072,6 +2072,15 @@ export interface ModelModalities {
   pdf: boolean
 }
 
+/** Optional metadata supplied by a provider's model-list endpoint. */
+export interface ModelCandidate {
+  id: string
+  name?: string
+  contextWindow?: number
+  maxOutput?: number
+  inputs?: Partial<Omit<ModelModalities, "text">>
+}
+
 /**
  * What is known about one model, as the window sees it.
  *
@@ -2660,7 +2669,7 @@ export interface ResponseMap {
   "provider.updateCustom": { providers: ProviderStatus[] }
   /** The copy's id. */
   "provider.copyCustom": { providers: ProviderStatus[]; id: string }
-  "provider.probe": { ok: boolean; modelIds: string[]; reason?: "http" | "json" | "timeout" | "network"; status?: number; message?: string }
+  "provider.probe": { ok: boolean; modelIds: (string | ModelCandidate)[]; reason?: "http" | "json" | "timeout" | "network"; status?: number; message?: string }
   /**
    * Where to send the user, plus the short code to type when the flow is the
    * device kind. Either way the outcome arrives later as an auth event.
