@@ -257,7 +257,7 @@ async function confirmClone(id: string) {
           <span>{{ entry.label }}</span>
         </button>
       </div>
-      <CustomProviderForm key="add" ref="form" :preset="preset" @saved="saved" />
+      <CustomProviderForm :key="'add-' + preset" ref="form" :preset="preset" @saved="saved" />
     </template>
 
     <!-- A custom provider: its own form, with delete and clone beside save. -->

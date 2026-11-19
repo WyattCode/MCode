@@ -173,11 +173,12 @@ export function formatChord(chord: string, platform: string): string {
 }
 
 /**
- * Prose that names the modifier both ways (「Ctrl/⌘+Enter」, 「⌘/Ctrl+点击」) keeps
- * only the spelling this system uses: the command glyph on macOS, `Ctrl` elsewhere.
+ * Prose that names both modifiers keeps the command glyph on macOS
+ * and the localized Control spelling elsewhere.
  */
 export function modText(text: string, platform: string): string {
-  return text.replace(/Ctrl\/⌘|⌘\/Ctrl/g, isMac(platform) ? "⌘" : "Ctrl")
+  const mac = isMac(platform)
+  return text.replace(/(Ctrl|Strg)\/⌘|⌘\/(Ctrl|Strg)/g, (_, before, after) => mac ? "⌘" : before ?? after)
 }
 
 /** Whether the shortcuts page is recording a chord; the application menu drops its own chords meanwhile. */
