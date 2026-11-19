@@ -79,6 +79,14 @@ export async function roundTenStepsChecks(check: Check, section: (name: string) 
       String(editCount(edited("f1", "D:\\a\\catalog.mjs", false), edited("f2", "D:/a/catalog.mjs", true))),
     )
     check("two different files stay two", editCount(edited("f6", "D:/p/a.mjs", true), edited("f7", "D:/p/b.mjs", true)) === 2)
+    const at = (id: string, file: string, status: "completed" | "error") => tool(id, "edit", status, { input: { filePath: file } })
+    check(
+      "a file edited by its absolute path and by its path from the project is one file, in either order, and in any case",
+      editCount(at("k1", "/p/src/a.ts", "completed"), at("k2", "src/a.ts", "completed")) === 1 &&
+        editCount(at("k3", "./src/a.ts", "completed"), at("k4", "/p/src/a.ts", "completed")) === 1 &&
+        editCount(at("k5", "/p/src/Foo.ts", "error"), at("k6", "src/foo.ts", "completed")) === 1,
+    )
+    check("but two relative paths that end alike are two files", editCount(at("k7", "a.ts", "completed"), at("k8", "lib/a.ts", "completed")) === 2)
     check("reading counts the same way", counts(tool("f8", "read", "completed", { input: { filePath: "D:\\p\\a.mjs" } }), tool("f9", "read", "completed", { input: { path: "D:/p/a.mjs" } }))[0]?.count === 1)
     check("a call with no path of its own is told apart by its title", editCount(tool("g1", "apply_patch", "completed", { title: "one.mjs" }), tool("g2", "apply_patch", "completed", { title: "two.mjs" })) === 2)
   }
@@ -177,18 +185,18 @@ export async function roundTenStepsChecks(check: Check, section: (name: string) 
   section("Round 10 (K10-16): a long path keeps its file name")
   {
     const deep = "C:\\Users\\Wyatt\\AppData\\Roaming\\mcode\\memory\\sessions\\ses_01a1abf424420000\\notes.md"
-    check("the folders are the head and the separator with the file name the tail", JSON.stringify(pathTitleParts(deep, 120)) === JSON.stringify({ head: "C:\\Users\\Wyatt\\AppData\\Roaming\\mcode\\memory\\sessions\\ses_01a1abf424420000", tail: "\\notes.md" }), pathTitleParts(deep, 120))
+    check("the folders are the head and the separator with the file name the tail", JSON.stringify(pathTitleParts(deep, 120)) === JSON.stringify({ head: "C:\\Users\\Wyatt\\AppData\\Roaming\\mcode\\memory\\sessions\\ses_01a1abf424420000", tail: "\\notes.md", cut: false }), pathTitleParts(deep, 120))
     const posix = pathTitleParts("/home/w/src/app/main.ts", 120)
     check("a slash path splits the same way", posix.head === "/home/w/src/app" && posix.tail === "/main.ts", posix)
     const cut = pathTitleParts(deep, 60)
-    check("past the cap only the folders are cut, with a dot where", cut.tail === "\\notes.md" && cut.head.endsWith("…") && cut.head.length + cut.tail.length === 60, cut)
-    check("a bare file name is all head", JSON.stringify(pathTitleParts("main.ts", 90)) === JSON.stringify({ head: "main.ts", tail: "" }))
+    check("past the cap only the folders are cut, and the row draws the dots: none are in the text", cut.tail === "\\notes.md" && cut.cut && !cut.head.includes("…") && cut.head.length + cut.tail.length === 59, cut)
+    check("a bare file name is all head", JSON.stringify(pathTitleParts("main.ts", 90)) === JSON.stringify({ head: "main.ts", tail: "", cut: false }))
     check("a name at the root has nothing to cut", pathTitleParts("/main.ts", 90).tail === "")
     const long = pathTitleParts(`C:\\x\\${"n".repeat(100)}.md`, 90)
-    check("a file name that fills the row alone is cut at its end", long.tail === "" && long.head.length === 90 && long.head.endsWith("…"), long)
+    check("a file name that fills the row alone is cut at its end", long.tail === "" && long.cut && long.head.length === 89 && !long.head.includes("…"), long)
     const pair = "😀".repeat(50)
     const sliced = cutTitle(pair, 11)
-    check("a cut never splits a surrogate pair", sliced === `${"😀".repeat(5)}…` && !/[\ud800-\udbff](?![\udc00-\udfff])/.test(sliced), sliced)
+    check("a cut never splits a surrogate pair", sliced === "😀".repeat(5) && !/[\ud800-\udbff](?![\udc00-\udfff])/.test(sliced), sliced)
     check("a title within the cap is untouched", cutTitle("abc", 3) === "abc")
     check("only path tools are drawn as paths", showsPath("read") && showsPath("edit") && showsPath("write") && showsPath("list") && !showsPath("grep") && !showsPath("bash"))
   }
