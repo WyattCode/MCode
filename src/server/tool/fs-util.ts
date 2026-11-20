@@ -210,7 +210,7 @@ export async function resolvePath(context: ToolContext, target: string, access: 
   // Approved against the real location too, so the same directory reached by a
   // different route is recognised as the one already allowed.
   const scope = stats?.isDirectory() ? real : path.dirname(real)
-  if (context.permissions.allowsOutside({ directory: context.directory, sessionID: context.sessionID }, scope)) return resolved
+  if (context.permissions.allowsOutside({ directory: context.directory, sessionID: context.sessionID }, scope, real)) return resolved
 
   await context.permissions.ask({
     directory: context.directory,
@@ -220,7 +220,8 @@ export async function resolvePath(context: ToolContext, target: string, access: 
     kind: "outside",
     title: "Access files outside the project",
     titleCode: "perm.outside",
-    subject: path.join(scope, "*"),
+    subject: real,
+    patterns: [real],
     scope,
   })
 

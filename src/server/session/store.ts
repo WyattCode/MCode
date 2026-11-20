@@ -184,6 +184,7 @@ export class SessionStore {
   constructor(
     private readonly storage: Storage,
     private readonly bus: Bus,
+    private readonly accessEpoch?: () => number | undefined,
   ) {}
 
   /* history: told of every write, including the silent ones the bus never hears. */
@@ -312,7 +313,15 @@ export class SessionStore {
   }
 
   async get(sessionID: string): Promise<SessionInfo | undefined> {
-    return this.storage.read<SessionInfo>(this.infoKey(sessionID))
+    const session = await this.storage.read<SessionInfo>(this.infoKey(sessionID))
+    return session && this.visibleAccess(session)
+  }
+
+  private visibleAccess(session: SessionInfo): SessionInfo {
+    if (this.accessEpoch && session.access === "full" && (session.accessEpoch ?? 0) !== (this.accessEpoch() ?? 0)) {
+      return { ...session, access: undefined, accessEpoch: undefined }
+    }
+    return session
   }
 
   async require(sessionID: string): Promise<SessionInfo> {
@@ -341,7 +350,7 @@ export class SessionStore {
       throw cause
     })
     // A copy each time: callers hold on to what they are given, and one of them editing a record must not edit the cache.
-    return structuredClone(await this.listing)
+    return structuredClone(await this.listing).map((session) => this.visibleAccess(session))
   }
 
   /**
@@ -472,7 +481,7 @@ export class SessionStore {
     if (this.deleted.has(sessionID)) throw new Error(`Session ${sessionID} was deleted`)
     await this.storage.write(this.infoKey(sessionID), next)
     this.patchList(sessionID, next)
-    this.bus.publish({ type: "session.updated", session: next })
+    this.bus.publish({ type: "session.updated", session: this.visibleAccess(next) })
   }
 
   async setArchived(sessionID: string, archived: boolean): Promise<{ session?: SessionInfo; changed: boolean }> {
@@ -511,12 +520,14 @@ export class SessionStore {
    * choosing a level is not activity, and must not move the conversation up
    * the side column.
    */
-  async setAccess(sessionID: string, access: SessionInfo["access"]): Promise<SessionInfo> {
+  async setAccess(sessionID: string, access: SessionInfo["access"], epoch = this.accessEpoch?.()): Promise<SessionInfo> {
     return this.exclusive(this.infoKey(sessionID), () =>
       this.writeInfo(sessionID, (session) => {
         const next: SessionInfo = { ...session, access }
         if (!access) delete next.access
-        return next
+        if (access === "full" && epoch !== undefined) next.accessEpoch = epoch
+        else delete next.accessEpoch
+        return this.visibleAccess(next)
       }),
     )
   }
@@ -546,9 +557,16 @@ export class SessionStore {
   }
 
   /** Turning off full access puts every conversation that was at it back on the default, as MiMo does. */
-  async dropFullAccess(): Promise<void> {
-    for (const session of await this.list()) {
-      if (session.access === "full") await this.setAccess(session.id, undefined)
+  async dropFullAccess(epoch?: number): Promise<void> {
+    for (const session of await this.readAll()) {
+      if (session.access !== "full" || (epoch !== undefined && (session.accessEpoch ?? 0) >= epoch)) continue
+      await this.exclusive(this.infoKey(session.id), async () => {
+        const current = await this.storage.read<SessionInfo>(this.infoKey(session.id))
+        if (current?.access !== "full" || (epoch !== undefined && (current.accessEpoch ?? 0) >= epoch)) return
+        delete current.access
+        delete current.accessEpoch
+        await this.saveInfo(session.id, current)
+      })
     }
   }
 

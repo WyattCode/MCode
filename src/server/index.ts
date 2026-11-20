@@ -135,10 +135,10 @@ export async function startBackend(dataDirectory: string, options: BackendOption
   const permissions = new Permissions(bus, config)
   // The "always" approvals this profile has remembered, so a restart does not ask again.
   await permissions.load(storage)
-  const sessions = new SessionStore(storage, bus)
+  const sessions = new SessionStore(storage, bus, () => config.get().accessEpoch)
   // Full access turned off by hand in config.json takes conversations off it at once, as the settings switch does.
   config.onReload(async (before, after) => {
-    if (before.allowFullAccess && !after.allowFullAccess) await sessions.dropFullAccess()
+    if (before.accessEpoch !== after.accessEpoch) await sessions.dropFullAccess(after.accessEpoch)
   })
   // Each conversation's own access level; a side chat or subagent runs at the level of the conversation it belongs to.
   permissions.useSessions(async (sessionID) => {
@@ -148,7 +148,7 @@ export async function startBackend(dataDirectory: string, options: BackendOption
       if (!owner) break
       session = await sessions.get(owner)
     }
-    return session?.access
+    return session
   })
   // Before the socket opens, so the first window already reads a filled project list.
   await config.migrateProjects(projectDirectoriesOf(await sessions.list()))
@@ -507,10 +507,13 @@ export async function startBackend(dataDirectory: string, options: BackendOption
        * or a setting made just before quit reaches the disk before the
        * process ends. Inside the main process's five-second bound on close.
        */
-      await permissions.flush()
-      config.unwatch()
-      await config.drain()
-      await storage.drain()
+      try {
+        await permissions.flush()
+      } finally {
+        config.unwatch()
+        await config.drain()
+        await storage.drain()
+      }
     },
   }
 }

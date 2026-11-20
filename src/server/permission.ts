@@ -222,6 +222,8 @@ interface Pending {
   /** The project its "always" would be kept for, and what it asks about. */
   key: string
   patterns: string[]
+  grantPatterns: string[]
+  saved?: (write: Promise<void>) => void
   /** The user's original choice, when answered by a person. */
   response?: PermissionResponse
   reason?: string
@@ -282,6 +284,7 @@ export class Permissions {
   private fromNewerVersion = false
   /** The last write, so two cannot interleave. */
   private writing: Promise<void> = Promise.resolve()
+  private lastWrite = this.writing
   /** Background subagents, with the conversation each works for: they are never shown a question. */
   private readonly background = new Map<string, string>()
   /** Who wants to hear how a call's questions ended, by call id. */
@@ -473,9 +476,9 @@ export class Permissions {
   }
 
   /** True when a folder outside the project was already let in with "always", for this project. */
-  allowsOutside(where: { directory?: string; sessionID: string }, scope: string): boolean {
-    const patterns = [scopePattern("outside", scope)]
-    return !this.deniedByPolicy("outside", patterns) && this.allowedByRules(projectKey(where), "outside", patterns)
+  allowsOutside(where: { directory?: string; sessionID: string }, scope: string, real = scopePattern("outside", scope)): boolean {
+    return !this.deniedByPolicy("outside", [real]) &&
+      this.allowedByRules(projectKey(where), "outside", [scopePattern("outside", scope)])
   }
 
   /** Whether every pattern asked about is covered by a saved "always" of the same kind. */
@@ -484,20 +487,28 @@ export class Permissions {
     return patterns.length > 0 && patterns.every((pattern) => saved.some((rule) => wildcardMatch(pattern, rule.pattern)))
   }
 
-  private remember(key: string, kind: string, always: string[]): void {
+  private remember(key: string, kind: string, always: string[]): Promise<void> {
     const saved = this.rules.get(key) ?? []
-    for (const pattern of always) if (!saved.some((rule) => rule.kind === kind && rule.pattern === pattern)) saved.push({ kind, pattern })
+    const additions: Rule[] = []
+    for (const pattern of always) {
+      if (saved.some((rule) => rule.kind === kind && rule.pattern === pattern)) continue
+      const rule = { kind, pattern }
+      saved.push(rule)
+      additions.push(rule)
+    }
     this.rules.set(key, saved)
-    this.changed.add(key)
-    // Written as it is granted, so tomorrow morning does not ask it again.
-    void this.persist()
+    if (this.store && additions.length) {
+      const previous = this.dirty.get(key)
+      this.dirty.set(key, { rules: [...(previous?.rules ?? []), ...additions], remove: previous?.remove ?? false })
+    }
+    return this.persist()
   }
 
   /** Apply the saved grant to other questions in the same project. */
   private async releaseRemembered(key: string, kind: string): Promise<void> {
     for (const [id, pending] of [...this.pending]) {
       if (pending.key !== key || pending.request.kind !== kind || pending.request.forced) continue
-      if (!this.allowedByRules(key, kind, pending.patterns)) continue
+      if (!this.allowedByRules(key, kind, pending.grantPatterns)) continue
       const found = this.levelOf(pending.request.sessionID)
       const level = found instanceof Promise ? await found : found
       if (this.pending.get(id) !== pending) continue
@@ -566,6 +577,7 @@ export class Permissions {
     const key = projectKey(input)
     const scoped = input.scope ? [scopePattern(input.kind, input.scope)] : undefined
     const patterns = input.patterns?.length ? input.patterns : (scoped ?? [input.subject])
+    const grantPatterns = input.kind === "outside" && scoped ? scoped : patterns
     const always = input.always ?? scoped ?? ["*"]
     const risk = input.kind === "bash" ? commandRisk(input.subject) : undefined
     const forced = input.humanOnly || (input.forced ?? (risk !== undefined && LOST_WORK.includes(risk)))
@@ -587,7 +599,7 @@ export class Permissions {
 
       const background = this.background.has(input.sessionID)
       const unattendedRisk = background && input.kind === "bash" && dangerousCommand(input.subject)
-      if (!forced && !unattendedRisk && this.allowedByRules(key, input.kind, patterns)) return
+      if (!forced && !unattendedRisk && this.allowedByRules(key, input.kind, grantPatterns)) return
       if (background) throw new PermissionDenied(input.subject, backgroundRefusal(input.kind, input.subject))
 
       if (forced || explicitAsk || level !== "auto") break
@@ -637,9 +649,10 @@ export class Permissions {
     let entry!: Pending
     let removeOnAbort: ReturnType<typeof addAbortListener> | undefined
     let decided: PermissionDecision = "cancelled"
+    let saved = Promise.resolve()
     try {
       const response = await waitForPermission(signal, () => new Promise<PermissionResponse>((resolve) => {
-        entry = { request, resolve, key, patterns }
+        entry = { request, resolve, key, patterns, grantPatterns }
         this.pending.set(request.id, entry)
         removeOnAbort = addAbortListener(signal, () => this.pending.delete(request.id))
         this.bus.publish({ type: "permission.requested", request })
@@ -655,10 +668,11 @@ export class Permissions {
       const reason = entry.reason?.trim()
       decided = entry.settledBy ?? decisionOf(response, reason)
       if (response === "reject") throw new PermissionDenied(input.subject, userRefusal(input.subject, reason))
-      if (response === "always") this.remember(key, input.kind, always)
+      if (response === "always") saved = this.remember(key, input.kind, always)
     } finally {
       removeOnAbort?.[Symbol.dispose]()
       if (entry) {
+        entry.saved?.(saved)
         this.pending.delete(request.id)
         const reason = entry.reason?.trim()
         this.bus.publish({ type: "permission.resolved", requestID: request.id, decided, ...(reason ? { reason } : {}) })
@@ -742,13 +756,18 @@ export class Permissions {
     })
   }
 
-  respond(requestID: string, response: PermissionResponse, reason?: string): void {
+  respond(requestID: string, response: PermissionResponse, reason?: string): Promise<void> | undefined {
     const pending = this.pending.get(requestID)
     if (!pending) return
     this.pending.delete(requestID)
     pending.response = response
     if (response === "reject" && reason) pending.reason = reason
-    pending.resolve(response === "always" && pending.request.forced ? "once" : response)
+    const answered = response === "always" && pending.request.forced ? "once" : response
+    const saved = answered === "always" ? new Promise<void>((resolve) => { pending.saved = resolve }) : undefined
+    // Callers that only answer the question can ignore this promise. The RPC awaits it.
+    void saved?.catch(() => undefined)
+    pending.resolve(answered)
+    return saved
   }
 
   /**
@@ -871,72 +890,57 @@ export class Permissions {
    */
   private persist(): Promise<void> {
     const storage = this.store
-    if (!storage || this.fromNewerVersion || this.blocked) return this.writing
-    const mine = new Map([...this.changed].flatMap((key) => (this.rules.has(key) ? [[key, [...this.rules.get(key)!]] as const] : [])))
-    // Serialised, so two approvals answered at once cannot land in the wrong order.
-    this.writing = this.writing
-      .catch(() => undefined)
-      .then(async () => {
-        const read = await storage.readOrCorrupt<Partial<StoredRules>>(RULES_KEY)
-        /*
-         * A document that will not read is not written over, here as at load:
-         * this process would be replacing a file it cannot see with its own
-         * partial view of it.
-         */
-        if (read.unreadable !== undefined || read.corrupt !== undefined) return
-        if (typeof read.value?.schemaVersion === "number" && read.value.schemaVersion > RULES_SCHEMA_VERSION) return
-        const projects: Record<string, Rule[]> = {}
-        for (const [key, rules] of Object.entries(read.value?.projects ?? {})) {
-          if (Array.isArray(rules)) projects[key] = rules as Rule[]
+    if (!storage) return Promise.resolve()
+    const write = this.writing.then(async () => {
+      if (!this.dirty.size) return
+      if (this.fromNewerVersion) throw new Error("Saved approvals were written by a newer version")
+      if (this.blocked) throw new Error(this.blocked)
+      const batch = new Map(this.dirty)
+      const read = await storage.readOrCorrupt<Partial<StoredRules>>(RULES_KEY)
+      if (read.unreadable !== undefined || read.corrupt !== undefined) {
+        throw new Error(read.unreadable ?? read.corrupt)
+      }
+      if (typeof read.value?.schemaVersion === "number" && read.value.schemaVersion > RULES_SCHEMA_VERSION) {
+        throw new Error("Saved approvals were written by a newer version")
+      }
+      const projects: Record<string, Rule[]> = Object.create(null)
+      for (const [key, rules] of Object.entries(read.value?.projects ?? {})) {
+        if (Array.isArray(rules)) projects[key] = rules as Rule[]
+      }
+      for (const [key, change] of batch) {
+        if (change.remove) delete projects[key]
+        if (!change.rules.length) continue
+        const merged = projects[key] ?? []
+        for (const rule of change.rules) {
+          if (!merged.some((kept) => kept.kind === rule.kind && kept.pattern === rule.pattern)) merged.push(rule)
         }
-        for (const [key, rules] of mine) {
-          const merged = [...(projects[key] ?? [])]
-          for (const rule of rules) if (!merged.some((kept) => kept.kind === rule.kind && kept.pattern === rule.pattern)) merged.push(rule)
-          projects[key] = merged
-        }
-        // A conversation this process has dropped is dropped on disk too, rather than coming back from the file.
-        for (const key of this.forgotten) delete projects[key]
-        await storage.write(RULES_KEY, { schemaVersion: RULES_SCHEMA_VERSION, projects })
-      })
-      .catch(() => undefined)
-    return this.writing
+        projects[key] = merged
+      }
+      await storage.write(RULES_KEY, { schemaVersion: RULES_SCHEMA_VERSION, projects })
+      for (const [key, committed] of batch) {
+        if (this.dirty.get(key) === committed) this.dirty.delete(key)
+      }
+    })
+    this.lastWrite = write
+    this.writing = write.catch(() => undefined)
+    return write
   }
 
-  /**
-   * Projects whose rules this process has deliberately dropped.
-   *
-   * Without this, re-reading the file before a write would bring a forgotten
-   * project's rules straight back: they are absent from `this.rules` exactly
-   * because they were removed, and absent is also what a project this process
-   * never touched looks like.
-   */
-  private readonly forgotten = new Set<string>()
+  /** Each replacement is a new generation, including a deletion while an older write is in flight. */
+  private readonly dirty = new Map<string, { rules: Rule[]; remove: boolean }>()
 
-  /** Projects whose rules this process has added to since it started: the only ones it writes. */
-  private readonly changed = new Set<string>()
-
-  /**
-   * Settles the last write, for a caller that has to know the rules have
-   * reached the disk.
-   *
-   * Granting one deliberately does not wait for the write: the tool that asked
-   * the question is held up until `ask` returns, and a disk that is busy would
-   * be felt as the approval taking a moment to take effect. The rule is in
-   * force the instant it is granted either way; this is for the checks, and for
-   * anything that wants to be sure before the process ends.
-   */
+  /** The last write's outcome, independent of the queue's ability to continue. */
   flush(): Promise<void> {
-    return this.writing
+    return this.lastWrite
   }
 
   /** Drops what one conversation was allowed "always", as its conversation is deleted. */
   async forgetSession(sessionID: string): Promise<void> {
-    // A subagent's background mark goes with it too (N11-37); it was only cleared for one run without a parent.
     this.background.delete(sessionID)
-    if (!this.rules.delete(`session:${sessionID}`)) return
-    // Remembered as deliberately dropped, or the re-read in `persist` would bring it back.
-    this.forgotten.add(`session:${sessionID}`)
-    this.changed.delete(`session:${sessionID}`)
+    const key = `session:${sessionID}`
+    if (!this.rules.delete(key) && !this.dirty.has(key)) return
+    if (!this.store) return
+    this.dirty.set(key, { rules: [], remove: true })
     await this.persist()
   }
 

@@ -134,6 +134,7 @@ export interface SessionInfo {
    * Absent follows the app's default level.
    */
   access?: "ask" | "auto" | "full"
+  accessEpoch?: number
   /*
    * subagents: a subagent's own conversation, and where in its parent it was
    * started - the parent conversation, the assistant message and the task call.
@@ -1747,6 +1748,7 @@ export interface AppConfig {
    * with: skipping every question is something to turn on deliberately.
    */
   allowFullAccess: boolean
+  accessEpoch?: number
   /** Working directory for new sessions. */
   directory: string
   /**

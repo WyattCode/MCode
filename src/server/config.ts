@@ -27,7 +27,7 @@ import { adoptedProjects, knownFolder, listedProjects, reconciledProjects } from
 import { RepoRoots } from "./repo-roots"
 import { worktreeTop } from "./session/worktree"
 import { sanitizeConfig } from "./config-sanitize"
-import { defaultAccess, type Access } from "@shared/access"
+import { defaultAccess, restoreAccessMap, type Access } from "@shared/access"
 import type { Storage } from "./storage"
 import { quarantine, writeAtomic } from "./storage"
 import fs from "node:fs/promises"
@@ -290,6 +290,27 @@ function sanitizeHeld(doc: AppConfig, stored: Partial<AppConfig> | undefined): M
 export function levelMap(level: Access): Record<PermissionKind, PermissionAction> {
   if (level !== "full") return { ...DEFAULT_PERMISSIONS }
   return Object.fromEntries(PERMISSION_KINDS.map((kind) => [kind, "allow"])) as Record<PermissionKind, PermissionAction>
+}
+
+// An odd generation records a disabled switch, including across a hand edit and restart.
+function accessEpoch(config: Partial<AppConfig>, minimum = 0): number {
+  const stored = config.accessEpoch
+  const epoch = Math.max(minimum, typeof stored === "number" && Number.isSafeInteger(stored) && stored >= 0 ? stored : 0)
+  return epoch % 2 === (config.allowFullAccess === false ? 1 : 0) ? epoch : epoch + 1
+}
+
+function clearFullAccess(before: AppConfig, next: AppConfig, held: Map<string, HeldValue>, patch?: Partial<AppConfig>): void {
+  if (defaultAccess(before) === "full" || before.accessLevel === "full") {
+    next.permissions = restoreAccessMap(before)
+    for (const kind of PERMISSION_KINDS) {
+      if (patch?.permissions?.[kind] === "deny") next.permissions[kind] = "deny"
+    }
+    if (next.accessLevel !== "auto") next.accessLevel = "ask"
+    held.delete("permissions")
+    held.delete("accessLevel")
+  }
+  delete next.accessBefore
+  held.delete("accessBefore")
 }
 
 /** MiMo's defaults when nothing is stored: the middle level, and the full access switch on. */
@@ -821,8 +842,10 @@ export class Config {
      */
     if (read.corrupt || read.unreadable) this.current.allowFullAccess = stored?.allowFullAccess === true
     const migrated = this.migrate(stored)
+    const epoch = accessEpoch(this.current, stored ? accessEpoch(stored) : 0)
+    this.current.accessEpoch = epoch
     this.current.autoApprove = allowed(this.current.permissions)
-    if ((migrated || retired || thresholdMigrated) && !this.fromNewerVersion) await this.persist()
+    if ((migrated || retired || thresholdMigrated || (stored !== undefined && epoch !== (stored.accessEpoch ?? 0))) && !this.fromNewerVersion) await this.persist()
     this.discovered = await this.readDiscovered()
     await this.loadCredentials()
   }
@@ -1000,11 +1023,17 @@ export class Config {
   private blocked = false
 
   /** Writes the settings key by key into the file as it stands, refusing one that no longer parses. */
-  private persist(): Promise<void> {
+  private persist(current = this.current, held = this.held, expectedEpoch?: number): Promise<void> {
     if (this.blocked) return Promise.resolve()
     const file = this.storage.fileOf("config")
-    const value = this.asStored(this.current)
+    const value = this.asStored(current, held)
     return this.storage.writeText("config", (current) => {
+      if (expectedEpoch !== undefined && current !== undefined) {
+        const disk = parseJsonc(current).value as Partial<AppConfig> | undefined
+        if (disk && accessEpoch(disk) > expectedEpoch) {
+          throw new CodedError("The full access setting changed on disk. Reload settings and try again.", "error.configInvalid")
+        }
+      }
       const text = renderJsonc(file, current, value)
       this.written.push(text)
       if (this.written.length > 16) this.written.shift()
@@ -1019,10 +1048,10 @@ export class Config {
   private held = new Map<string, HeldValue>()
 
   /** The settings as the file should say them: a replaced value nobody has changed since is written as it was stored. */
-  private asStored(current: AppConfig): AppConfig {
-    if (!this.held.size) return current
+  private asStored(current: AppConfig, held: ReadonlyMap<string, HeldValue>): AppConfig {
+    if (!held.size) return current
     const out = { ...current } as Record<string, unknown>
-    for (const [key, entry] of this.held) {
+    for (const [key, entry] of held) {
       if (JSON.stringify(out[key]) === JSON.stringify(entry.read)) out[key] = entry.stored
     }
     return out as unknown as AppConfig
@@ -1124,7 +1153,7 @@ export class Config {
       this.watcher = watchFiles(path.dirname(file), (_event, name) => {
         if (name && name.toString() !== path.basename(file)) return
         clearTimeout(timer)
-        this.watcherTimer = timer = setTimeout(() => void this.reloadFromDisk(), 150)
+        this.watcherTimer = timer = setTimeout(() => void this.reloadFromDisk().catch((error: unknown) => console.error(error)), 150)
       })
       this.watcher.unref()
     } catch {
@@ -1189,19 +1218,21 @@ export class Config {
     if (JSON.stringify(next.customProviders) !== JSON.stringify(before.customProviders)) {
       next = { ...next, ...customProviderWrite(before.customProviders, next) }
     }
+    const disabledByHand = before.allowFullAccess !== false && next.allowFullAccess === false &&
+      stored.accessEpoch !== accessEpoch(stored)
+    if (disabledByHand) clearFullAccess(before, next, held, stored)
     next.autoApprove = allowed(next.permissions)
+    next.accessEpoch = accessEpoch(next, before.accessEpoch)
+    if (next.accessEpoch !== (stored.accessEpoch ?? 0) && !this.fromNewerVersion) {
+      await this.persist(next, held, next.accessEpoch)
+    }
     this.current = next
     this.held = held
     this.bus.publish({ type: "config.updated", config: this.current, keybindsUnreadable: this.keybindsUnreadable })
     for (const listener of this.reloadListeners) await Promise.resolve(listener(before, next)).catch(() => undefined)
   }
 
-  /**
-   * One change at a time (N11-34). A save that fails rolls the settings back to
-   * how it found them, and two overlapping saves meant that roll-back also
-   * threw away the other save's change - gone from memory and never written.
-   * Queued, "how it found them" is exactly the state before this change.
-   */
+  /** Queues settings writes and reloads against the last published configuration. */
   private setting: Promise<unknown> = Promise.resolve()
 
   /** Settles the settings save and the credential write in flight, for quit (L12-6). */
@@ -1242,25 +1273,6 @@ export class Config {
   }
 
   private async setNow(patch: Partial<AppConfig>, forget: readonly string[]): Promise<AppConfig> {
-    const previous = this.current
-    const held = new Map(this.held)
-    try {
-      return await this.apply(patch, forget)
-    } catch (err) {
-      // A save that could not be written leaves the settings as they were, so memory never runs ahead of the file.
-      this.current = previous
-      this.held = held
-      throw err
-    }
-  }
-
-  private async apply(patch: Partial<AppConfig>, forget: readonly string[]): Promise<AppConfig> {
-    /*
-     * A file this run could not read is never written over - and refusing only
-     * in `persist` was not enough: the change was already in memory and already
-     * announced, so it looked saved and was gone at the next launch. Refusing
-     * here, before anything is touched, is what `setNow` rolls back from.
-     */
     if (!settingsWritable(this.blocked)) {
       throw new CodedError("The settings file could not be read and must not be written over", "error.configInvalid")
     }
@@ -1272,33 +1284,35 @@ export class Config {
     const before = this.current.permissions
     const providersBefore = this.current.customProviders
     const projectsBefore = { projects: this.current.projects, closedProjects: this.current.closedProjects }
-    this.current = { ...this.current, ...patch }
+    let candidate = { ...this.current, ...patch, accessEpoch: this.current.accessEpoch }
+    candidate.accessEpoch = accessEpoch(candidate)
+    const held = new Map(this.held)
     if (Object.hasOwn(patch, "smartThreshold")) {
       const threshold = normalizeSmartThreshold(patch.smartThreshold)
-      if (threshold === undefined) delete this.current.smartThreshold
-      else this.current.smartThreshold = threshold
+      if (threshold === undefined) delete candidate.smartThreshold
+      else candidate.smartThreshold = threshold
     }
     if (Object.hasOwn(patch, "keybinds")) {
-      this.current.keybindsVersion = KEYBINDS_VERSION
-      this.held.delete("keybindsVersion")
+      candidate.keybindsVersion = KEYBINDS_VERSION
+      held.delete("keybindsVersion")
     }
     // A value set now is the one to write, even where it equals what a stored one was read as.
-    for (const key of Object.keys(patch)) this.held.delete(key)
-    dropRetired(this.current)
+    for (const key of Object.keys(patch)) held.delete(key)
+    dropRetired(candidate)
     if (patch.customProviders) {
-      this.current = { ...this.current, ...customProviderWrite(providersBefore, this.current) }
+      candidate = { ...candidate, ...customProviderWrite(providersBefore, candidate) }
     }
     if (forget.length) {
       // A provider the user removed leaves no record behind to turn up in the config page or be restored by a later add.
-      this.current = {
-        ...this.current,
-        customProviders: this.current.customProviders.filter((entry) => !forget.includes(entry.id)),
-        disabledProviders: (this.current.disabledProviders ?? []).filter((id) => !forget.includes(id)),
+      candidate = {
+        ...candidate,
+        customProviders: candidate.customProviders.filter((entry) => !forget.includes(entry.id)),
+        disabledProviders: (candidate.disabledProviders ?? []).filter((id) => !forget.includes(id)),
       }
     }
     // A folder taken out of the removed set is a project again, and one put in it leaves the list.
     if (patch.projects || patch.closedProjects) {
-      this.current.projects = reconciledProjects(projectsBefore, this.current)
+      candidate.projects = reconciledProjects(projectsBefore, candidate)
     }
     /*
      * A patch may speak either vocabulary. The map wins when both are present:
@@ -1306,15 +1320,18 @@ export class Config {
      * said the same thing twice.
      */
     if (patch.permissions) {
-      this.current.permissions = { ...before, ...knownActions(patch.permissions) }
+      candidate.permissions = { ...before, ...knownActions(patch.permissions) }
     } else if (patch.autoApprove) {
-      this.current.permissions = fromApprovals(before, patch.autoApprove)
+      candidate.permissions = fromApprovals(before, patch.autoApprove)
     } else {
-      this.current.permissions = before
+      candidate.permissions = before
+    }
+    if (this.current.allowFullAccess !== false && candidate.allowFullAccess === false) {
+      clearFullAccess(this.current, candidate, held, patch)
     }
     // Rules are only ever taken from the document's own order, including one just written.
-    this.current.permissionRules = storedRules(this.current)
-    this.current.autoApprove = allowed(this.current.permissions)
+    candidate.permissionRules = storedRules(candidate)
+    candidate.autoApprove = allowed(candidate.permissions)
     /*
      * Never written over a document a later build wrote.
      *
@@ -1328,8 +1345,10 @@ export class Config {
     if (this.fromNewerVersion) {
       throw new CodedError("The stored settings were written by a newer version of this app", "error.configNewer")
     }
-    this.current = { ...this.current, schemaVersion: CONFIG_SCHEMA_VERSION }
-    await this.persist()
+    candidate.schemaVersion = CONFIG_SCHEMA_VERSION
+    await this.persist(candidate, held, this.current.accessEpoch)
+    this.current = candidate
+    this.held = held
     if (Object.hasOwn(patch, "keybinds")) this.shortcutReadFailed = false
     this.bus.publish({ type: "config.updated", config: this.current, keybindsUnreadable: this.keybindsUnreadable })
     return this.current
