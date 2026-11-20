@@ -723,7 +723,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     }
 
     case "session.access":
-      return { session: await runtime.sessions.setAccess(request.sessionID, request.access) }
+      return { session: await runtime.sessions.setAccess(request.sessionID, request.access, runtime.config.get().accessEpoch) }
 
     case "session.reviewRestricted":
       return { session: await runtime.sessions.setReviewRestricted(request.sessionID, request.restricted) }
@@ -788,7 +788,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       return {} satisfies Handled<"session.abort">
 
     case "permission.respond":
-      runtime.permissions.respond(request.requestID, request.response, request.reason)
+      await runtime.permissions.respond(request.requestID, request.response, request.reason)
       return {} satisfies Handled<"permission.respond">
 
     /*
@@ -968,7 +968,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         }
         return patch
       })
-      if (request.patch.allowFullAccess === false) await runtime.sessions.dropFullAccess()
+      if (request.patch.allowFullAccess === false) await runtime.sessions.dropFullAccess(config.accessEpoch)
       return { config } satisfies Handled<"config.set">
     }
 

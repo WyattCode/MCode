@@ -17,6 +17,7 @@ export interface AccessConfig {
   /** The map full access replaced, put back when the default leaves it. */
   accessBefore?: Readonly<Partial<Record<string, string>>>
   allowFullAccess?: boolean
+  accessEpoch?: number
 }
 
 export function isAccess(value: unknown): value is Access {
@@ -44,6 +45,12 @@ export function defaultAccess(config: AccessConfig | undefined): Access {
  * access lapses once full access is no longer allowed, as MiMo reads it.
  */
 export function sessionAccess(own: unknown, config: AccessConfig | undefined): Access {
+  if (typeof own === "object" && own !== null && "access" in own) {
+    if (own.access === "full" && ("accessEpoch" in own ? own.accessEpoch ?? 0 : 0) !== (config?.accessEpoch ?? 0)) {
+      return defaultAccess(config)
+    }
+    own = own.access
+  }
   if (!isAccess(own)) return defaultAccess(config)
   if (own === "full" && !config?.allowFullAccess) return defaultAccess(config)
   return own
@@ -59,11 +66,18 @@ function actionOf(value: unknown, fallback: PermissionAction): PermissionAction 
  * A refusal is kept either way.
  */
 export function belowFullMap(config: AccessConfig | undefined): Record<PermissionKind, PermissionAction> {
-  const map = config?.permissions ?? {}
-  const kept = mapAtFull(config) ? (config?.accessBefore ?? {}) : map
+  return mapAtFull(config) ? restoreAccessMap(config) : accessMap(config?.permissions, config?.permissions)
+}
+
+/** Restores the answers saved before full access while keeping live refusals. */
+export function restoreAccessMap(config: AccessConfig | undefined): Record<PermissionKind, PermissionAction> {
+  return accessMap(config?.permissions, config?.accessBefore)
+}
+
+function accessMap(map: AccessConfig["permissions"], kept: AccessConfig["permissions"]): Record<PermissionKind, PermissionAction> {
   const out = {} as Record<PermissionKind, PermissionAction>
   for (const kind of PERMISSION_KINDS) {
-    out[kind] = actionOf(map[kind], DEFAULT_PERMISSIONS[kind]) === "deny" ? "deny" : actionOf(kept[kind], DEFAULT_PERMISSIONS[kind])
+    out[kind] = map?.[kind] === "deny" ? "deny" : actionOf(kept?.[kind], DEFAULT_PERMISSIONS[kind])
   }
   return out
 }
