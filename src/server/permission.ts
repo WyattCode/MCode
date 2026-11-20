@@ -907,16 +907,21 @@ export class Permissions {
       for (const [key, rules] of Object.entries(read.value?.projects ?? {})) {
         if (Array.isArray(rules)) projects[key] = rules as Rule[]
       }
+      let changed = false
       for (const [key, change] of batch) {
-        if (change.remove) delete projects[key]
+        if (change.remove && Object.hasOwn(projects, key)) {
+          delete projects[key]
+          changed = true
+        }
         if (!change.rules.length) continue
+        changed = true
         const merged = projects[key] ?? []
         for (const rule of change.rules) {
           if (!merged.some((kept) => kept.kind === rule.kind && kept.pattern === rule.pattern)) merged.push(rule)
         }
         projects[key] = merged
       }
-      await storage.write(RULES_KEY, { schemaVersion: RULES_SCHEMA_VERSION, projects })
+      if (changed) await storage.write(RULES_KEY, { schemaVersion: RULES_SCHEMA_VERSION, projects })
       for (const [key, committed] of batch) {
         if (this.dirty.get(key) === committed) this.dirty.delete(key)
       }
@@ -938,7 +943,8 @@ export class Permissions {
   async forgetSession(sessionID: string): Promise<void> {
     this.background.delete(sessionID)
     const key = `session:${sessionID}`
-    if (!this.rules.delete(key) && !this.dirty.has(key)) return
+    // Another instance may have saved a rule since this instance loaded the file.
+    this.rules.delete(key)
     if (!this.store) return
     this.dirty.set(key, { rules: [], remove: true })
     await this.persist()

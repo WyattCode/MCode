@@ -147,7 +147,16 @@ export async function roundEightAccessChecks(check: Check, section: (name: strin
     check("a file waiting to be sent opens from the keyboard", operable(tagWith(composer, 'class="att-file"'), /@keydown\.enter\.space\.self\.prevent="onTileClick/))
     check("a sent file opens from the keyboard", operable(tagWith(read("components/MessageStream.vue"), "data-sent-file"), /@keydown\.enter\.space\.prevent="item\.path && openSentFile/))
     check("an annotation's note is edited from the keyboard", operable(tagWith(read("components/AnnotationChips.vue"), 'class="ann-note ann-note-edit"'), /@keydown\.enter\.space\.self\.stop\.prevent="startEdit/))
-    check("an archived conversation is picked with Space", /:role="selecting \? 'checkbox' : undefined"[\s\S]{0,160}:tabindex="selecting \? 0 : undefined"[\s\S]{0,120}@keydown\.space\.prevent="selecting && togglePick/.test(read("components/SettingsDialog.vue")))
+    const settings = read("components/SettingsDialog.vue")
+    const archiveTitle = tagWith(settings, 'class="line-title archived-title"')
+    const archiveSpace = settings.match(/^function onArchiveTitleSpace\(event: KeyboardEvent, id: string\) \{\n([^}]+)\n\}/m)?.[1]?.trim()
+    check("an archived conversation is picked with Space only in selection mode",
+      archiveTitle.includes(`:role="selecting ? 'checkbox' : undefined"`) &&
+      archiveTitle.includes(':aria-label="selecting ? sessionTitle(session.title) : undefined"') &&
+      archiveTitle.includes(':aria-checked="selecting ? pickedLive.includes(session.id) : undefined"') &&
+      archiveTitle.includes(':tabindex="selecting ? 0 : undefined"') &&
+      archiveTitle.includes('@keydown.space="onArchiveTitleSpace($event, session.id)"') &&
+      archiveSpace === "if (!selecting.value) return\n  event.preventDefault()\n  if (!event.repeat) togglePick(id)")
     check("Ctrl+Enter on a step's head opens its path, as Ctrl+click on the path does", /data-step-head[\s\S]{0,60}@keydown\.enter="onTitleClick"/.test(read("components/parts/ToolPart.vue")))
     const media = read("components/parts/LocalMedia.vue")
     check("a voice clip seeks from the keyboard", /@keydown\.self="nudge"/.test(media) && /function nudge[\s\S]*ArrowLeft[\s\S]*Home/.test(media))

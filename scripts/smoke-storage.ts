@@ -324,14 +324,19 @@ export async function storageChecks(check: Check, section: (name: string) => voi
     // Keyed the way the store keys a project, so the newer build's rule is one this build can find.
     const stored = process.platform === "win32" ? path.resolve(directory).toLowerCase() : path.resolve(directory)
     await storage.write(RULES_KEY, { schemaVersion: 99, projects: { [stored]: [{ kind: "bash", pattern: "from-a-newer-build *" }] } })
+    const newerBytes = await fs.readFile(storage.fileOf(RULES_KEY), "utf8")
     const newer = new Permissions(bus, config)
     await newer.load(storage)
     const fromNewer = await settle(newer, ask(newer, "ses_f", "c6", "from-a-newer-build now", directory), "reject")
     check("a profile written by a newer build is still read", !fromNewer.asked && fromNewer.outcome === "allowed", fromNewer)
-    await settle(newer, ask(newer, "ses_f", "c7", "npm run build", directory), "always")
-    await newer.flush()
-    const kept = JSON.parse(await fs.readFile(storage.fileOf(RULES_KEY), "utf8")) as { schemaVersion?: number; projects?: Record<string, unknown[]> }
-    check("but nothing is written over it", kept.schemaVersion === 99 && Object.keys(kept.projects ?? {}).length === 1, kept)
+    const approved = await settle(newer, ask(newer, "ses_f", "c7", "npm run build", directory), "always")
+    const writeError = await newer.flush().then(
+      () => undefined,
+      (error: unknown) => error instanceof Error ? error.message : String(error),
+    )
+    const kept = await fs.readFile(storage.fileOf(RULES_KEY), "utf8")
+    check("but nothing is written over it", approved.asked && approved.outcome === "allowed" &&
+      writeError === "Saved approvals were written by a newer version" && kept === newerBytes, { approved, writeError, kept })
 
     /* A document that will not parse is evidence, not something to write over. */
     await fs.writeFile(storage.fileOf(RULES_KEY), "{ this is not json", "utf8")

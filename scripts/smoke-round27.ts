@@ -64,8 +64,9 @@ export async function roundTwentySevenChecks(check: Check, section: (name: strin
     // Since 2026-09-26 full access answers it too, by the user's choice; round 28 drives both sides of that.
     // Re-worded 2026-11-20 when the level/action gates were folded into one decision: what the guarantee needs is
     // that the remembered-answer return is unreachable while `forced` holds. Drop `!forced` here and this goes red.
-    const remembered = permission.slice(permission.indexOf("if (!forced &&") >= 0 ? permission.indexOf("if (!forced &&") : 0, permission.indexOf("if (!forced &&") >= 0 ? permission.indexOf("if (!forced &&") + 160 : 0)
-    check("a forced request is never answered by a stored rule", /if \(!forced &&[^\n]*this\.allowedByRules\(key, input\.kind, patterns\)\) return/.test(permission), remembered)
+    const remembered = permission.split("\n").filter((line) => line.includes("this.allowedByRules(key, input.kind,"))
+    check("a forced request is never answered by a stored rule", remembered.length === 1 && remembered[0].trim() ===
+      "if (!forced && !unattendedRisk && this.allowedByRules(key, input.kind, grantPatterns)) return", remembered)
     check("nor by the level, nor by full access", /!forced/.test(permission) && /readOnlyCommand/.test(permission))
   }
 

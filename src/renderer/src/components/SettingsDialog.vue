@@ -9,7 +9,7 @@ import { SMART_THRESHOLD } from "@shared/smart"
 import type { ModelRef, ResponseMap } from "@shared/protocol"
 import LabEvolve from "./LabEvolve.vue"
 import { LANGUAGES, ago, compactTokens, dayLabel, language, sessionTitle, t, type Language } from "../lib/i18n"
-import { pickDirectory, pickProjectFolder } from "../lib/native-pick"
+import { pickDirectory, pickProjectFolder, saveText } from "../lib/native-pick"
 import { wordMatch } from "../lib/word-match"
 import { revealScrollTop } from "../lib/scroll-reveal"
 import { folderName, projectName } from "../lib/project"
@@ -35,7 +35,6 @@ import { bindingConflict, changeShortcut, pageRows, recordShortcutKey } from "..
 import { accessPatch, fullAccessOff } from "../lib/confirm-queue"
 import { notifyFailure, notify } from "../lib/toast"
 import { installUpdate, updateState } from "./UpdatePill.vue"
-import { isPickerBusy } from "@shared/native-pick"
 import { writeText } from "./../lib/clipboard"
 
 // Update status in settings
@@ -116,8 +115,7 @@ async function exportFeedback() {
   feedbackExporting.value = true
   try {
     const { records } = await client.request({ type: "feedback.list", exportAll: true })
-    const saved = await window.mcode.saveText("mcode-feedback.json", JSON.stringify(records, null, 2))
-    if (isPickerBusy(saved)) notifyFailure(t("toast.pickerBusy"))
+    await saveText("mcode-feedback.json", JSON.stringify(records, null, 2))
   } catch (err) {
     notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
   } finally {
@@ -2269,8 +2267,8 @@ onBeforeUnmount(() => {
           </button>
 
           <button v-show="navShows('feedback')" class="nav-item" :class="{ on: section === 'feedback' }" @click="section = 'feedback'">
-            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
-              <path d="M4 4h12v9H9l-4 3v-3H4z" stroke-linejoin="round" />
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path d="M5 4h10a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H9l-4 3v-3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z" />
             </svg>
             <span>{{ t("feedback.title") }}</span>
           </button>

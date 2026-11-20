@@ -82,6 +82,10 @@ export async function roundNineteenLaneAChecks(check: Check, section: (name: str
     }
     await walk(path.join("src", "renderer", "src"))
     check("no window code calls a native picker around the busy warning", offenders.length === 0, offenders)
+    const settings = await read("src/renderer/src/components/SettingsDialog.vue")
+    check("feedback export uses the native save wrapper and its busy warning",
+      settings.includes('import { pickDirectory, pickProjectFolder, saveText } from "../lib/native-pick"') &&
+      settings.includes('await saveText("mcode-feedback.json", JSON.stringify(records, null, 2))'))
     const errorPage = await read("src/renderer/src/components/ErrorPage.vue")
     check("the error page, which draws no notices, says it in its own line", /if \(isPickerBusy\(saved\)\) note\.value = \{ text: t\("toast\.pickerBusy"\), failed: true \}/.test(errorPage))
 
