@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch, onBeforeUnmount } from "vue"
+import FeedbackDialog from "./FeedbackDialog.vue"
+import type { FeedbackInput } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { useQuestions } from "../stores/questions"
 import TextPart from "./parts/TextPart.vue"
@@ -975,6 +977,64 @@ onBeforeUnmount(() => {
  * viewport rather than from a remembered index: the user scrolls freely
  * between presses, and an index would send them somewhere they had left.
  */
+// Reply feedback
+const feedbackRatings = ref(new Map<string, FeedbackInput["rating"]>())
+const feedbackPending = ref(false)
+const feedbackDialog = ref<Pick<FeedbackInput, "sessionID" | "messageID">>()
+const feedbackReady = ref(false)
+
+watch([shownID, () => app.client], async ([sessionID, client], _, onCleanup) => {
+  let active = true
+  onCleanup(() => { active = false })
+  feedbackDialog.value = undefined
+  feedbackRatings.value = new Map()
+  feedbackReady.value = false
+  if (!sessionID || !client || bare.value) return
+  try {
+    const { records } = await client.request({ type: "feedback.list", sessionID })
+    if (!active) return
+    for (const { messageID, rating } of records) {
+      if (!feedbackRatings.value.has(messageID)) feedbackRatings.value.set(messageID, rating)
+    }
+  } catch (err) {
+    if (active) notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+  } finally {
+    if (active) feedbackReady.value = true
+  }
+}, { immediate: true })
+
+async function saveReplyFeedback(feedback: FeedbackInput) {
+  const client = app.client
+  if (!client || feedbackPending.value) return
+  feedbackPending.value = true
+  const dialog = feedbackDialog.value
+  try {
+    await client.request({ type: "feedback.record", ...feedback })
+    if (shownID.value === feedback.sessionID) feedbackRatings.value.set(feedback.messageID, feedback.rating)
+    if (dialog && feedbackDialog.value === dialog) {
+      feedbackDialog.value = undefined
+      notify(t("feedback.saved"))
+    }
+  } catch (err) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+  } finally {
+    feedbackPending.value = false
+  }
+}
+
+function toggleReplyFeedback(turn: Turn, rating: "like" | "dislike") {
+  const sessionID = shownID.value
+  const messageID = turn.last?.id
+  if (!sessionID || !messageID || !feedbackReady.value || feedbackPending.value || feedbackDialog.value) return
+  const next = feedbackRatings.value.get(messageID) === rating ? null : rating
+  if (next === "dislike") feedbackDialog.value = { sessionID, messageID }
+  else void saveReplyFeedback({ sessionID, messageID, rating: next, types: [], description: "", includeMaterials: false })
+}
+
+function submitReplyFeedback(details: Pick<FeedbackInput, "types" | "description" | "includeMaterials">) {
+  if (feedbackDialog.value) void saveReplyFeedback({ ...feedbackDialog.value, ...details, rating: "dislike" })
+}
+
 /**
  * Carries this conversation, as far as the end of this answer, into one of its own.
  *
@@ -1995,7 +2055,7 @@ defineExpose({ stepMessage, scroller })
           </template>
 
           <!--
-            MiMo's action row under a reply: copy and branch, always there, 26px
+            The action row under a reply: copy, branch and feedback, 26px
             each; then the time it finished, which shows under the pointer only.
             A failed turn keeps it, under its card.
           -->
@@ -2029,6 +2089,26 @@ defineExpose({ stepMessage, scroller })
                 <circle cx="12.5" cy="16.25" r="2.25" />
               </svg>
             </button>
+            <!-- Reply feedback controls -->
+            <button
+              v-for="rating in (['like', 'dislike'] as const)"
+              :key="rating"
+              type="button"
+              class="msg-act"
+              :data-msg-act="rating"
+              :aria-pressed="feedbackRatings.get(turn.last.id) === rating"
+              :aria-disabled="!feedbackReady || feedbackPending"
+              :aria-label="t(rating === 'like' ? 'feedback.like' : 'feedback.dislike')"
+              v-tip="{ label: t(rating === 'like' ? 'feedback.like' : 'feedback.dislike'), placement: 'top' }"
+              @click="toggleReplyFeedback(turn, rating)"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" :transform="rating === 'dislike' ? 'rotate(180)' : undefined" aria-hidden="true">
+                <path d="M7 10v10H3V10h4Zm0 9h11a2 2 0 0 0 2-1.5l1.5-6A2 2 0 0 0 19.5 9H15l.5-4a2 2 0 0 0-3.7-1L7 10" :fill="feedbackRatings.get(turn.last.id) === rating ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
+              </svg>
+            </button>
+            <Teleport v-if="feedbackDialog?.messageID === turn.last.id" to="body">
+              <FeedbackDialog :pending="feedbackPending" @close="feedbackDialog = undefined" @submit="submitReplyFeedback" />
+            </Teleport>
             <!-- 追求目标: the one word a met goal leaves in the transcript, on the reply that met it. -->
             <span v-if="goalAchieved && turn.id === goalTurnID" class="goal-done" data-goal-achieved>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">

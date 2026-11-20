@@ -3787,6 +3787,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           rows="1"
           spellcheck="false"
           :placeholder="placeholder"
+          :aria-label="t(mode === 'shell' ? 'composer.shellMode' : 'composer.messageInput')"
           :disabled="compactingHere || restrictedHere"
           :aria-busy="compactingHere || undefined"
           @keydown="onKeydown"

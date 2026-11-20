@@ -2125,6 +2125,23 @@ export interface ModelInfo {
 // Requests (renderer -> server)
 // ---------------------------------------------------------------------------
 
+export const FEEDBACK_TYPES = ["incorrect", "incomplete", "other"] as const
+export type FeedbackType = (typeof FEEDBACK_TYPES)[number]
+
+export interface FeedbackInput {
+  sessionID: string
+  messageID: string
+  rating: "like" | "dislike" | null
+  types: FeedbackType[]
+  description: string
+  includeMaterials: boolean
+}
+
+export interface FeedbackRecord extends FeedbackInput {
+  at: number
+  materials?: Message[]
+}
+
 export type Request =
   | { type: "session.list" }
   /*
@@ -2311,6 +2328,8 @@ export type Request =
   /** Retry reading credentials.json after the Linux keyring (or other secure storage) becomes available. */
   | { type: "config.recheckCredentials" }
   /** Stored documents found damaged or unreadable at start-up, each answered once per launch. */
+  | ({ type: "feedback.record" } & FeedbackInput)
+  | { type: "feedback.list"; sessionID?: string; exportAll?: boolean }
   | { type: "storage.problems" }
   | { type: "config.set"; patch: Partial<AppConfig>; expectedKeybinds?: Record<string, string> }
   | { type: "provider.list" }
@@ -2658,6 +2677,8 @@ export interface ResponseMap {
     credentialsPlaintext?: boolean
   }
   /** Each problem is an i18n code and the values its sentence fills in, as a coded error carries them. */
+  "feedback.record": { saved: true }
+  "feedback.list": { records: FeedbackRecord[] }
   "storage.problems": { problems: { code: string; params?: Record<string, string | number> }[] }
   "config.set": { config: AppConfig }
   "provider.list": { providers: ProviderStatus[] }
