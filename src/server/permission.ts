@@ -525,9 +525,14 @@ export class Permissions {
     return this.callSignal.run(signal, run)
   }
 
-  private readonly hookAnswers = new Map<string, boolean>()
-  private readonly hookQuestions = new Map<string, Promise<void>>()
-
+  /*
+   * A hook is the user's own code, so it answers to the same levels as a shell
+   * command: full access runs it silently, a policy deny still wins, and every
+   * other level asks a human — and asks each time, because a question only a
+   * human can answer is forced, which is exactly what "no always for this"
+   * means here. A refused hook means "there is no such hook", so the tool call
+   * goes ahead unhooked rather than being blocked by a hook that never ran.
+   */
   async allowHook(event: HookEvent, command: string, patterns: string[], call: {
     sessionID: string
     messageID: string
@@ -535,28 +540,14 @@ export class Permissions {
     directory?: string
     signal: AbortSignal
   }): Promise<boolean> {
-    const key = JSON.stringify([event, command])
-    while (!call.signal.aborted) {
-      const found = this.levelOf(this.background.get(call.sessionID) ?? call.sessionID)
-      const level = found instanceof Promise ? await found : found
-      if (call.signal.aborted || this.requestAction("bash", level, patterns) === "deny") return false
-      if (level === "full") return true
-      const saved = this.hookAnswers.get(key)
-      if (saved !== undefined) return saved
-      if (this.background.has(call.sessionID)) return false
-      const pending = this.hookQuestions.get(key)
-      if (pending) {
-        try {
-          await waitForPermission(call.signal, () => pending)
-        } catch (error) {
-          if (call.signal.aborted) return false
-          throw error
-        }
-        continue
-      }
-
-      let allowed = false
-      const question = this.ask({
+    const found = this.levelOf(this.background.get(call.sessionID) ?? call.sessionID)
+    const level = found instanceof Promise ? await found : found
+    if (call.signal.aborted || this.requestAction("bash", level, patterns) === "deny") return false
+    if (level === "full") return true
+    if (this.background.has(call.sessionID)) return false
+    let allowed = false
+    try {
+      await this.ask({
         ...call,
         kind: "bash",
         title: event,
@@ -564,15 +555,12 @@ export class Permissions {
         subject: command,
         patterns,
         humanOnly: true,
-        onHumanAnswer: (approved) => this.hookAnswers.set(key, approved),
-      }).then(() => { allowed = true }).catch((error: unknown) => {
-        if (!(error instanceof PermissionDenied)) throw error
-      }).finally(() => this.hookQuestions.delete(key))
-      this.hookQuestions.set(key, question)
-      await question
-      return allowed && !call.signal.aborted
+      })
+      allowed = true
+    } catch (error) {
+      if (!(error instanceof PermissionDenied)) throw error
     }
-    return false
+    return allowed && !call.signal.aborted
   }
 
   async ask(input: {

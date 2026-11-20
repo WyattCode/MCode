@@ -162,7 +162,7 @@ function onReasonKey(event: KeyboardEvent) {
       </div>
     </template>
 
-    <div v-if="request.forced && !isHook" class="forced" data-perm-forced>{{ t("perm.forcedHint") }}</div>
+    <div v-if="request.forced" class="forced" data-perm-forced>{{ t("perm.forcedHint") }}</div>
 
     <div class="actions">
       <button type="button" class="perm-btn" data-cnav data-perm-reject :disabled="busy" @click="answer('reject')">

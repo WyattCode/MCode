@@ -105,27 +105,46 @@ cases.push(
     assert.deepEqual(snapshot.groups[0].rows.map((row) => row.reason), ["timeout", "command"])
     assert.equal(await f.execute(), "original")
   }],
-  ["ask and auto share concurrent approval and remember rejection per event", async (dir) => {
+  ["ask and auto ask for every hook call and a refusal leaves the tool unhooked", async (dir) => {
     for (const level of ["ask", "auto"]) {
-      const command = "echo should-not-run; exit 2"
-      const f = fixture(dir, { PreToolUse: [hook(command)] }, level)
-      const first = f.execute()
-      const second = f.execute()
-      const concurrent = Promise.all([first, second])
-      void concurrent.catch(() => undefined)
-      await answer(f.permissions, command, "reject")
-      assert.deepEqual(await concurrent, ["original", "original"])
-      assert.equal(await f.execute(), "original")
-      assert.equal(f.permissions.outstanding().length, 0)
-      f.config.hooks = { PostToolUse: [hook(command)] }
-      const post = f.execute()
-      void post.catch(() => undefined)
-      await answer(f.permissions, command, "once")
-      assert.equal(await post, "original\nhook: should-not-run")
-      assert.equal(await f.execute(), "original\nhook: should-not-run")
-      assert.match(f.logs.join("\n"), /PostToolUse read: exit 2/)
-      f.config.permissionRules = [{ action: "bash", resource: "exit 2", effect: "deny" }]
-      assert.equal(await f.execute(), "original")
+      const blocked = "exit 2"
+      const pre = fixture(dir, { PreToolUse: [hook(blocked)] }, level)
+      const refused = pre.execute()
+      void refused.catch(() => undefined)
+      await answer(pre.permissions, blocked, "reject")
+      assert.equal(await refused, "original")
+      // Nothing is remembered about the answer: the next call asks on its own.
+      const again = pre.execute()
+      void again.catch(() => undefined)
+      await answer(pre.permissions, blocked, "reject")
+      assert.equal(await again, "original")
+      assert.equal(pre.executions(), 2)
+      assert.equal(pre.permissions.outstanding().length, 0)
+
+      const noted = "echo noted"
+      const post = fixture(dir, { PostToolUse: [hook(noted)] }, level)
+      const firstRun = post.execute()
+      void firstRun.catch(() => undefined)
+      await answer(post.permissions, noted, "once")
+      assert.equal(await firstRun, "original\nhook: noted")
+      // An approval covers the call it answered, not the ones after it.
+      const secondRun = post.execute()
+      void secondRun.catch(() => undefined)
+      await answer(post.permissions, noted, "reject")
+      assert.equal(await secondRun, "original")
+
+      const noisy = "printf oops >&2; exit 3"
+      post.config.hooks = { PostToolUse: [hook(noisy)] }
+      const loud = post.execute()
+      void loud.catch(() => undefined)
+      await answer(post.permissions, noisy, "once")
+      assert.equal(await loud, "original")
+      assert.match(post.logs.join("\n"), /PostToolUse read: exit 3/)
+
+      // A rule added afterwards denies the hook without even asking.
+      post.config.permissionRules = [{ action: "bash", resource: "exit 3", effect: "deny" }]
+      assert.equal(await post.execute(), "original")
+      assert.equal(post.permissions.outstanding().length, 0)
     }
   }],
   ["policy deny precedes the pre hook even in full access", async (dir) => {

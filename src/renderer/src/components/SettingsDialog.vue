@@ -2232,8 +2232,8 @@ onBeforeUnmount(() => {
           </button>
 
           <button v-show="navShows('hooks')" class="nav-item" :class="{ on: section === 'hooks' }" @click="section = 'hooks'">
-            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-              <path d="M10 5a2.5 2.5 0 1 1 2.5 2.5V13a4 4 0 0 1-8 0v-2l2.5 2.5" stroke-linecap="round" stroke-linejoin="round" />
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path fill-rule="evenodd" d="M7 4A4 4 0 1 0 7 12A4 4 0 1 0 7 4ZM7 5.8A2.2 2.2 0 1 0 7 10.2A2.2 2.2 0 1 0 7 5.8ZM12.6 6A4 4 0 1 0 12.6 14A4 4 0 1 0 12.6 6ZM12.6 7.8A2.2 2.2 0 1 0 12.6 12.2A2.2 2.2 0 1 0 12.6 7.8Z" />
             </svg>
             <span>{{ t("set.hooks.title") }}</span>
           </button>
