@@ -26,18 +26,18 @@ export async function fullAccessNeverAsks(check: Check, section: (name: string) 
     })
     const gate = new Permissions(bus, config)
     let level: Access = "full"
-    gate.useSessions(async () => level)
+    gate.useSessions(async (sessionID) => sessionID === "ses_isolated_ask" ? "ask" : level)
     let call = 0
-    let requests = 0
+    const requests: string[] = []
     bus.subscribe((event) => {
-      if (event.type === "permission.requested") requests += 1
+      if (event.type === "permission.requested") requests.push(event.request.sessionID)
     })
     type Input = Parameters<Permissions["ask"]>[0]
     type Attempt = Pick<Input, "kind" | "subject" | "forced" | "humanOnly" | "patternAsks" | "patterns" | "scope">
-    const start = async (input: Attempt) => {
-      const previousRequests = requests
+    const start = async (input: Attempt, sessionID = "ses_full_access") => {
+      const previousRequests = requests.length
       const running = gate.ask({
-        sessionID: "ses_full_access",
+        sessionID,
         messageID: "m",
         callID: `c${++call}`,
         directory: root,
@@ -49,7 +49,7 @@ export async function fullAccessNeverAsks(check: Check, section: (name: string) 
       })
       // Let the asynchronous session lookup and permission request complete.
       await new Promise<void>((resolve) => setImmediate(resolve))
-      return { running, parked: gate.outstanding()[0], asked: requests > previousRequests }
+      return { running, parked: gate.outstanding().find((request) => request.sessionID === sessionID), asked: requests.length > previousRequests }
     }
     const expect = async (label: string, input: Attempt, asked = false, outcome = "allowed") => {
       const attempt = await start(input)
@@ -98,16 +98,29 @@ export async function fullAccessNeverAsks(check: Check, section: (name: string) 
     ]
     for (const [label, input] of releases) {
       level = "ask"
+      const previousRequests = requests.length
       const attempt = await start(input)
       level = "full"
       await gate.drainDecided()
       const remaining = gate.outstanding()[0]
       if (remaining) gate.respond(remaining.id, "once")
       const outcome = await attempt.running
-      check(`switching to full releases a parked ${label}`, Boolean(attempt.parked) && !remaining && outcome === "allowed", {
-        parkedBefore: Boolean(attempt.parked), parkedAfter: Boolean(remaining), outcome,
+      const published = requests.length - previousRequests
+      check(`切到完全访问后释放挂起卡片且仅发布一次（${label}）`,
+        Boolean(attempt.parked) && !remaining && outcome === "allowed" && published === 1, {
+          parkedBefore: Boolean(attempt.parked), parkedAfter: Boolean(remaining), outcome, published,
       })
     }
+
+    section("同一项目的会话分别使用各自的档位")
+    const previousRequests = requests.length
+    const ask = await start(edit, "ses_isolated_ask")
+    const full = await start(edit)
+    for (const request of gate.outstanding()) gate.respond(request.id, "once")
+    const published = requests.slice(previousRequests)
+    check("同一项目内只有询问档会话发卡",
+      Boolean(ask.parked) && !full.parked && published.length === 1 && published[0] === "ses_isolated_ask" &&
+      await ask.running === "allowed" && await full.running === "allowed", { published })
 
     section("Auto and ask keep their approval behavior")
     level = "auto"

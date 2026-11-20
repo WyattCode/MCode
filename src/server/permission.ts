@@ -255,6 +255,8 @@ function decisionOf(response: PermissionResponse, reason?: string): PermissionDe
  */
 export class Permissions {
   private readonly pending = new Map<string, Pending>()
+  private readonly reviewing = new Set<{ sessionID: string; callID: string }>()
+  private readonly cancelledCalls = new Set<string>()
   private readonly rules = new Map<string, Rule[]>()
   /** Where the rules are written; without one they last only as long as the process, as they used to. */
   private store: Storage | undefined
@@ -403,14 +405,16 @@ export class Permissions {
     return this.decide(kind, level, resources)
   }
 
-  private requestAction(kind: string, level: Access, patterns: readonly string[]): PermissionAction {
-    if (level !== "full") return this.action(kind, level, patterns)
-    // MiMo's Ef() returns an automatic once for FullAccess regardless of kind.
-    // Keep explicit denials. Everything else runs without a card, including
-    // deletes, desktop controls and patterns covered by a user's Ask rule.
+  private deniedByPolicy(kind: string, patterns: readonly string[]): boolean {
     const bucket = bucketOf(kind)
-    if (bucket && accessAction(bucket, level, this.config.get()) === "deny") return "deny"
-    return patterns.some((pattern) => this.ruleFor(kind, pattern)?.effect === "deny") ? "deny" : "allow"
+    return (bucket !== undefined && accessAction(bucket, "full", this.config.get()) === "deny") ||
+      patterns.some((pattern) => this.ruleFor(kind, pattern)?.effect === "deny")
+  }
+
+  private requestAction(kind: string, level: Access, patterns: readonly string[]): PermissionAction {
+    if (level !== "full" && kind !== "outside") return this.action(kind, level, patterns)
+    if (this.deniedByPolicy(kind, patterns)) return "deny"
+    return level === "full" ? "allow" : this.action(kind, level, patterns)
   }
 
   /** How many times this call has consulted the gate, asked or waived. */
@@ -450,7 +454,8 @@ export class Permissions {
 
   /** True when a folder outside the project was already let in with "always", for this project. */
   allowsOutside(where: { directory?: string; sessionID: string }, scope: string): boolean {
-    return this.allowedByRules(projectKey(where), "outside", [scopePattern("outside", scope)])
+    const patterns = [scopePattern("outside", scope)]
+    return !this.deniedByPolicy("outside", patterns) && this.allowedByRules(projectKey(where), "outside", patterns)
   }
 
   /** Whether every pattern asked about is covered by a saved "always" of the same kind. */
@@ -464,7 +469,7 @@ export class Permissions {
    * same project that it now covers, as MiMo's reply does. Those were not
    * answered by a person, but by the approval just given, and are recorded so.
    */
-  private remember(key: string, kind: string, always: string[], answered: string): void {
+  private async remember(key: string, kind: string, always: string[], answered: string): Promise<void> {
     const saved = this.rules.get(key) ?? []
     for (const pattern of always) if (!saved.some((rule) => rule.kind === kind && rule.pattern === pattern)) saved.push({ kind, pattern })
     this.rules.set(key, saved)
@@ -474,10 +479,14 @@ export class Permissions {
     for (const [id, pending] of [...this.pending]) {
       if (id === answered || pending.key !== key || pending.request.kind !== kind || pending.request.forced) continue
       if (!this.allowedByRules(key, kind, pending.patterns)) continue
+      const found = this.levelOf(pending.request.sessionID)
+      const level = found instanceof Promise ? await found : found
+      if (this.pending.get(id) !== pending) continue
+      const denied = this.deniedByPolicy(kind, pending.patterns)
       this.pending.delete(id)
-      pending.decided = "allow-always"
-      pending.resolve("once")
-      this.bus.publish({ type: "permission.resolved", requestID: id, decided: "allow-always" })
+      pending.decided = denied || level === "full" ? "policy" : "allow-always"
+      pending.resolve(denied ? "reject" : "once")
+      this.bus.publish({ type: "permission.resolved", requestID: id, decided: pending.decided })
     }
   }
 
@@ -512,6 +521,7 @@ export class Permissions {
     this.consult(input.callID)
     const found = this.levelOf(this.background.get(input.sessionID) ?? input.sessionID)
     const level = found instanceof Promise ? await found : found
+    if (this.cancelledCalls.has(input.callID)) throw new PermissionDenied(input.subject)
     const key = projectKey(input)
     const scoped = input.scope ? [scopePattern(input.kind, input.scope)] : undefined
     const patterns = input.patterns?.length ? input.patterns : (scoped ?? [input.subject])
@@ -548,10 +558,23 @@ export class Permissions {
      * let through goes to the model's review - except a delete, which only a
      * person answers, and except a rule that deliberately asked.
      */
+    let releasedByFullAccess = false
     if (!forced && !explicitAsk && level === "auto") {
       // A `.env` named on a command line is the model's review to pass, as a `.env` read is.
       if (!input.patternAsks && autoAllows(input.kind, input.subject)) return
-      if (await this.reviewed(input.sessionID, input.kind, input.subject)) return
+      this.reviewing.add(input)
+      try {
+        const approved = await this.reviewed(input.sessionID, input.kind, input.subject)
+        const current = this.levelOf(input.sessionID)
+        const currentLevel = current instanceof Promise ? await current : current
+        if (this.cancelledCalls.has(input.callID)) throw new PermissionDenied(input.subject)
+        const currentAction = this.requestAction(input.kind, currentLevel, patterns)
+        if (currentAction === "deny") throw new PermissionDenied(input.subject, refusal(input.kind, input.subject))
+        releasedByFullAccess = currentLevel === "full"
+        if (approved && !releasedByFullAccess) return
+      } finally {
+        this.reviewing.delete(input)
+      }
     }
 
     const request: PermissionRequest = {
@@ -568,6 +591,23 @@ export class Permissions {
       time: Date.now(),
     }
 
+    const record = (decided: PermissionDecision, reason?: string) => {
+      this.listeners.get(input.callID)?.({
+        requestID: request.id,
+        kind: request.kind,
+        ...(forced ? { forced: true } : {}),
+        subject: request.subject,
+        ...(request.preview ? { preview: request.preview } : {}),
+        decided,
+        ...(reason ? { reason } : {}),
+        time: Date.now(),
+      })
+    }
+    if (releasedByFullAccess) {
+      record("policy")
+      return
+    }
+
     let entry: Pending | undefined
     const response = await new Promise<PermissionResponse>((resolve) => {
       entry = { request, resolve, key, patterns }
@@ -576,18 +616,8 @@ export class Permissions {
     })
 
     const reason = entry?.reason?.trim()
-    this.listeners.get(input.callID)?.({
-      requestID: request.id,
-      kind: request.kind,
-      ...(forced ? { forced: true } : {}),
-      subject: request.subject,
-      ...(request.preview ? { preview: request.preview } : {}),
-      decided: entry?.decided ?? decisionOf(response, reason),
-      ...(reason ? { reason } : {}),
-      time: Date.now(),
-    })
+    record(entry?.decided ?? decisionOf(response, reason), reason)
 
-    if (response === "always" && !forced) this.remember(key, input.kind, always, request.id)
     if (response === "reject") {
       /*
        * A question closed because its bucket was switched to Deny while it sat
@@ -601,6 +631,12 @@ export class Permissions {
       // A person said no; anything else here is a question closed by Stop, which ends the turn by itself.
       if (entry?.decided === "reject" || entry?.decided === "reject-with-reason") throw new PermissionDenied(input.subject, userRefusal(input.subject, reason))
       throw new PermissionDenied(input.subject)
+    }
+
+    if (this.deniedByPolicy(input.kind, patterns)) throw new PermissionDenied(input.subject, refusal(input.kind, input.subject))
+    if (response === "always" && !forced) {
+      await this.remember(key, input.kind, always, request.id)
+      if (this.deniedByPolicy(input.kind, patterns)) throw new PermissionDenied(input.subject, refusal(input.kind, input.subject))
     }
   }
 
@@ -738,11 +774,23 @@ export class Permissions {
     }
   }
 
-  /** Rejects everything still parked for a session - used when a turn aborts. */
+  private cancelCall(callID: string): void {
+    this.cancelledCalls.add(callID)
+    if (this.cancelledCalls.size > 512) {
+      const oldest = this.cancelledCalls.values().next()
+      if (!oldest.done) this.cancelledCalls.delete(oldest.value)
+    }
+  }
+
+  /** Rejects requests waiting for a person or a model when a turn aborts. */
   rejectAll(sessionID: string): void {
+    for (const call of this.reviewing) {
+      if (call.sessionID === sessionID) this.cancelCall(call.callID)
+    }
     for (const [id, pending] of this.pending) {
       if (pending.request.sessionID !== sessionID) continue
       this.pending.delete(id)
+      this.cancelCall(pending.request.callID)
       pending.decided = "cancelled"
       pending.resolve("reject")
       this.bus.publish({ type: "permission.resolved", requestID: id, decided: "cancelled" })
