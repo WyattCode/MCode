@@ -21,6 +21,11 @@
  */
 import fs from "node:fs/promises"
 import path from "node:path"
+import os from "node:os"
+import { Bus } from "../src/server/bus"
+import { Config } from "../src/server/config"
+import { Permissions, RULES_KEY, RULES_SCHEMA_VERSION } from "../src/server/permission"
+import { Storage } from "../src/server/storage"
 import type { Check } from "./smoke-round5"
 import { scanCommand } from "../src/server/tool/bash-scan"
 import { stripSvgHazards } from "../src/renderer/src/lib/svg-safe"
@@ -234,11 +239,73 @@ export async function roundTwentySixChecks(check: Check, section: (name: string)
      * whole on every change, so an approval granted in the other window
      * vanished the moment this one remembered anything.
      */
-    const permission = code(await read("src/server/permission.ts"))
-    // R28-4 made the write a union of only what this process changed; round 28 drives two real instances.
-    check("the remembered approvals are written over what is on disk now, not over a start-up copy", /const read = await storage\.readOrCorrupt<Partial<StoredRules>>\(RULES_KEY\)/.test(permission) && /for \(const \[key, rules\] of mine\) \{/.test(permission) && /this\.changed\.add\(key\)/.test(permission))
-    check("and a project this process deliberately dropped does not come back from the file", /this\.forgotten\.add\(`session:\$\{sessionID\}`\)/.test(permission))
-    check("a document that will not read is still not written over", /if \(read\.unreadable !== undefined \|\| read\.corrupt !== undefined\) return/.test(permission))
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r26-approvals-"))
+    try {
+      const storage = new Storage(directory)
+      const bus = new Bus()
+      const config = new Config(storage, bus, path.join(directory, "credentials.json"))
+      await config.load()
+      await config.set({ accessLevel: "ask", permissions: { bash: "ask" } })
+      const gate = new Permissions(bus, config)
+      const rule = (pattern: string) => ({ kind: "bash", pattern })
+      const write = (projects: Record<string, ReturnType<typeof rule>[]>) =>
+        storage.write(RULES_KEY, { schemaVersion: RULES_SCHEMA_VERSION, projects })
+      const readProjects = async () =>
+        (await storage.read<{ projects: Record<string, ReturnType<typeof rule>[]> }>(RULES_KEY))?.projects ?? {}
+
+      await write({ "session:gone-elsewhere": [rule("old command")], "session:shared": [rule("old grant")] })
+      await gate.load(storage)
+
+      const grant = async (sessionID: string, command: string) => {
+        const stop = bus.subscribe((event) => {
+          if (event.type === "permission.requested") void gate.respond(event.request.id, "always")
+        })
+        try {
+          await gate.ask({ sessionID, messageID: "m26", callID: command, kind: "bash", title: command,
+            subject: command, always: [command], forced: false })
+        } finally {
+          stop()
+        }
+      }
+      await write({ "session:shared": [rule("other window grant")], "session:drop": [rule("late grant")] })
+      await grant("shared", "npm run build")
+      await gate.flush()
+      const merged = await readProjects()
+      check("the remembered approvals are written over what is on disk now, not over a start-up copy",
+        merged["session:shared"]?.map((entry) => entry.pattern).sort().join("|") === "npm run build|other window grant" &&
+        merged["session:drop"]?.[0]?.pattern === "late grant" && !Object.hasOwn(merged, "session:gone-elsewhere"), merged)
+
+      await gate.forgetSession("drop")
+      const afterDrop = await readProjects()
+      await grant("shared", "npm run lint")
+      await gate.flush()
+      const afterGrant = await readProjects()
+      check("and a project this process deliberately dropped does not come back from the file",
+        !Object.hasOwn(afterDrop, "session:drop") && !Object.hasOwn(afterGrant, "session:drop") &&
+        afterGrant["session:shared"]?.some(({ pattern }) => pattern === "npm run lint"), { afterDrop, afterGrant })
+
+      const file = storage.fileOf(RULES_KEY)
+      const damaged = "{ kept as evidence"
+      await fs.writeFile(file, damaged)
+      await grant("shared", "npm run format")
+      const corruptRejected = await gate.flush().then(() => false, () => true)
+      const corruptKept = await fs.readFile(file, "utf8")
+
+      // Return an I/O error at the read boundary while leaving the file writable,
+      // so a write through the error would still succeed and destroy the bytes.
+      const readOrCorrupt = storage.readOrCorrupt.bind(storage)
+      storage.readOrCorrupt = async (key) => key === RULES_KEY ? { unreadable: "fixture I/O error" } : readOrCorrupt(key)
+      const intact = JSON.stringify({ schemaVersion: RULES_SCHEMA_VERSION, projects: afterGrant })
+      await fs.writeFile(file, intact)
+      await grant("shared", "npm run verify")
+      const unreadableRejected = await gate.flush().then(() => false, () => true)
+      const unreadableKept = await fs.readFile(file, "utf8")
+      check("a document that will not read is still not written over",
+        corruptRejected && corruptKept === damaged && unreadableRejected && unreadableKept === intact,
+        { corruptRejected, corruptKept, unreadableRejected, unreadableKept })
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true })
+    }
   }
 
   // --------------------------------------------------------------- R26-7
