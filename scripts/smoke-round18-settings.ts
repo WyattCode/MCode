@@ -295,7 +295,7 @@ export async function roundEighteenSettingsChecks(check: Check, section: (name: 
     check("R18-M5: a blank key on an edit tests with the one held, never sent to the window", /\.\.\.\(editing \? \{ provider: editing\.id \} : \{\}\)/.test(form))
     check("R18-M5: the old add-model dialog is gone", !(await fs.stat(path.join(process.cwd(), "src/renderer/src/components/CustomModelDialog.vue")).catch(() => undefined)) && !/CustomModelDialog/.test(settings + models))
     check("R18-M5: the settings dialog draws the page from its own component", /<ModelsPage v-else \/>/.test(settings))
-    check("R18-M5: preset chips populate the form and built-in connections remain available", /@click="preset = key"/.test(models) && /@click="openConnect\(\)"/.test(models))
+    check("R18-M5: preset chips populate the form and built-in connections remain available", /@click="selectPreset\(key\)"/.test(models) && /@click="openConnect\(\)"/.test(models))
     check("R18-M5: and a connected vendor keeps its endpoint and its models", /data-provider-endpoint/.test(models) && /app\.discoverModels\(provider\.id\)/.test(models))
     const handlers = await read("src/server/handlers.ts")
     check("R18-M5: a clone takes the id chosen, checked as a new provider's", /const chosen = request\.id\?\.trim\(\)/.test(handlers) && /providerIdProblem\(chosen, ids\)/.test(handlers))

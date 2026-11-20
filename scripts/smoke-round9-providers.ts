@@ -298,7 +298,10 @@ export async function roundNineProviderChecks(check: Check, section: (name: stri
       check(
         "the settings page draws its chips from the shared MiMo preset list",
         /import \{ PROVIDER_PRESETS \} from "@shared\/custom-endpoint"/.test(settings) &&
-          /<button\s+v-for="\(entry, key\) in PROVIDER_PRESETS"[\s\S]*?@click="preset = key"[\s\S]*?\{\{ entry\.label \}\}/.test(settings) &&
+          // A chip click goes through the form's leave guard now, so it no longer assigns `preset`
+          // inline; it must still land on that same shared preset.
+          /<button\s+v-for="\(entry, key\) in PROVIDER_PRESETS"[\s\S]*?@click="selectPreset\(key\)"[\s\S]*?\{\{ entry\.label \}\}/.test(settings) &&
+          /function selectPreset\(id: keyof typeof PROVIDER_PRESETS\) \{[\s\S]{0,160}preset\.value = id/.test(settings) &&
           /<CustomProviderForm[^>]*:preset="preset"/.test(settings),
       )
       check("and the connect dialog lists only what it offers", /groupProviders\(connectableProviders\(app\.providers\)\)/.test(connect))
