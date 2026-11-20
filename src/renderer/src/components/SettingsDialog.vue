@@ -4019,20 +4019,22 @@ onBeforeUnmount(() => {
                 <span class="knob" />
               </button>
             </div>
-            <div v-for="tier in smartTiers" :key="tier.key" class="line">
-              <label class="line-title" :for="tier.key">{{ t(tier.label) }}</label>
-              <SelectMenu :id="tier.key" :model-value="smartModelValue(app.config?.[tier.key])"
-                :options="smartModelOptions" @update:model-value="setSmartModel(tier.key, $event)" />
-            </div>
-            <div class="line">
-              <div class="line-text">
-                <label class="line-title" for="smart-threshold">{{ t("set.smartThreshold") }}</label>
-                <div id="smart-threshold-help" class="line-sub">{{ t("set.smartThresholdSub") }}</div>
+            <fieldset class="smart-gate" :disabled="app.config?.smart !== true">
+              <div v-for="tier in smartTiers" :key="tier.key" class="line">
+                <label class="line-title" :for="tier.key">{{ t(tier.label) }}</label>
+                <SelectMenu :id="tier.key" :model-value="smartModelValue(app.config?.[tier.key])"
+                  :options="smartModelOptions" @update:model-value="setSmartModel(tier.key, $event)" />
               </div>
-              <input id="smart-threshold" type="range" min="0" max="1" step="0.01"
-                :value="smartThreshold" aria-describedby="smart-threshold-help" @input="previewSmartThreshold" @change="saveSmartThreshold" />
-              <output for="smart-threshold">{{ smartThreshold.toFixed(2) }}</output>
-            </div>
+              <div class="line">
+                <div class="line-text">
+                  <label class="line-title" for="smart-threshold">{{ t("set.smartThreshold") }}</label>
+                  <div id="smart-threshold-help" class="line-sub">{{ t("set.smartThresholdSub") }}</div>
+                </div>
+                <input id="smart-threshold" type="range" min="0" max="1" step="0.01"
+                  :value="smartThreshold" aria-describedby="smart-threshold-help" @input="previewSmartThreshold" @change="saveSmartThreshold" />
+                <output for="smart-threshold">{{ smartThreshold.toFixed(2) }}</output>
+              </div>
+            </fieldset>
           </div>
           <p class="note">{{ t("set.smartStandardRule") }}</p>
           <p class="note">{{ t("set.smartKeepTier") }}</p>
@@ -4209,6 +4211,21 @@ h3 {
   color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 1.6;
+}
+
+/* The gate is a grouping device, not a visible box - the card already draws the
+ * frame. While smart routing is off the fieldset is disabled natively (so the
+ * dropdowns and the slider cannot be opened or dragged) and dims, which is what
+ * tells you the switch above owns the pane's state. */
+.smart-gate {
+  border: 0;
+  margin: 0;
+  min-width: 0;
+  padding: 0;
+}
+
+.smart-gate:disabled {
+  opacity: 0.45;
 }
 
 .card {
