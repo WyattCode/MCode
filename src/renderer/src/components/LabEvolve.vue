@@ -11,6 +11,7 @@ const rounds = ref(1)
 const concurrency = ref(2)
 const pending = ref(false)
 const error = ref("")
+const pollError = ref("")
 const historyID = ref("")
 const run = computed(() => (state.value?.selected?.id === historyID.value && state.value.selected) || state.value?.current)
 const busy = computed(() => state.value?.current?.status === "running" || state.value?.current?.status === "stopping")
@@ -32,8 +33,9 @@ async function refresh() {
 async function poll() {
   try {
     await refresh()
+    pollError.value = ""
   } catch (failure) {
-    error.value = String(failure)
+    pollError.value = String(failure)
   } finally {
     if (!disposed) timer = setTimeout(poll, 1000)
   }
@@ -119,6 +121,7 @@ function timestamp(time: number): string {
       </div>
     </form>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
+    <p v-if="pollError" class="error" role="alert">{{ pollError }}</p>
 
     <template v-if="run">
       <div class="summary" aria-live="polite">

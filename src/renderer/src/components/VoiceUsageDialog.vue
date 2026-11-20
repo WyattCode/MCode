@@ -6,8 +6,7 @@ import { useEscapeLayer } from "../lib/escape-layer"
  * MiMo's 智能编辑用法示例: what the smart voice mode understands, with examples.
  *
  * 480 wide on a 16px corner with MiMo's standard close button in the corner.
- * Nothing takes focus when it opens, as MiMo's special dialogs do not; Escape or
- * a press outside closes it.
+ * Escape or a press outside closes it.
  */
 const emit = defineEmits<{ close: [] }>()
 
@@ -24,7 +23,7 @@ useEscapeLayer(() => emit("close"))
 
 <template>
   <div class="scrim" @mousedown.self="emit('close')">
-    <div v-modal class="dialog" data-voice-usage data-modal-keep-focus role="dialog" aria-modal="true" aria-labelledby="voice-usage-title">
+    <div v-modal class="dialog" data-voice-usage role="dialog" aria-modal="true" aria-labelledby="voice-usage-title">
       <h2 id="voice-usage-title">{{ t("voice.usage.title") }}</h2>
       <button class="close" type="button" :aria-label="t('common.close')" data-voice-usage-close @click="emit('close')">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">

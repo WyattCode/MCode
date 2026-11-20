@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue"
+import { computed, onMounted, ref, useId } from "vue"
 import { t } from "../lib/i18n"
 import { useEscapeLayer } from "../lib/escape-layer"
 import { composing } from "../lib/keys"
@@ -12,11 +12,12 @@ import { providerIdProblem } from "@shared/provider-id"
  * line), the field starting on a free `<id>-copy` with the caret at its end.
  * The id is checked as a new provider's is, live, and Enter clones.
  */
-const props = defineProps<{ initial: string; taken: ReadonlySet<string> }>()
+const props = defineProps<{ initial: string; taken: ReadonlySet<string>; pending?: boolean }>()
 const emit = defineEmits<{ close: []; confirm: [id: string] }>()
 
 const id = ref(props.initial)
 const field = ref<HTMLInputElement>()
+const errorId = useId()
 
 /* MiMo's rule, the same the form keeps: not empty, no `/`, not taken in any case. */
 const error = computed(() => {
@@ -25,7 +26,7 @@ const error = computed(() => {
 })
 
 function confirm() {
-  if (error.value) return
+  if (props.pending || error.value) return
   emit("confirm", id.value.trim())
 }
 
@@ -58,14 +59,18 @@ onMounted(() => {
         :class="{ bad: error }"
         placeholder="my-provider-copy"
         data-clone-provider-id
+        :aria-label="t('provider.custom.field.providerID.label')"
+        :readonly="pending"
+        :aria-invalid="Boolean(error)"
+        :aria-describedby="error ? errorId : undefined"
         spellcheck="false"
         autocomplete="off"
         @keydown.enter="onEnter"
       />
-      <div v-if="error" class="error" data-clone-provider-error>{{ error }}</div>
+      <div v-if="error" class="error" :id="errorId" data-clone-provider-error>{{ error }}</div>
       <footer>
         <button class="ghost" data-clone-cancel @click="emit('close')">{{ t("common.cancel") }}</button>
-        <button class="confirm" data-clone-confirm :disabled="Boolean(error)" @click="confirm">{{ t("set.models.cloneConfirm") }}</button>
+        <button class="confirm" data-clone-confirm :disabled="pending || Boolean(error)" @click="confirm">{{ t("set.models.cloneConfirm") }}</button>
       </footer>
     </div>
   </div>

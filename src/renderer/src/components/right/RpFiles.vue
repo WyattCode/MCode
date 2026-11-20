@@ -297,14 +297,17 @@ async function save() {
   const rel = props.viewFile
   const directory = root.value
   if (!rel || !directory || !app.client || saving.value) return
+  const submitted = draft.value
   saving.value = true
   try {
-    await app.client.request({ type: "file.write", root: directory, rel, content: draft.value })
+    await app.client.request({ type: "file.write", root: directory, rel, content: submitted })
     // Hold the file that was saved across the write: a later selection owns the viewer now.
     if (props.viewFile !== rel || root.value !== directory) return
-    if (opened.value) opened.value = { ...opened.value, content: draft.value }
-    editing.value = false
-    notify(t("rp.files.saved"))
+    if (opened.value) opened.value = { ...opened.value, content: submitted }
+    if (draft.value === submitted) {
+      editing.value = false
+      notify(t("rp.files.saved"))
+    }
   } catch (err) {
     if (props.viewFile !== rel || root.value !== directory) return
     notifyFailure(t("rp.files.saveFailed", { reason: t(saveFailureKey(err instanceof Error ? err.message : String(err))) }))
@@ -368,19 +371,31 @@ function readTreeWidth(): number {
   }
 }
 
+let stopTreeResize: (() => void) | undefined
+onBeforeUnmount(() => stopTreeResize?.())
+
 function beginTreeResize(event: PointerEvent) {
+  if (stopTreeResize) return
   const target = event.currentTarget as HTMLElement
   const startX = event.clientX
   const start = treeWidth.value
   const sign = getComputedStyle(target).direction === "rtl" ? -1 : 1
   target.setPointerCapture(event.pointerId)
   const move = (moved: PointerEvent) => {
+    if (moved.pointerId !== event.pointerId) return
     const room = (body.value?.getBoundingClientRect().width ?? 600) - 200
     treeWidth.value = Math.round(Math.min(Math.max(TREE_MIN, room), Math.max(TREE_MIN, start + sign * (moved.clientX - startX))))
   }
-  const done = () => {
+  const done = (ended: PointerEvent) => {
+    if (ended.pointerId === event.pointerId) stopTreeResize?.()
+  }
+  stopTreeResize = () => {
+    stopTreeResize = undefined
     target.removeEventListener("pointermove", move)
     target.removeEventListener("pointerup", done)
+    target.removeEventListener("pointercancel", done)
+    target.removeEventListener("lostpointercapture", done)
+    if (target.hasPointerCapture(event.pointerId)) target.releasePointerCapture(event.pointerId)
     try {
       localStorage.setItem(TREE_KEY, String(treeWidth.value))
     } catch {
@@ -389,6 +404,8 @@ function beginTreeResize(event: PointerEvent) {
   }
   target.addEventListener("pointermove", move)
   target.addEventListener("pointerup", done)
+  target.addEventListener("pointercancel", done)
+  target.addEventListener("lostpointercapture", done)
 }
 
 /* ---------------------------------------------------------------- the row menu */

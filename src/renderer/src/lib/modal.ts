@@ -28,11 +28,76 @@ const FOCUSABLE = [
 /** Rendered and reachable, rather than merely present in the markup. */
 function reachable(el: HTMLElement): HTMLElement[] {
   return [...el.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
-    (entry) => entry.offsetParent !== null || entry === document.activeElement,
+    (entry) => (entry.offsetParent !== null || entry === document.activeElement) && entry.tabIndex >= 0,
   )
 }
 
-const cleanups = new WeakMap<HTMLElement, () => void>()
+type Layer = { element: HTMLElement; opener?: HTMLElement; claim: number }
+const layers: Layer[] = []
+const inerted = new Set<Element>()
+
+function topLayer() {
+  return layers.at(-1)
+}
+
+/** Keep the top dialog and the path to it interactive, including its own scrim. */
+function updateInert() {
+  for (const element of inerted) element.removeAttribute("inert")
+  inerted.clear()
+  const dialog = topLayer()?.element
+  if (!dialog) return
+  const scrim = dialog.parentElement?.closest(".scrim, .overlay, .vs-scrim")
+  const boundary = scrim && !layers.some(({ element }) => element !== dialog && scrim.contains(element))
+    ? scrim
+    : dialog
+  for (let node: Element | null = boundary; node?.parentElement && node !== document.body; node = node.parentElement) {
+    for (let sibling: Element | null = node.parentElement.firstElementChild; sibling; sibling = sibling.nextElementSibling) {
+      if (sibling === node || sibling.hasAttribute("inert")) continue
+      sibling.setAttribute("inert", "")
+      inerted.add(sibling)
+    }
+  }
+}
+
+function focusDialog(el: HTMLElement) {
+  if (el.contains(document.activeElement)) return
+  if (el.hasAttribute("data-modal-keep-focus")) {
+    el.focus()
+    return
+  }
+  const stops = reachable(el)
+  const field = stops.find((entry) =>
+    (entry instanceof HTMLInputElement && entry.type !== "hidden" && !entry.readOnly) ||
+    entry instanceof HTMLTextAreaElement,
+  )
+  ;(field ?? stops[0] ?? el).focus()
+}
+
+function onKeydown(event: KeyboardEvent) {
+  const el = topLayer()?.element
+  if (!el || event.defaultPrevented) return
+  const target = event.target
+  if (target instanceof Element && target.closest("[inert]")) {
+    event.preventDefault()
+    event.stopPropagation()
+    focusDialog(el)
+    return
+  }
+  if (event.key !== "Tab" || !el.contains(target as Node)) return
+  const stops = reachable(el)
+  const first = stops[0]
+  const last = stops.at(-1)
+  const active = document.activeElement
+  if (!first || active === el || active === (event.shiftKey ? first : last)) {
+    event.preventDefault()
+    ;((event.shiftKey ? last : first) ?? el).focus()
+  }
+}
+
+function onFocusIn(event: FocusEvent) {
+  const el = topLayer()?.element
+  if (el && event.target instanceof Element && event.target.closest("[inert]")) focusDialog(el)
+}
 
 /* MiMo's motion-slow and its overlay fade. */
 export const DIALOG_EXIT_MS = 200
@@ -96,67 +161,27 @@ export function playDialogExit(el: HTMLElement): void {
 
 export const modal = {
   mounted(el: HTMLElement) {
-    el.setAttribute("role", "dialog")
+    if (!el.hasAttribute("role")) el.setAttribute("role", "dialog")
     el.setAttribute("aria-modal", "true")
-    // So the dialog can hold focus itself while it has nothing focusable yet.
     if (!el.hasAttribute("tabindex")) el.setAttribute("tabindex", "-1")
 
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
-
-    // Deferred: a dialog that focuses its own field does it on mount too, and
-    // whichever ran last would win. Anything already inside is left alone.
-    const claim = requestAnimationFrame(() => {
-      // Some of MiMo's dialogs open without taking focus; Tab still stays inside once it gets there.
-      if (el.hasAttribute("data-modal-keep-focus")) return
-      if (el.contains(document.activeElement)) return
-      const stops = reachable(el)
-      /*
-       * A field wins over whatever happens to come first in the markup. Dialogs
-       * here lead with a back or close button, so focusing position one left a
-       * search or a key box waiting for a click before it could be typed in.
-       */
-      const field = stops.find(
-        (entry) =>
-          (entry instanceof HTMLInputElement && entry.type !== "hidden" && !entry.readOnly) ||
-          entry instanceof HTMLTextAreaElement,
-      )
-      ;(field ?? stops[0] ?? el).focus()
-    })
-
-    const onKeydown = (event: KeyboardEvent) => {
-      if (event.key !== "Tab") return
-      const stops = reachable(el)
-      if (!stops.length) {
-        event.preventDefault()
-        el.focus()
-        return
-      }
-      const first = stops[0]
-      const last = stops[stops.length - 1]
-      const active = document.activeElement
-
-      // Only the two ends need handling; everything between is the browser's.
-      if (!event.shiftKey && active === last) {
-        event.preventDefault()
-        first.focus()
-      } else if (event.shiftKey && (active === first || active === el)) {
-        event.preventDefault()
-        last.focus()
-      } else if (!el.contains(active)) {
-        event.preventDefault()
-        first.focus()
-      }
+    if (!layers.length) {
+      document.addEventListener("keydown", onKeydown, true)
+      document.addEventListener("focusin", onFocusIn, true)
     }
-
-    el.addEventListener("keydown", onKeydown)
-
-    cleanups.set(el, () => {
-      cancelAnimationFrame(claim)
-      el.removeEventListener("keydown", onKeydown)
-      // Back where it came from, so closing a dialog does not dump the user at
-      // the top of the page.
-      if (opener?.isConnected) opener.focus()
-    })
+    const layer: Layer = {
+      element: el,
+      opener,
+      // Let a dialog's mounted hook choose its own field first.
+      claim: requestAnimationFrame(() => {
+        if (topLayer() === layer) focusDialog(el)
+      }),
+    }
+    const above = layers.findIndex(({ element }) => el.contains(element))
+    if (above === -1) layers.push(layer)
+    else layers.splice(above, 0, layer)
+    updateInert()
   },
 
   // Still in the document here, so its scrim can be copied for the closing animation.
@@ -165,8 +190,23 @@ export const modal = {
   },
 
   unmounted(el: HTMLElement) {
-    cleanups.get(el)?.()
-    cleanups.delete(el)
+    const index = layers.findIndex(({ element }) => element === el)
+    if (index < 0) return
+    const wasTop = index === layers.length - 1
+    const [layer] = layers.splice(index, 1)
+    cancelAnimationFrame(layer.claim)
+    for (const remaining of layers) {
+      if (remaining.opener && el.contains(remaining.opener)) remaining.opener = layer.opener
+    }
+    updateInert()
+    if (!layers.length) {
+      document.removeEventListener("keydown", onKeydown, true)
+      document.removeEventListener("focusin", onFocusIn, true)
+    }
+    if (!wasTop) return
+    const next = topLayer()?.element
+    if (layer.opener?.isConnected && (!next || next.contains(layer.opener))) layer.opener.focus()
+    else if (next) focusDialog(next)
   },
 }
 

@@ -12,7 +12,7 @@ import { useApp } from "../stores/app"
 import { useQuestions } from "../stores/questions"
 import { dateIn, language, sessionTitle, t, tn } from "../lib/i18n"
 import { notify, notifyFailure } from "../lib/toast"
-import { RAIL_WIDTH } from "../lib/right-tools"
+import { RAIL_WIDTH, SIDE_WIDTH_MIN } from "../lib/right-tools"
 import { shownChord } from "../lib/keys"
 import type { MenuItem } from "../lib/menu"
 import ContextMenu from "./ContextMenu.vue"
@@ -52,6 +52,7 @@ const props = defineProps<{
   canForward?: boolean
   /** How wide the open column is past its rail, as dragged; the app clamps and keeps it. */
   width: number
+  maxWidth: number
 }>()
 
 const emit = defineEmits<{
@@ -1050,6 +1051,21 @@ function beginResize(event: MouseEvent) {
   window.addEventListener("mouseup", done)
 }
 
+function onResizeKey(event: KeyboardEvent) {
+  const sign = getComputedStyle(event.currentTarget as HTMLElement).direction === "rtl" ? -1 : 1
+  const step = event.shiftKey ? 40 : 12
+  let width: number
+  switch (event.key) {
+    case "ArrowLeft": width = props.width - step * sign; break
+    case "ArrowRight": width = props.width + step * sign; break
+    case "Home": width = SIDE_WIDTH_MIN; break
+    case "End": width = props.maxWidth; break
+    default: return
+  }
+  event.preventDefault()
+  emit("resize", width, true)
+}
+
 /*
  * MiMo 26.920's folded column: taken off the screen altogether rather than
  * left as a 62px rail, and shown whole on demand. Resting on the toggle for
@@ -1144,7 +1160,20 @@ onBeforeUnmount(() => {
 
 <template>
   <aside class="side" :class="{ folded: collapsed, dragging }" :style="{ width: collapsed ? '0px' : `${RAIL_WIDTH + width}px` }" :aria-label="t('a11y.sidebar')">
-    <div v-if="!collapsed" class="resizer" data-side-resizer @mousedown.prevent="beginResize" />
+    <div
+      v-if="!collapsed"
+      class="resizer"
+      role="separator"
+      aria-orientation="vertical"
+      :aria-valuenow="width"
+      :aria-valuemin="SIDE_WIDTH_MIN"
+      :aria-valuemax="maxWidth"
+      :aria-label="t('a11y.sidebarResize')"
+      tabindex="0"
+      data-side-resizer
+      @mousedown.prevent="beginResize"
+      @keydown="onResizeKey"
+    />
     <!--
       Folded, MiMo 26.920 keeps two controls in the title bar, past where its
       rail used to end: the toggle - which previews the column under the

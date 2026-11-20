@@ -32,6 +32,8 @@ const color = ref(app.config?.projectColors?.[props.directory] ?? String(project
 const file = ref<HTMLInputElement>()
 const dragging = ref(false)
 const error = ref<string>()
+const readingIcon = ref(false)
+let iconRead = 0
 
 const initial = computed(() => (name.value.trim()[0] ?? "?").toUpperCase())
 
@@ -47,8 +49,10 @@ onMounted(() => {
 })
 
 async function readIcon(chosen: File | undefined) {
-  error.value = undefined
   if (!chosen) return
+  const read = ++iconRead
+  error.value = undefined
+  readingIcon.value = false
   if (!chosen.type.startsWith("image/")) {
     error.value = t("proj.iconType")
     return
@@ -59,12 +63,20 @@ async function readIcon(chosen: File | undefined) {
   }
   // Inlined rather than copied to disk: config already travels as one document,
   // and a path would break the moment the picture moved.
-  icon.value = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result))
-    reader.onerror = () => reject(reader.error)
-    reader.readAsDataURL(chosen)
-  })
+  readingIcon.value = true
+  try {
+    const data = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result))
+      reader.onerror = reader.onabort = () => reject(reader.error)
+      reader.readAsDataURL(chosen)
+    })
+    if (read === iconRead) icon.value = data
+  } catch {
+    if (read === iconRead) error.value = t("rp.files.errCannotRead")
+  } finally {
+    if (read === iconRead) readingIcon.value = false
+  }
 }
 
 function onDrop(event: DragEvent) {
@@ -78,7 +90,7 @@ function onPick(event: Event) {
 
 async function save() {
   const config = app.config
-  if (!config) return
+  if (!config || readingIcon.value) return
   const trimmed = name.value.trim() || fallbackName.value
 
   const names = { ...(config.projectNames ?? {}) }
@@ -139,7 +151,7 @@ async function save() {
         <div class="icon-text">
           <button class="link" @click="file?.click()">{{ t("proj.iconPick") }}</button>
           <div class="hint">{{ t("proj.iconHint") }}</div>
-          <button v-if="icon" class="link" @click="icon = ''">{{ t("proj.iconClear") }}</button>
+          <button v-if="icon" class="link" :disabled="readingIcon" @click="icon = ''">{{ t("proj.iconClear") }}</button>
         </div>
         <input ref="file" class="hidden" type="file" accept="image/*" @change="onPick" />
       </div>
@@ -162,7 +174,7 @@ async function save() {
 
       <footer>
         <button class="ghost" @click="emit('close')">{{ t("common.cancel") }}</button>
-        <button class="go" @click="save">{{ t("common.save") }}</button>
+        <button class="go" :disabled="readingIcon" @click="save">{{ t("common.save") }}</button>
       </footer>
     </div>
   </div>
