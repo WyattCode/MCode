@@ -62,7 +62,10 @@ export async function roundTwentySevenChecks(check: Check, section: (name: strin
     check("and offers no way to remember the answer", /v-if="!request\.forced"[\s\S]{0,400}?data-perm-always/.test(dialog) || /data-perm-always[\s\S]{0,200}?v-if="!request\.forced"/.test(dialog), dialog.slice(dialog.indexOf("data-perm-always") - 300, dialog.indexOf("data-perm-always") + 60))
     const permission = code(await read("src/server/permission.ts"))
     // Since 2026-09-26 full access answers it too, by the user's choice; round 28 drives both sides of that.
-    check("a forced request is never answered by a stored rule", /if \(action === "allow" && \(!forced \|\| level === "full"\)\) return/.test(permission))
+    // Re-worded 2026-11-20 when the level/action gates were folded into one decision: what the guarantee needs is
+    // that the remembered-answer return is unreachable while `forced` holds. Drop `!forced` here and this goes red.
+    const remembered = permission.slice(permission.indexOf("if (!forced &&") >= 0 ? permission.indexOf("if (!forced &&") : 0, permission.indexOf("if (!forced &&") >= 0 ? permission.indexOf("if (!forced &&") + 160 : 0)
+    check("a forced request is never answered by a stored rule", /if \(!forced &&[^\n]*this\.allowedByRules\(key, input\.kind, patterns\)\) return/.test(permission), remembered)
     check("nor by the level, nor by full access", /!forced/.test(permission) && /readOnlyCommand/.test(permission))
   }
 
