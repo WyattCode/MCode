@@ -4,6 +4,7 @@ import { MEMORY_FLUSH_PROMPT, memoryText, parseCompactionNotes, shouldFlushMemor
 import { messageToText } from "./summary"
 import { rebuildContext } from "./rebuild"
 import path from "node:path"
+import { randomUUID } from "node:crypto"
 import type {
   AgentName,
   AssistantMessage,
@@ -130,6 +131,8 @@ const RESTART_PROMPT = "The app restarted while you were working. Continue from 
 
 /** How many times one turn is carried on after the app went away before it is left for the reader (v2's `DEFAULT_MAX_ATTEMPTS`). */
 export const MAX_RESTART_RESUMES = 10
+
+type TurnClaim = NonNullable<SessionInfo["claim"]> & { turnID?: string }
 
 /** Why a turn carries on without a new message: the reader's 继续, or the app coming back after it went away mid-turn. */
 type Resumed = false | "user" | "restart"
@@ -370,6 +373,8 @@ export class SessionRunner {
 
   /** Turns being carried on after the app went away, and how many times each has been: written into the claim as the turn starts. */
   private readonly restartResumes = new Map<string, number>()
+  private readonly turnClaims = new WeakMap<AbortController, TurnClaim>()
+  private readonly claimEdits = new Map<string, Promise<void>>()
 
   /**
    * Set as the app closes. A turn cut off by the quit keeps its claim, so the
@@ -816,17 +821,22 @@ export class SessionRunner {
     return [...this.running.keys()]
   }
 
+  private ownsTurn(sessionID: string, controller: AbortController): boolean {
+    return this.running.get(sessionID) === controller
+  }
+
   abort(sessionID: string): void {
     // subagents: Stop on a conversation stops the subagents working for it first.
     for (const child of [...(this.children.get(sessionID) ?? [])]) this.abort(child)
-    this.running.get(sessionID)?.abort()
+    const controller = this.running.get(sessionID)
+    controller?.abort()
     /*
      * Close the steering list now. A prompt that arrives after Stop must not
      * join a turn that will not resume; leaving the entry up let it write the
      * message into a list the finally-block then discarded because the
      * controller was aborted.
      */
-    this.steering.delete(sessionID)
+    if (controller && this.ownsTurn(sessionID, controller)) this.steering.delete(sessionID)
     // ...and the requests that are not the turn: the title, and Smart's routing question.
     for (const controller of [...(this.background.get(sessionID) ?? [])]) controller.abort()
     this.pressured.delete(sessionID)
@@ -1442,8 +1452,10 @@ export class SessionRunner {
     try {
       return await this.compactNow(session, controller.signal, "manual")
     } finally {
-      this.running.delete(sessionID)
-      this.bus.publish({ type: "session.idle", sessionID })
+      if (this.ownsTurn(sessionID, controller)) {
+        this.running.delete(sessionID)
+        this.bus.publish({ type: "session.idle", sessionID })
+      }
     }
   }
 
@@ -1872,7 +1884,7 @@ export class SessionRunner {
       return await this.begin(input, controller)
     } catch (failure) {
       // The turn never started, so the session is not busy after all.
-      this.running.delete(input.sessionID)
+      if (this.ownsTurn(input.sessionID, controller)) this.running.delete(input.sessionID)
       throw failure
     }
   }
@@ -1895,7 +1907,7 @@ export class SessionRunner {
         type: input.type,
       })
     } catch (failure) {
-      this.running.delete(input.sessionID)
+      if (this.ownsTurn(input.sessionID, controller)) this.running.delete(input.sessionID)
       throw failure
     }
   }
@@ -2143,6 +2155,7 @@ export class SessionRunner {
      * photographed too - it writes its plan file, and its commands run under
      * the same permission rules as any other turn's.
      */
+    if (!this.ownsTurn(session.id, controller)) controller.signal.throwIfAborted()
     this.pending.delete(session.id)
     this.turn(session.id).directory = session.directory
     if (!session.sshDeviceId) this.turn(session.id).watching = this.snapshots.begin(session.directory)
@@ -2176,6 +2189,7 @@ export class SessionRunner {
     // Told not to test: the turn says so to the model, and the app tool is refused for it (see runTool).
     const noTesting = !input.inbox && forbidsTesting(input.text)
     if (noTesting) context.push(NO_TESTING_NOTE)
+    if (!this.ownsTurn(session.id, controller)) controller.signal.throwIfAborted()
     this.turn(session.id).noTesting = noTesting
     const user: UserMessage = {
       id: Identifier.message(),
@@ -2198,6 +2212,7 @@ export class SessionRunner {
       time: { created: Date.now() },
     }
     await this.store.saveMessage(user)
+    if (!this.ownsTurn(session.id, controller)) return user.id
     this.turn(session.id).messages = [user.id]
 
     /*
@@ -2584,6 +2599,7 @@ export class SessionRunner {
         }
         if (!route) session = await this.withAvailableModel(session)
       }
+      if (!this.ownsTurn(sessionID, controller)) return
       this.pending.delete(sessionID)
       // The messages this turn exists to answer, carried over from the turn
       // that was ending as they arrived - a rollback aimed at one of them has
@@ -2593,9 +2609,10 @@ export class SessionRunner {
       if (!session.sshDeviceId) this.turn(sessionID).watching = this.snapshots.begin(session.directory)
       this.launch(sessionID, this.config.apiKey((route?.model ?? session.model).provider) ?? "", controller, false, undefined, route)
     } catch (failure) {
+      if (!this.ownsTurn(sessionID, controller)) return
       this.running.delete(sessionID)
       this.bus.publish({ type: "session.error", sessionID, error: describe(failure) })
-      this.bus.publish({ type: "session.idle", sessionID })
+      if (!this.running.has(sessionID)) this.bus.publish({ type: "session.idle", sessionID })
     }
   }
 
@@ -2639,6 +2656,7 @@ export class SessionRunner {
       if (!this.config.usable(provider)) {
         throw new Error(`No API key configured for ${provider}. Add one in Settings.`)
       }
+      if (!this.ownsTurn(sessionID, controller)) controller.signal.throwIfAborted()
       this.pending.delete(sessionID)
       // The turn answers the same question the broken one did, so a rollback to it reaches both.
       this.turn(sessionID).messages = [messageID]
@@ -2647,7 +2665,7 @@ export class SessionRunner {
       this.launch(sessionID, this.config.apiKey(provider) ?? "", controller, how, undefined, route)
       return messageID
     } catch (failure) {
-      this.running.delete(sessionID)
+      if (this.ownsTurn(sessionID, controller)) this.running.delete(sessionID)
       throw failure
     }
   }
@@ -2700,6 +2718,33 @@ export class SessionRunner {
     return text
   }
 
+  /** Orders claim writes and conditional releases for this session in this runner. */
+  private editClaim(sessionID: string, edit: () => Promise<void>): Promise<void> {
+    const result = (this.claimEdits.get(sessionID) ?? Promise.resolve()).then(edit)
+    const tail = result.catch(() => undefined)
+    this.claimEdits.set(sessionID, tail)
+    void tail.then(() => {
+      if (this.claimEdits.get(sessionID) === tail) this.claimEdits.delete(sessionID)
+    })
+    return result
+  }
+
+  private async releaseClaim(sessionID: string, claim: TurnClaim): Promise<void> {
+    try {
+      await this.editClaim(sessionID, async () => {
+        const current: TurnClaim | undefined = (await this.store.require(sessionID)).claim
+        if (!current) return
+        // Claims from older versions have only these three fields.
+        const matches = claim.turnID !== undefined
+          ? current.turnID === claim.turnID
+          : current.turnID === undefined && current.at === claim.at && current.pid === claim.pid && current.resumes === claim.resumes
+        if (matches) await this.store.update(sessionID, { claim: undefined })
+      })
+    } catch (failure) {
+      this.bus.publish({ type: "session.error", sessionID, error: `Could not release turn claim: ${describe(failure)}` })
+    }
+  }
+
   /** The app is closing: turns still running keep their claims, so the next start carries them on. */
   closeTurns(): void {
     this.closing = true
@@ -2725,7 +2770,7 @@ export class SessionRunner {
     const carried: string[] = []
     for (const session of await this.store.list().catch((): SessionInfo[] => [])) {
       const claim = session.claim
-      if (!claim) continue
+      if (!claim || this.running.has(session.id)) continue
       /*
        * Two instances may share one data folder. A claim written by a process
        * that is still alive is a turn running over there right now, and
@@ -2734,8 +2779,8 @@ export class SessionRunner {
        * only ever errs towards leaving a turn for the reader.
        */
       if (claim.pid !== undefined && claim.pid !== process.pid && (this.alive ?? processAlive)(claim.pid)) continue
-      const release = () => this.store.update(session.id, { claim: undefined }).catch(() => undefined)
-      if (session.parentID || session.subagent || this.running.has(session.id) || session.revert) {
+      const release = () => this.releaseClaim(session.id, claim)
+      if (session.parentID || session.subagent || session.revert) {
         await release()
         continue
       }
@@ -2763,6 +2808,7 @@ export class SessionRunner {
 
   /** Runs a claimed session's turn and releases it afterwards. */
   private launch(sessionID: string, apiKey: string, controller: AbortController, resumed: Resumed = false, lead?: Lead, route?: SmartRoute): void {
+    if (!this.ownsTurn(sessionID, controller)) return
     this.steering.set(sessionID, { waiting: [], written: Promise.resolve() })
 
     // Deliberately not awaited: the caller gets the message id immediately and
@@ -2789,7 +2835,7 @@ export class SessionRunner {
      * meant that read could land one turn behind.
      */
     try {
-      await this.commitSnapshot(sessionID)
+      if (this.ownsTurn(sessionID, controller)) await this.commitSnapshot(sessionID)
     } catch (cause) {
       this.bus.publish({
         type: "session.error",
@@ -2798,7 +2844,9 @@ export class SessionRunner {
       })
     }
     // The turn ended for a reason of its own: nothing to carry on at the next start. A turn cut off by the quit keeps its claim.
-    if (!this.closing) await this.store.update(sessionID, { claim: undefined }).catch(() => undefined)
+    const claim = this.turnClaims.get(controller)
+    if (!this.closing && claim) await this.releaseClaim(sessionID, claim)
+    if (!this.ownsTurn(sessionID, controller)) return
     /*
      * The last read of the waiting list, and the only one that can see a
      * message that arrived after the loop had stopped looking. Everything
@@ -2815,12 +2863,10 @@ export class SessionRunner {
     const waiting = steering?.waiting ?? []
     const stranded = waiting.length > 0 && !controller.signal.aborted
     const carried = [...waiting]
-    if (this.running.get(sessionID) === controller) this.running.delete(sessionID)
+    this.running.delete(sessionID)
     this.retrying.delete(sessionID)
     this.workingIn.delete(sessionID)
-    // Drop steering only when this turn still owns it. abort() clears it up
-    // front; a new turn after Stop has a different entry that must remain.
-    if (this.steering.get(sessionID) === steering) this.steering.delete(sessionID)
+    this.steering.delete(sessionID)
     if (stranded) {
       void this.resume(sessionID, carried)
       return
@@ -3031,10 +3077,16 @@ export class SessionRunner {
      * carries the turn on. The count of such carryings-on is kept across them
      * and reset only by a turn that ends.
      */
-    const resumes = this.restartResumes.get(sessionID) ?? 0
-    this.restartResumes.delete(sessionID)
-    await this.store.update(sessionID, { claim: { at: Date.now(), resumes, pid: process.pid } }).catch(() => undefined)
+    await this.editClaim(sessionID, async () => {
+      if (!this.ownsTurn(sessionID, controller)) throw new Shown(controller.signal.reason)
+      const resumes = this.restartResumes.get(sessionID) ?? 0
+      this.restartResumes.delete(sessionID)
+      const claim = { turnID: randomUUID(), at: Date.now(), resumes, pid: process.pid }
+      this.turnClaims.set(controller, claim)
+      await this.store.update(sessionID, { claim })
+    })
     const own = await this.store.require(sessionID)
+    if (!this.ownsTurn(sessionID, controller)) throw new Shown(controller.signal.reason)
     // plan: the conversation's own mode as the turn begins; approving a plan changes it mid-turn.
     const planning = own.agent === "plan"
     // A slash command's own agent and model hold for this turn; the conversation keeps its own.
@@ -4945,12 +4997,18 @@ export class SessionRunner {
     } finally {
       release?.()
       // Closed with nothing awaited since the last look, so a follow-up either made it in or finds the turn over.
-      this.steering.delete(child.id)
-      if (!this.owners.has(child.id)) await this.commitSnapshot(child.id).catch(() => undefined)
-      this.running.delete(child.id)
-      this.workingIn.delete(child.id)
-      this.owners.delete(child.id)
-      this.bus.publish({ type: "session.idle", sessionID: child.id })
+      if (this.ownsTurn(child.id, controller)) {
+        this.steering.delete(child.id)
+        if (!this.owners.has(child.id)) await this.commitSnapshot(child.id).catch(() => undefined)
+      }
+      const claim = this.turnClaims.get(controller)
+      if (!this.closing && claim) await this.releaseClaim(child.id, claim)
+      if (this.ownsTurn(child.id, controller)) {
+        this.running.delete(child.id)
+        this.workingIn.delete(child.id)
+        this.owners.delete(child.id)
+        this.bus.publish({ type: "session.idle", sessionID: child.id })
+      }
     }
 
     const outcome = await this.outcomeOf(child, controller.signal.aborted, failure, gate)
