@@ -218,9 +218,15 @@ export async function roundThirteenKeyboardChecks(check: Check, section: (name: 
     check(
       "K13-6: new task closes the menus, the search, the previews and Settings (asking first about unsaved edits), then runs",
       /dismissMenus\(\)/.test(run) && /searchOpen\.value = false/.test(run) && /closeImagePreview\(\)/.test(run) && /closeVideoPreview\(\)/.test(run) &&
-        /settingsDialog\.value\.leaveThen\(\(\) => \{\s+settingsOpen\.value = false\s+newSession\(\)/.test(run) && /\n  newSession\(\)\n  return true$/.test(run),
+        /settingsDialog\.value\.leaveThen\(\(\) => \{ newSession\(\) \}\)/.test(run) && /\n  newSession\(\)\n  return true$/.test(run),
       run,
     )
+    // The leave path no longer flips `settingsOpen` from App; Settings closes itself as part of the
+    // leave. The guarantee is the same - the dialog is gone before the new session starts - so pin
+    // the delegation on both ends instead of the old inline assignment.
+    check("K13-6: the delegated leave closes Settings on both ends",
+      /function leaveThen\(action: \(\) => void\) \{[\s\S]{0,160}emit\("close"\)[\s\S]{0,60}action\(\)/.test(await read("src/renderer/src/components/SettingsDialog.vue")) &&
+        /@close="settingsOpen = false"/.test(shell))
     check("K13-6: a dialog that asks something keeps the key", /!node\.closest\("\[data-new-task-clears\]"\)/.test(run) && /if \(asking \|\| editingProject\.value/.test(run))
     const dispatch = shell.slice(shell.indexOf("function onKeydown("), shell.indexOf("const menuCommands"))
     check(
