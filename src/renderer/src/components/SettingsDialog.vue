@@ -88,7 +88,7 @@ const props = defineProps<{
 }>()
 /*
  * The page on show, written through requestLeave: every nav button, the
- * search's Enter and its jump pass MiMo's unsaved-environment guard.
+ * search's Enter and its jump pass the unsaved settings guard.
  */
 const currentSection = ref<Section>(props.section ?? "general")
 const section = computed<Section>({
@@ -108,7 +108,7 @@ const section = computed<Section>({
  * they are behind the guard that refuses to open anything over a dialog - but
  * a toast is not: the archive notice's 「查看已归档」 sits above the settings and
  * stays clickable, so opening the settings and then pressing it did nothing at
- * all. Written through `section`, so the unsaved-environment guard still gets
+ * all. Written through `section`, so the unsaved settings guard still gets
  * its say.
  */
 watch(
@@ -131,20 +131,25 @@ const savedInstructions = computed(() => app.config?.instructions ?? "")
 // As in MiMo: saving keeps the trimmed text, so only a change past whitespace counts.
 const dirty = computed(() => draft.value.trim() !== savedInstructions.value.trim())
 const ciHelpOpen = ref(false)
+const savingInstructions = ref(false)
 
-watch(savedInstructions, (next: string) => {
-  if (!dirty.value) draft.value = next
-})
+watch(savedInstructions, (next, previous) => {
+  if (!savingInstructions.value && draft.value.trim() === previous.trim()) draft.value = next
+}, { flush: "sync" })
 
 async function saveInstructions() {
-  const text = draft.value.trim()
+  if (savingInstructions.value) return
+  const submitted = draft.value
+  const text = submitted.trim()
+  savingInstructions.value = true
   try {
     await app.patchConfig({ instructions: text })
-    draft.value = text
+    if (draft.value === submitted) draft.value = savedInstructions.value
     notify(t("set.instructionsSaved"))
   } catch {
     // patchConfig already toasts prefSaveFailed; leave the draft as typed.
-    return
+  } finally {
+    savingInstructions.value = false
   }
 }
 
@@ -1400,14 +1405,14 @@ const voiceUsageOpen = ref(false)
 const licensesOpen = ref(false)
 
 /*
- * MiMo's guard on an environment with unsaved edits: every way out - the
+ * Guard unsaved settings edits: every way out - the
  * navigation, the search's jump, the back button, close, Escape and the scrim -
  * asks first, and 离开 discards the edits and does what was asked.
  */
 const pendingLeave = ref<() => void>()
 
 function requestLeave(action: () => void) {
-  if (!envDirty.value) {
+  if (!envDirty.value && !dirty.value) {
     action()
     return
   }
@@ -1419,6 +1424,7 @@ function confirmLeave() {
   pendingLeave.value = undefined
   // Discarded first, so the action runs past a guard that no longer has anything to protect.
   envName.value = app.config?.projectNames?.[configuring.value ?? ""] ?? ""
+  draft.value = savedInstructions.value
   action?.()
 }
 
@@ -2841,7 +2847,7 @@ onBeforeUnmount(() => {
           />
           <div class="ci-actions">
             <!-- MiMo's save turns into the primary button once there is something to save. -->
-            <button type="button" class="ctl-btn ci-save" :class="{ 'update-install': dirty }" data-ci-save :disabled="!dirty" @click="saveInstructions">
+            <button type="button" class="ctl-btn ci-save" :class="{ 'update-install': dirty }" data-ci-save :disabled="savingInstructions || !dirty" @click="saveInstructions">
               {{ t("common.save") }}
             </button>
           </div>
@@ -3328,18 +3334,6 @@ onBeforeUnmount(() => {
               <button type="button" class="ctl-btn env-save" :class="{ dirty: envDirty }" data-env-save :disabled="!envDirty" @click="saveEnv">{{ t("set.envSave") }}</button>
             </div>
           </div>
-          <!-- MiMo's leave guard: not destructive, so the plain confirm button. -->
-          <Teleport to="body">
-            <ConfirmDialog
-              v-if="pendingLeave"
-              :title="t('set.envLeaveTitle')"
-              :body="t('set.envLeaveBody')"
-              :confirm-label="t('set.envLeaveOk')"
-              :danger="false"
-              @confirm="confirmLeave"
-              @close="pendingLeave = undefined"
-            />
-          </Teleport>
         </template>
 
         <template v-else-if="section === 'environment'">
@@ -3914,8 +3908,19 @@ onBeforeUnmount(() => {
         <ModelsPage v-else />
             </div>
     </div>
+    <Teleport to="body">
+      <ConfirmDialog
+        v-if="pendingLeave"
+        :title="t('set.envLeaveTitle')"
+        :body="dirty ? t('set.unsavedLeaveBody') : t('set.envLeaveBody')"
+        :cancel-label="dirty ? t('set.unsavedKeepEditing') : undefined"
+        :confirm-label="dirty ? t('set.unsavedDiscard') : t('set.envLeaveOk')"
+        :danger="false"
+        @confirm="confirmLeave"
+        @close="pendingLeave = undefined"
+      />
+    </Teleport>
   </div>
-
 </template>
 
 <style scoped>

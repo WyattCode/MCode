@@ -60,7 +60,7 @@ function closeConnect() {
   const connected = connectTarget.value?.entries.find((entry) => listed.value.some((provider) => provider.id === entry.id))
   connectOpen.value = false
   connectTarget.value = undefined
-  if (connected) selected.value = connected.id
+  if (connected) selectProvider(connected.id)
 }
 
 function manage(provider: ProviderStatus) {
@@ -80,27 +80,31 @@ function fromEnvironment(provider: ProviderStatus): boolean {
 }
 
 /* The endpoint being edited, per provider: what was typed, else the one in force. */
-const endpoints = ref<Record<string, string>>({})
+const endpoints = ref<Record<string, { text: string }>>({})
+const savingEndpoint = ref(false)
 
 function endpointValue(provider: ProviderStatus): string {
-  return endpoints.value[provider.id] ?? provider.baseURL ?? ""
+  return endpoints.value[provider.id]?.text ?? provider.baseURL ?? ""
 }
 
 function endpointChanged(provider: ProviderStatus): boolean {
-  const typed = endpoints.value[provider.id]?.trim()
+  const typed = endpoints.value[provider.id]?.text.trim()
   return Boolean(typed) && typed !== (provider.baseURL ?? "")
 }
 
 async function saveEndpoint(provider: ProviderStatus) {
-  const value = endpoints.value[provider.id]?.trim()
-  if (!value) return
+  const draft = endpoints.value[provider.id]
+  const value = draft?.text.trim()
+  if (!value || savingEndpoint.value) return
+  savingEndpoint.value = true
   try {
     await app.patchConfig({ providerEndpoints: { ...(app.config?.providerEndpoints ?? {}), [provider.id]: value } })
-    delete endpoints.value[provider.id]
+    if (endpoints.value[provider.id] === draft) delete endpoints.value[provider.id]
     notify(t("set.saved"))
   } catch {
     // patchConfig already toasts prefSaveFailed; keep the draft for retry.
-    return
+  } finally {
+    savingEndpoint.value = false
   }
 }
 
@@ -148,16 +152,44 @@ function saved(id: string) {
   preset.value = "custom"
 }
 
+const pendingFormLeave = ref<() => void>()
+
+function leaveForm(action: () => void) {
+  if (saving.value) return
+  if (form.value?.dirty) pendingFormLeave.value = action
+  else action()
+}
+
+function selectProvider(id: string) {
+  if (id !== selected.value) leaveForm(() => { selected.value = id })
+}
+
+function selectPreset(id: keyof typeof PROVIDER_PRESETS) {
+  if (id !== preset.value) leaveForm(() => { preset.value = id })
+}
+
+function confirmFormLeave() {
+  const action = pendingFormLeave.value
+  pendingFormLeave.value = undefined
+  action?.()
+}
+
 /*
  * MiMo asks before deleting a provider, and toasts the result; a built-in
  * provider's disconnect asks the same way. If the model in use goes, the store
  * falls back to another usable one.
  */
-const removing = ref<{ id: string; name: string; custom: boolean }>()
+const removing = ref<{ id: string; name: string; custom: boolean; instance: number; pending?: boolean }>()
+let removeInstance = 0
+
+function startRemove(provider: ProviderStatus) {
+  removing.value = { id: provider.id, name: providerLabel(provider), custom: Boolean(provider.custom), instance: ++removeInstance }
+}
 
 async function confirmRemove() {
   const target = removing.value
-  if (!target) return
+  if (!target || target.pending) return
+  target.pending = true
   try {
     if (target.custom) {
       await app.removeCustomProvider(target.id)
@@ -170,30 +202,37 @@ async function confirmRemove() {
       notify(t("set.models.disconnected", { name: target.name }), { level: "success" })
     }
     await app.ensureUsableModel()
-    removing.value = undefined
+    if (removing.value === target) removing.value = undefined
   } catch {
     notifyFailure(t(target.custom ? "set.models.removeFailed" : "set.models.disconnectFailed"))
+  } finally {
+    target.pending = false
   }
 }
 
 /* MiMo 26.920's 克隆供应商: a new id, asked for first; the copy opens once it is made. */
-const cloning = ref<{ id: string; name: string; initial: string; taken: Set<string> }>()
+const cloning = ref<{ id: string; name: string; initial: string; taken: Set<string>; instance: number; pending?: boolean }>()
+let cloneInstance = 0
 
 function startClone(provider: ProviderStatus) {
   const taken = new Set([...app.providers.map((entry) => entry.id), ...(app.config?.customProviders ?? []).map((entry) => entry.id)])
-  cloning.value = { id: provider.id, name: providerLabel(provider), initial: cloneId(provider.id, taken), taken }
+  cloning.value = { id: provider.id, name: providerLabel(provider), initial: cloneId(provider.id, taken), taken, instance: ++cloneInstance }
 }
 
 async function confirmClone(id: string) {
   const source = cloning.value
-  if (!source) return
+  if (!source || source.pending) return
+  source.pending = true
   try {
     const made = await app.copyCustomProvider(source.id, t("set.models.copyName", { name: source.name }), id)
-    selected.value = made
-    notify(t("set.models.copied"), { level: "success" })
+    if (cloning.value !== source) return
     cloning.value = undefined
+    selectProvider(made)
+    notify(t("set.models.copied"), { level: "success" })
   } catch {
-    notifyFailure(t("set.models.copyFailed"))
+    if (cloning.value === source) notifyFailure(t("set.models.copyFailed"))
+  } finally {
+    source.pending = false
   }
 }
 </script>
@@ -218,7 +257,7 @@ async function confirmClone(id: string) {
           <path d="M13 8a5 5 0 1 1-1.5-3.55M13 2.5v2.5h-2.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
       </button>
-      <button type="button" class="tab" :class="{ on: selected === ADD }" :aria-pressed="selected === ADD" data-provider-add @click="selected = ADD">
+      <button type="button" class="tab" :class="{ on: selected === ADD }" :aria-pressed="selected === ADD" data-provider-add @click="selectProvider(ADD)">
         + {{ t("set.models.addProvider") }}
       </button>
       <button
@@ -229,7 +268,7 @@ async function confirmClone(id: string) {
         :class="{ on: selected === provider.id }"
         :aria-pressed="selected === provider.id"
         :data-provider-tab="provider.id"
-        @click="selected = provider.id"
+        @click="selectProvider(provider.id)"
       >
         <ProviderIcon :id="provider.id" :name="provider.name" />
         <span class="tab-name">{{ providerLabel(provider) }}</span>
@@ -248,7 +287,7 @@ async function confirmClone(id: string) {
           :aria-pressed="preset === key"
           :data-preset="key"
           :disabled="saving"
-          @click="preset = key"
+          @click="selectPreset(key)"
         >
           <ProviderIcon v-if="key !== 'custom'" :id="key" :name="entry.label" class="preset-mark" />
           <svg v-else class="preset-plus" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -285,10 +324,10 @@ async function confirmClone(id: string) {
               :placeholder="t('set.baseURL')"
               spellcheck="false"
               data-provider-endpoint
-              @input="endpoints[current.id] = ($event.target as HTMLInputElement).value"
+              @input="endpoints[current.id] = { text: ($event.target as HTMLInputElement).value }"
               @keydown.enter="!$event.isComposing && saveEndpoint(current)"
             />
-            <button type="button" class="dock-btn" :disabled="!endpointChanged(current)" @click="saveEndpoint(current)">{{ t("set.save") }}</button>
+            <button type="button" class="dock-btn" :disabled="savingEndpoint || !endpointChanged(current)" @click="saveEndpoint(current)">{{ t("set.save") }}</button>
           </span>
         </div>
       </div>
@@ -326,7 +365,7 @@ async function confirmClone(id: string) {
               type="button"
               class="dock-btn danger"
               :data-provider-remove="current.id"
-              @click="removing = { id: current.id, name: providerLabel(current), custom: true }"
+              @click="startRemove(current)"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M4 6.5h16M9.5 6.5V4.5h5v2M6.5 6.5l.8 13a1.7 1.7 0 0 0 1.7 1.5h6a1.7 1.7 0 0 0 1.7-1.5l.8-13" />
@@ -348,7 +387,7 @@ async function confirmClone(id: string) {
               type="button"
               class="dock-btn danger"
               :data-provider-remove="current.id"
-              @click="removing = { id: current.id, name: providerLabel(current), custom: false }"
+              @click="startRemove(current)"
             >
               {{ t("set.disconnect") }}
             </button>
@@ -383,13 +422,32 @@ async function confirmClone(id: string) {
     <Teleport to="body">
       <ConfirmDialog
         v-if="removing"
+        :key="removing.instance"
         :title="t(removing.custom ? 'set.models.removeProvider' : 'set.models.disconnectTitle')"
         :body="t(removing.custom ? 'set.models.removeProviderBody' : 'set.models.disconnectBody', { name: removing.name })"
         :confirm-label="removing.custom ? t('set.models.remove') : t('set.disconnect')"
+        :pending="removing.pending"
         @confirm="confirmRemove"
         @close="removing = undefined"
       />
-      <ProviderCloneDialog v-if="cloning" :initial="cloning.initial" :taken="cloning.taken" @confirm="confirmClone" @close="cloning = undefined" />
+      <ProviderCloneDialog
+        v-if="cloning"
+        :key="cloning.instance"
+        :initial="cloning.initial"
+        :taken="cloning.taken"
+        :pending="cloning.pending"
+        @confirm="confirmClone"
+        @close="cloning = undefined"
+      />
+      <ConfirmDialog
+        v-if="pendingFormLeave"
+        :title="t('set.envLeaveTitle')"
+        :body="t('set.unsavedLeaveBody')"
+        :confirm-label="t('set.envLeaveOk')"
+        :danger="false"
+        @confirm="confirmFormLeave"
+        @close="pendingFormLeave = undefined"
+      />
     </Teleport>
     <ConnectDialog v-if="connectOpen" :group="connectTarget" @close="closeConnect" />
   </div>

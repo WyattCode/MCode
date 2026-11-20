@@ -108,7 +108,7 @@ async function clearAll() {
       <div v-for="item in queued" :key="item.id" class="queue-item" :class="{ editing: editing === item.id }" data-queue-item>
         <template v-if="editing === item.id">
           <label class="queue-editor-label">
-            <span>{{ t("composer.queue.editing") }}{{ t("composer.queue.draft") }}</span>
+            <span>{{ t("composer.queue.editingDraft") }}</span>
             <textarea ref="editor" v-model="draft" rows="2" @keydown="editKeys" />
           </label>
           <div class="queue-editor-actions">

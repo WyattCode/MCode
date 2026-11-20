@@ -62,7 +62,7 @@ import { toggleSteps } from "./lib/steps"
 import { draftFromMessage, provideRestoreDraft } from "./lib/draft"
 import { cycleVariant, findModel } from "./lib/model"
 import { PANEL_MIN_WIDTH, useRightPanel } from "./stores/right-panel"
-import { arbitratePanel, boundChord, clampSideWidth, panelWidthShown, sideFits, toolHints } from "./lib/right-tools"
+import { arbitratePanel, boundChord, clampSideWidth, panelWidthShown, sideFits, sideWidthMax, toolHints } from "./lib/right-tools"
 import { exportConversationById, exportConversationMarkdown, transcriptOf } from "./lib/convo-export"
 import { ZOOM_TOAST, dismiss, notify, notifyFailure, zoomNotice } from "./lib/toast"
 import { followZoom } from "./lib/zoom-resize"
@@ -981,11 +981,11 @@ const storedSideWidth = ref(
     }
   })(),
 )
-const sideWidth = computed(() =>
-  clampSideWidth(storedSideWidth.value, windowWidth.value, rp.open ? Math.max(PANEL_MIN_WIDTH, rp.width) : 0),
-)
+const panelWidthForSidebar = computed(() => rp.open ? Math.max(PANEL_MIN_WIDTH, rp.width) : 0)
+const sideWidth = computed(() => clampSideWidth(storedSideWidth.value, windowWidth.value, panelWidthForSidebar.value))
+const sidebarMaxWidth = computed(() => sideWidthMax(windowWidth.value, panelWidthForSidebar.value))
 function resizeSide(width: number, done: boolean) {
-  storedSideWidth.value = clampSideWidth(width, windowWidth.value, rp.open ? Math.max(PANEL_MIN_WIDTH, rp.width) : 0)
+  storedSideWidth.value = clampSideWidth(width, windowWidth.value, panelWidthForSidebar.value)
   if (!done) return
   try {
     localStorage.setItem(SIDE_WIDTH_KEY, String(storedSideWidth.value))
@@ -1260,7 +1260,7 @@ const settingsDialog = ref<InstanceType<typeof SettingsDialogComponent>>()
 
 /**
  * MiMo's new task clears the screen before it runs: every menu, the search,
- * the palette, Settings - asking first when an environment has unsaved edits -
+ * the palette, Settings - asking first when Settings has unsaved edits -
  * and the previews. A dialog that asks something (a rename, a confirmation)
  * keeps the key, and then this answers false and does nothing.
  */
@@ -1274,10 +1274,7 @@ function newTaskOverLayers(): boolean {
   closeImagePreview()
   closeVideoPreview()
   if (settingsOpen.value && settingsDialog.value) {
-    settingsDialog.value.leaveThen(() => {
-      settingsOpen.value = false
-      newSession()
-    })
+    settingsDialog.value.leaveThen(() => { newSession() })
     return true
   }
   settingsOpen.value = false
@@ -3812,6 +3809,7 @@ onBeforeUnmount(() => {
         :can-back="canGoBack"
         :can-forward="canGoForward"
         :width="sideWidth"
+        :max-width="sidebarMaxWidth"
         @resize="resizeSide"
         @toggle-priority="priorityFilter = !priorityFilter"
         @archive-all="archiveAll"

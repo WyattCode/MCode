@@ -396,12 +396,8 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
           :key="row.key"
           class="tile"
           :title="row.name"
+          role="group"
           :aria-label="row.name"
-          role="button"
-          tabindex="0"
-          @click="preview(row)"
-          @keydown.enter="preview(row)"
-          @keydown.space.prevent="preview(row)"
         >
           <div class="well">
             <svg class="well-mark" width="38" height="38" viewBox="0 0 24 24" fill="none" :stroke="row.badge.fg" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -411,17 +407,17 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
               <span class="badge-dot" :style="{ background: row.badge.fg }" />{{ t(row.badge.key) }}
             </span>
             <div class="acts">
-              <button type="button" class="act" data-act="preview" :aria-label="t('art.preview')" :title="t('art.preview')" @click.stop="preview(row)">
+              <button type="button" class="act" data-act="preview" :aria-label="t('art.preview')" :title="t('art.preview')" @click="preview(row)">
                 <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                   <path d="M1.8 8s2.3-4.2 6.2-4.2S14.2 8 14.2 8s-2.3 4.2-6.2 4.2S1.8 8 1.8 8zM8 6.2a1.8 1.8 0 1 1 0 3.6a1.8 1.8 0 1 1 0-3.6" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
                 </svg>
               </button>
-              <button type="button" class="act" data-act="download" :aria-label="t('art.download')" :title="t('art.download')" @click.stop="download(row)">
+              <button type="button" class="act" data-act="download" :aria-label="t('art.download')" :title="t('art.download')" @click="download(row)">
                 <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                   <path d="M8 2.5v7M5 6.8l3 3 3-3M3 11.5v2h10v-2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
                 </svg>
               </button>
-              <button type="button" class="act" data-act="enter" :aria-label="t('art.back')" :title="t('art.back')" @click.stop="enter(row)">
+              <button type="button" class="act" data-act="enter" :aria-label="t('art.back')" :title="t('art.back')" @click="enter(row)">
                 <!-- MiMo's 进入对话 is an arrow leaving to the top right, not a speech bubble. -->
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                   <path d="M7 7h10v10M7 17 17 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
@@ -443,12 +439,8 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
           :key="row.key"
           class="row"
           :title="row.name"
+          role="group"
           :aria-label="row.name"
-          role="button"
-          tabindex="0"
-          @click="preview(row)"
-          @keydown.enter="preview(row)"
-          @keydown.space.prevent="preview(row)"
         >
           <span class="file-box">
             <svg class="file-mark" width="18" height="18" viewBox="0 0 24 24" fill="none" :stroke="row.badge.fg" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -463,17 +455,17 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
           <span class="file-name">{{ row.name }}</span>
           <span class="when">{{ when(row.at) }}</span>
           <div class="acts">
-            <button type="button" class="act" data-act="preview" :aria-label="t('art.preview')" :title="t('art.preview')" @click.stop="preview(row)">
+            <button type="button" class="act" data-act="preview" :aria-label="t('art.preview')" :title="t('art.preview')" @click="preview(row)">
               <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M1.8 8s2.3-4.2 6.2-4.2S14.2 8 14.2 8s-2.3 4.2-6.2 4.2S1.8 8 1.8 8zM8 6.2a1.8 1.8 0 1 1 0 3.6a1.8 1.8 0 1 1 0-3.6" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
               </svg>
             </button>
-            <button type="button" class="act" data-act="download" :aria-label="t('art.download')" :title="t('art.download')" @click.stop="download(row)">
+            <button type="button" class="act" data-act="download" :aria-label="t('art.download')" :title="t('art.download')" @click="download(row)">
               <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M8 2.5v7M5 6.8l3 3 3-3M3 11.5v2h10v-2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
             </button>
-            <button type="button" class="act" data-act="enter" :aria-label="t('art.back')" :title="t('art.back')" @click.stop="enter(row)">
+            <button type="button" class="act" data-act="enter" :aria-label="t('art.back')" :title="t('art.back')" @click="enter(row)">
               <!-- MiMo's 进入对话 is an arrow leaving to the top right, not a speech bubble. -->
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <path d="M7 7h10v10M7 17 17 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
@@ -725,7 +717,6 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 14px;
-  cursor: pointer;
   transition: box-shadow 0.12s;
 }
 
@@ -854,7 +845,6 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 10px;
-  cursor: pointer;
   transition: box-shadow 0.12s;
 }
 
@@ -970,8 +960,6 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
 .chip:focus-visible,
 .view-btn:focus-visible,
 .act:focus-visible,
-.tile:focus-visible,
-.row:focus-visible,
 .page-btn:focus-visible {
   outline: 2px solid var(--text-interactive);
   outline-offset: -2px;

@@ -114,6 +114,27 @@ function select(id: number) {
   void nextTick(() => paneOf(id)?.focus())
 }
 
+function onTabKey(event: KeyboardEvent, id: number) {
+  const tab = event.currentTarget as HTMLElement
+  const tabs = [...(tab.closest('[role="tablist"]')?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [])]
+  const index = terms.value.findIndex((term) => term.id === id)
+  const direction = getComputedStyle(tab).direction === "rtl" ? -1 : 1
+  let next: number
+  switch (event.key) {
+    case "ArrowLeft": next = index - direction; break
+    case "ArrowRight": next = index + direction; break
+    case "Home": next = 0; break
+    case "End": next = tabs.length - 1; break
+    default: return
+  }
+  const target = (next + tabs.length) % tabs.length
+  const term = terms.value[target]
+  if (!term || !tabs[target]) return
+  event.preventDefault()
+  activeID.value = term.id
+  tabs[target].focus()
+}
+
 function add(shellID?: string, cwd?: string, used = false) {
   const id = nextID
   nextID += 1
@@ -368,9 +389,10 @@ function startResize(event: PointerEvent) {
           class="tab"
           :class="{ on: term.id === activeID }"
           role="tab"
-          tabindex="0"
+          :tabindex="term.id === activeID ? 0 : -1"
           :aria-selected="term.id === activeID"
           @click="select(term.id)"
+          @keydown.self="onTabKey($event, term.id)"
           @keydown.enter.space.self.prevent="select(term.id)"
         >
           <span class="tab-label">{{ terminalLabel(term.num, t("term.title")) }}</span>

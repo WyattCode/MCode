@@ -43,6 +43,7 @@ const artifactStatus = ref<"loading" | "ready" | "error">("ready")
  * "no matching results".
  */
 const messageFailed = ref(false)
+const messageLoading = ref(false)
 /* MiMo keeps the overlay up for its 180ms exit before it goes. */
 const closing = ref(false)
 const CLOSE_MS = 180
@@ -205,6 +206,7 @@ let generation = 0
 function runSearch(needle: string) {
   const run = ++generation
   artifactStatus.value = "loading"
+  messageLoading.value = true
   timer = setTimeout(() => {
     void (async () => {
       try {
@@ -218,6 +220,8 @@ function runSearch(needle: string) {
         if (run !== generation) return
         hits.value = []
         messageFailed.value = true
+      } finally {
+        if (run === generation) messageLoading.value = false
       }
     })()
     void (async () => {
@@ -281,6 +285,7 @@ function search() {
     artifacts.value = []
     artifactStatus.value = "ready"
     messageFailed.value = false
+    messageLoading.value = false
     return
   }
   hits.value = []
@@ -347,7 +352,7 @@ defineExpose({ close })
           <span>{{ t("searchOverlay.error") }}</span>
           <button type="button" @click="search">{{ t("searchOverlay.retry") }}</button>
         </div>
-        <div v-if="!flat.length && artifactStatus === 'loading'" class="sr-empty" role="status" aria-live="polite" data-search-loading>{{ t("searchOverlay.loading") }}</div>
+        <div v-if="!flat.length && (messageLoading || artifactStatus === 'loading')" class="sr-empty" role="status" aria-live="polite" data-search-loading>{{ messageLoading ? t("searchOverlay.messageLoading") : t("searchOverlay.loading") }}</div>
         <!-- Only once something was asked for: with nothing typed there is nothing that failed to match. -->
         <div v-else-if="!flat.length && query.trim() && artifactStatus !== 'error' && !messageFailed" class="sr-empty">{{ t("searchOverlay.empty") }}</div>
         <div v-for="group in groups" :key="group.kind" class="sr-group">
