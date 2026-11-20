@@ -23,22 +23,20 @@ export function isAccess(value: unknown): value is Access {
   return typeof value === "string" && (ACCESS_LEVELS as readonly string[]).includes(value)
 }
 
-/* Whether the settings' map stands at full access: nothing in it asks, and the middle level is not set. */
+/* Full access requires no ask buckets, no middle level, and a switch that is not explicitly off. */
 function mapAtFull(config: AccessConfig | undefined): boolean {
   const map = config?.permissions
-  if (!map || config?.accessLevel === "auto") return false
+  if (!map || config?.allowFullAccess === false || config?.accessLevel === "auto") return false
   return !PERMISSION_KINDS.some((kind) => map[kind] === "ask")
 }
 
 /**
  * The default level, read the way the chip reads it: the middle one when set,
- * full once nothing asks. Full access written as the level while its settings
- * switch is off is not full access, whatever wrote the config.
+ * full once nothing asks and the settings switch is not explicitly off.
  */
 export function defaultAccess(config: AccessConfig | undefined): Access {
   if (config?.accessLevel === "auto") return "auto"
-  if (!mapAtFull(config)) return "ask"
-  return config?.accessLevel === "full" && config.allowFullAccess === false ? "ask" : "full"
+  return mapAtFull(config) ? "full" : "ask"
 }
 
 /**
