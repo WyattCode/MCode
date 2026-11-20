@@ -143,7 +143,7 @@ export function accessPatch(config: AccessConfig, next: Access): AccessPatch | u
   let accessBefore = config.accessBefore ? { ...config.accessBefore } : undefined
   if (next === "full") {
     for (const kind of PERMISSION_KINDS) if (permissions[kind] !== "deny") permissions[kind] = "allow"
-    accessBefore = { ...map }
+    if (defaultAccess(config) !== "full") accessBefore = { ...map }
   } else if (defaultAccess(config) === "full" || config.accessLevel === "full") {
     const kept = config.accessBefore ?? {}
     permissions = { ...map }
@@ -153,7 +153,7 @@ export function accessPatch(config: AccessConfig, next: Access): AccessPatch | u
       permissions[kind] =
         restored && (PERMISSION_ACTIONS as readonly string[]).includes(restored) ? restored : DEFAULT_PERMISSIONS[kind]
     }
-    accessBefore = undefined
+    accessBefore = {} // Keep the cleared backup in the JSON patch.
   }
   return { permissions, accessBefore, accessLevel: next }
 }
