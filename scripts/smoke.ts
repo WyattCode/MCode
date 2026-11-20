@@ -17,6 +17,8 @@
  */
 import "./fenced-home"
 import "./safe-listen"
+import { permflowReview } from "./smoke-permflow-review"
+import { permflowCancel } from "./smoke-permflow-cancel"
 import { modelParityChecks } from "./smoke-model-parity"
 import { createRequire } from "node:module"
 import fs from "node:fs/promises"
@@ -352,6 +354,8 @@ section("A second look at 1.0.6: notices keep to their conversation, and the pie
 }
 
 await modelParityChecks(check, section)
+await permflowReview(check)
+await permflowCancel(check)
 
 section("This suite stays reviewable")
 {

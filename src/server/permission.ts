@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from "node:async_hooks"
+import { addAbortListener } from "node:events"
 import type {
   PermissionAction,
   PermissionDecision,
@@ -220,10 +222,26 @@ interface Pending {
   /** The project its "always" would be kept for, and what it asks about. */
   key: string
   patterns: string[]
-  /** What the user said when refusing, if anything. */
+  /** The user's original choice, when answered by a person. */
+  response?: PermissionResponse
   reason?: string
-  /** How it was closed, for the record the transcript keeps. */
-  decided?: PermissionDecision
+  /** How a policy update or a saved grant woke this request. */
+  settledBy?: PermissionDecision
+}
+
+type ApprovalRecord = PermissionRecord & { response?: PermissionResponse }
+
+async function waitForPermission<T>(signal: AbortSignal, work: () => Promise<T>): Promise<T> {
+  signal.throwIfAborted()
+  let listener: ReturnType<typeof addAbortListener> | undefined
+  const cancelled = new Promise<never>((_, reject) => {
+    listener = addAbortListener(signal, () => reject(signal.reason))
+  })
+  try {
+    return await Promise.race([cancelled, new Promise<T>((resolve) => resolve(work()))])
+  } finally {
+    listener?.[Symbol.dispose]()
+  }
 }
 
 /** The decision a person's answer stands for, as the transcript names it. */
@@ -255,8 +273,8 @@ function decisionOf(response: PermissionResponse, reason?: string): PermissionDe
  */
 export class Permissions {
   private readonly pending = new Map<string, Pending>()
-  private readonly reviewing = new Set<{ sessionID: string; callID: string }>()
-  private readonly cancelledCalls = new Set<string>()
+  private readonly active = new Set<{ sessionID: string; cancel: () => void }>()
+  private readonly callSignal = new AsyncLocalStorage<AbortSignal>()
   private readonly rules = new Map<string, Rule[]>()
   /** Where the rules are written; without one they last only as long as the process, as they used to. */
   private store: Storage | undefined
@@ -267,7 +285,7 @@ export class Permissions {
   /** Background subagents, with the conversation each works for: they are never shown a question. */
   private readonly background = new Map<string, string>()
   /** Who wants to hear how a call's questions ended, by call id. */
-  private readonly listeners = new Map<string, (record: PermissionRecord) => void>()
+  private readonly listeners = new Map<string, (record: ApprovalRecord) => void>()
   /**
    * How many times each call has consulted the gate, by call id: one per
    * `ask`, plus each explicit `waive` for a path a tool lets through without a
@@ -319,17 +337,19 @@ export class Permissions {
    * that says no, says something else, fails or takes too long hands the
    * question back to the user, so the review can only ever save a question.
    */
-  private async reviewed(sessionID: string, kind: string, subject: string): Promise<boolean> {
-    if (!this.reviewer) return false
+  private async reviewed(sessionID: string, kind: string, subject: string, signal: AbortSignal): Promise<boolean> {
+    const reviewer = this.reviewer
+    if (!reviewer) return false
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
-      return await Promise.race([
-        this.reviewer({ sessionID, kind, subject }).then((approved) => approved === true),
+      return await waitForPermission(signal, () => Promise.race([
+        reviewer({ sessionID, kind, subject }).then((approved) => approved === true),
         new Promise<boolean>((resolve) => {
           timer = setTimeout(() => resolve(false), this.reviewTimeout)
         }),
-      ])
+      ]))
     } catch {
+      signal.throwIfAborted()
       return false
     } finally {
       clearTimeout(timer)
@@ -344,7 +364,7 @@ export class Permissions {
    * person was actually shown are reported - a call let through by a setting or
    * an earlier "always" asked nothing, and has nothing to redraw.
    */
-  onDecided(callID: string, listener: (record: PermissionRecord) => void): () => void {
+  onDecided(callID: string, listener: (record: ApprovalRecord) => void): () => void {
     this.listeners.set(callID, listener)
     return () => {
       if (this.listeners.get(callID) === listener) this.listeners.delete(callID)
@@ -464,30 +484,33 @@ export class Permissions {
     return patterns.length > 0 && patterns.every((pattern) => saved.some((rule) => wildcardMatch(pattern, rule.pattern)))
   }
 
-  /*
-   * Saving "always", and then letting through anything still waiting in the
-   * same project that it now covers, as MiMo's reply does. Those were not
-   * answered by a person, but by the approval just given, and are recorded so.
-   */
-  private async remember(key: string, kind: string, always: string[], answered: string): Promise<void> {
+  private remember(key: string, kind: string, always: string[]): void {
     const saved = this.rules.get(key) ?? []
     for (const pattern of always) if (!saved.some((rule) => rule.kind === kind && rule.pattern === pattern)) saved.push({ kind, pattern })
     this.rules.set(key, saved)
     this.changed.add(key)
     // Written as it is granted, so tomorrow morning does not ask it again.
     void this.persist()
+  }
+
+  /** Apply the saved grant to other questions in the same project. */
+  private async releaseRemembered(key: string, kind: string): Promise<void> {
     for (const [id, pending] of [...this.pending]) {
-      if (id === answered || pending.key !== key || pending.request.kind !== kind || pending.request.forced) continue
+      if (pending.key !== key || pending.request.kind !== kind || pending.request.forced) continue
       if (!this.allowedByRules(key, kind, pending.patterns)) continue
       const found = this.levelOf(pending.request.sessionID)
       const level = found instanceof Promise ? await found : found
       if (this.pending.get(id) !== pending) continue
       const denied = this.deniedByPolicy(kind, pending.patterns)
       this.pending.delete(id)
-      pending.decided = denied || level === "full" ? "policy" : "allow-always"
+      pending.settledBy = denied || level === "full" ? "policy" : "allow-always"
       pending.resolve(denied ? "reject" : "once")
-      this.bus.publish({ type: "permission.resolved", requestID: id, decided: pending.decided })
     }
+  }
+
+  /** Supply the turn signal to tools that raise their own permission questions. */
+  withSignal<T>(signal: AbortSignal, run: () => T): T {
+    return this.callSignal.run(signal, run)
   }
 
   async ask(input: {
@@ -517,64 +540,65 @@ export class Permissions {
     humanOnly?: boolean
     /** A pattern rule asks for this call even where its bucket allows it - a `.env` read - except at full access. */
     patternAsks?: boolean
+    signal?: AbortSignal
   }): Promise<void> {
     this.consult(input.callID)
-    const found = this.levelOf(this.background.get(input.sessionID) ?? input.sessionID)
-    const level = found instanceof Promise ? await found : found
-    if (this.cancelledCalls.has(input.callID)) throw new PermissionDenied(input.subject)
+    const controller = new AbortController()
+    const cancel = () => controller.abort(new PermissionDenied(input.subject))
+    const source = input.signal ?? this.callSignal.getStore()
+    if (source?.aborted) cancel()
+    const listener = source && !source.aborted ? addAbortListener(source, cancel) : undefined
+    const active = { sessionID: input.sessionID, cancel }
+    this.active.add(active)
+    try {
+      await this.authorize(input, controller.signal)
+    } finally {
+      listener?.[Symbol.dispose]()
+      this.active.delete(active)
+    }
+  }
+
+  private async authorize(input: Parameters<Permissions["ask"]>[0], signal: AbortSignal): Promise<void> {
+    const readLevel = () => this.levelOf(this.background.get(input.sessionID) ?? input.sessionID)
+    signal.throwIfAborted()
+    const found = readLevel()
+    let level = found instanceof Promise ? await waitForPermission(signal, () => found) : found
     const key = projectKey(input)
     const scoped = input.scope ? [scopePattern(input.kind, input.scope)] : undefined
     const patterns = input.patterns?.length ? input.patterns : (scoped ?? [input.subject])
     const always = input.always ?? scoped ?? ["*"]
-    /*
-     * A user's own rule is read with the same patterns a saved "always" is
-     * matched against, so `git push *` covers a command however its arguments
-     * are spelled and a path rule covers the file the question names.
-     */
-    let action = this.requestAction(input.kind, level, patterns)
-    if (level !== "full" && action === "allow" && (input.humanOnly || input.patternAsks)) action = "ask"
-    // Check policy before any remembered approval.
-    if (action === "deny") throw new PermissionDenied(input.subject, refusal(input.kind, input.subject))
-    // Below full access, a delete always needs a fresh answer. Neither the
-    // middle level nor the model's review can answer it.
     const risk = input.kind === "bash" ? commandRisk(input.subject) : undefined
     const forced = input.humanOnly || (input.forced ?? (risk !== undefined && LOST_WORK.includes(risk)))
-    if (action === "allow" && (!forced || level === "full")) return
-    const explicitAsk = patterns.some((pattern) => this.ruleFor(input.kind, pattern)?.effect === "ask")
-    // MiMo's read-only allowlist: a command made only of reading pieces runs once without a question.
-    // Except one naming a file the read rules ask about (`type .env`): reading it through a shell asks too,
-    // and except a command a user rule deliberately put to them.
-    if (!forced && !explicitAsk && input.kind === "bash" && readOnlyCommand(input.subject) && !namesAskingFile(input.subject)) return
-    /*
-     * A background subagent runs with nobody watching, so a remembered
-     * "always" carries it only for commands the middle level would let through
-     * anyway; anything dangerous is refused there as any other question is.
-     */
-    const unattendedRisk = this.background.has(input.sessionID) && input.kind === "bash" && dangerousCommand(input.subject)
-    if (!forced && !unattendedRisk && this.allowedByRules(key, input.kind, patterns)) return
-    if (this.background.has(input.sessionID)) throw new PermissionDenied(input.subject, backgroundRefusal(input.kind, input.subject))
-    /*
-     * The middle access level, as this conversation runs at. What it does not
-     * let through goes to the model's review - except a delete, which only a
-     * person answers, and except a rule that deliberately asked.
-     */
+    let approved: boolean | undefined
     let releasedByFullAccess = false
-    if (!forced && !explicitAsk && level === "auto") {
-      // A `.env` named on a command line is the model's review to pass, as a `.env` read is.
-      if (!input.patternAsks && autoAllows(input.kind, input.subject)) return
-      this.reviewing.add(input)
-      try {
-        const approved = await this.reviewed(input.sessionID, input.kind, input.subject)
-        const current = this.levelOf(input.sessionID)
-        const currentLevel = current instanceof Promise ? await current : current
-        if (this.cancelledCalls.has(input.callID)) throw new PermissionDenied(input.subject)
-        const currentAction = this.requestAction(input.kind, currentLevel, patterns)
-        if (currentAction === "deny") throw new PermissionDenied(input.subject, refusal(input.kind, input.subject))
-        releasedByFullAccess = currentLevel === "full"
-        if (approved && !releasedByFullAccess) return
-      } finally {
-        this.reviewing.delete(input)
+    for (;;) {
+      signal.throwIfAborted()
+      const action = this.requestAction(input.kind, level, patterns)
+      if (action === "deny") throw new PermissionDenied(input.subject, refusal(input.kind, input.subject))
+      if (level === "full" && approved !== undefined) {
+        releasedByFullAccess = true
+        break
       }
+      if (action === "allow" && (level === "full" || (!forced && !input.patternAsks))) return
+
+      const explicitAsk = patterns.some((pattern) => this.ruleFor(input.kind, pattern)?.effect === "ask")
+      // A read-only command asks when it names a sensitive file or matches an explicit ask rule.
+      if (!forced && !explicitAsk && input.kind === "bash" && readOnlyCommand(input.subject) && !namesAskingFile(input.subject)) return
+
+      const background = this.background.has(input.sessionID)
+      const unattendedRisk = background && input.kind === "bash" && dangerousCommand(input.subject)
+      if (!forced && !unattendedRisk && this.allowedByRules(key, input.kind, patterns)) return
+      if (background) throw new PermissionDenied(input.subject, backgroundRefusal(input.kind, input.subject))
+
+      if (forced || explicitAsk || level !== "auto") break
+      if ((!input.patternAsks && autoAllows(input.kind, input.subject)) || approved === true) return
+      if (approved === false) break
+
+      signal.throwIfAborted()
+      approved = await this.reviewed(input.sessionID, input.kind, input.subject, signal)
+      signal.throwIfAborted()
+      const current = readLevel()
+      level = current instanceof Promise ? await waitForPermission(signal, () => current) : current
     }
 
     const request: PermissionRequest = {
@@ -591,7 +615,7 @@ export class Permissions {
       time: Date.now(),
     }
 
-    const record = (decided: PermissionDecision, reason?: string) => {
+    const record = (decided: PermissionDecision, response?: PermissionResponse, reason?: string) => {
       this.listeners.get(input.callID)?.({
         requestID: request.id,
         kind: request.kind,
@@ -599,6 +623,7 @@ export class Permissions {
         subject: request.subject,
         ...(request.preview ? { preview: request.preview } : {}),
         decided,
+        ...(response ? { response } : {}),
         ...(reason ? { reason } : {}),
         time: Date.now(),
       })
@@ -608,35 +633,40 @@ export class Permissions {
       return
     }
 
-    let entry: Pending | undefined
-    const response = await new Promise<PermissionResponse>((resolve) => {
-      entry = { request, resolve, key, patterns }
-      this.pending.set(request.id, entry)
-      this.bus.publish({ type: "permission.requested", request })
-    })
-
-    const reason = entry?.reason?.trim()
-    record(entry?.decided ?? decisionOf(response, reason), reason)
-
-    if (response === "reject") {
-      /*
-       * A question closed because its bucket was switched to Deny while it sat
-       * on screen is a refusal by policy, not a person pressing Deny, and the
-       * model can act on the difference: one says try something else, the other
-       * says this particular thing was not wanted.
-       */
-      if (entry?.decided === "policy" || this.action(input.kind, level, patterns) === "deny") {
+    signal.throwIfAborted()
+    let entry!: Pending
+    let removeOnAbort: ReturnType<typeof addAbortListener> | undefined
+    let decided: PermissionDecision = "cancelled"
+    try {
+      const response = await waitForPermission(signal, () => new Promise<PermissionResponse>((resolve) => {
+        entry = { request, resolve, key, patterns }
+        this.pending.set(request.id, entry)
+        removeOnAbort = addAbortListener(signal, () => this.pending.delete(request.id))
+        this.bus.publish({ type: "permission.requested", request })
+      }))
+      signal.throwIfAborted()
+      const policyDenied = response === "reject"
+        ? entry.settledBy === "policy" || this.action(input.kind, level, patterns) === "deny"
+        : this.deniedByPolicy(input.kind, patterns)
+      if (policyDenied) {
+        decided = "policy"
         throw new PermissionDenied(input.subject, refusal(input.kind, input.subject))
       }
-      // A person said no; anything else here is a question closed by Stop, which ends the turn by itself.
-      if (entry?.decided === "reject" || entry?.decided === "reject-with-reason") throw new PermissionDenied(input.subject, userRefusal(input.subject, reason))
-      throw new PermissionDenied(input.subject)
+      const reason = entry.reason?.trim()
+      decided = entry.settledBy ?? decisionOf(response, reason)
+      if (response === "reject") throw new PermissionDenied(input.subject, userRefusal(input.subject, reason))
+      if (response === "always") this.remember(key, input.kind, always)
+    } finally {
+      removeOnAbort?.[Symbol.dispose]()
+      if (entry) {
+        this.pending.delete(request.id)
+        const reason = entry.reason?.trim()
+        this.bus.publish({ type: "permission.resolved", requestID: request.id, decided, ...(reason ? { reason } : {}) })
+        record(decided, entry.response, reason)
+      }
     }
-
-    if (this.deniedByPolicy(input.kind, patterns)) throw new PermissionDenied(input.subject, refusal(input.kind, input.subject))
-    if (response === "always" && !forced) {
-      await this.remember(key, input.kind, always, request.id)
-      if (this.deniedByPolicy(input.kind, patterns)) throw new PermissionDenied(input.subject, refusal(input.kind, input.subject))
+    if (decided === "allow-always" && entry.response === "always" && !forced) {
+      void this.releaseRemembered(key, input.kind)
     }
   }
 
@@ -669,6 +699,7 @@ export class Permissions {
     /** What the model passed, so the question can name the file or pattern. */
     arguments?: Record<string, unknown>
     target?: string
+    signal?: AbortSignal
     /** The project the call works in, which "always" is kept for. */
     directory?: string
   }): Promise<void> {
@@ -706,6 +737,7 @@ export class Permissions {
       preview: input.target ? `Device: ${input.target}` : undefined,
       subject,
       directory: input.directory,
+      signal: input.signal,
       patternAsks: bucket === "read" && readAsks(subject),
     })
   }
@@ -714,18 +746,9 @@ export class Permissions {
     const pending = this.pending.get(requestID)
     if (!pending) return
     this.pending.delete(requestID)
-    // A forced ask must never record allow-always: remember() already skips forced, but the
-    // decided frame and the resolve() value must say once too.
-    if (response === "always" && pending.request.forced) response = "once"
+    pending.response = response
     if (response === "reject" && reason) pending.reason = reason
-    pending.decided = decisionOf(response, pending.reason)
-    pending.resolve(response)
-    this.bus.publish({
-      type: "permission.resolved",
-      requestID,
-      decided: pending.decided,
-      ...(pending.reason?.trim() ? { reason: pending.reason.trim() } : {}),
-    })
+    pending.resolve(response === "always" && pending.request.forced ? "once" : response)
   }
 
   /**
@@ -768,32 +791,15 @@ export class Permissions {
         action === "ask" && auto && !pending.request.forced && !explicitAsk && bucket !== undefined && autoAllows(bucket, pending.request.subject)
       if (action === "ask" && !released) continue
       this.pending.delete(id)
-      pending.decided = released ? "allow-once" : "policy"
+      pending.settledBy = released ? "allow-once" : "policy"
       pending.resolve(action === "deny" ? "reject" : "once")
-      this.bus.publish({ type: "permission.resolved", requestID: id, decided: pending.decided })
     }
   }
 
-  private cancelCall(callID: string): void {
-    this.cancelledCalls.add(callID)
-    if (this.cancelledCalls.size > 512) {
-      const oldest = this.cancelledCalls.values().next()
-      if (!oldest.done) this.cancelledCalls.delete(oldest.value)
-    }
-  }
-
-  /** Rejects requests waiting for a person or a model when a turn aborts. */
+  /** Cancel every in-flight permission consultation for this session. */
   rejectAll(sessionID: string): void {
-    for (const call of this.reviewing) {
-      if (call.sessionID === sessionID) this.cancelCall(call.callID)
-    }
-    for (const [id, pending] of this.pending) {
-      if (pending.request.sessionID !== sessionID) continue
-      this.pending.delete(id)
-      this.cancelCall(pending.request.callID)
-      pending.decided = "cancelled"
-      pending.resolve("reject")
-      this.bus.publish({ type: "permission.resolved", requestID: id, decided: "cancelled" })
+    for (const call of this.active) {
+      if (call.sessionID === sessionID) call.cancel()
     }
   }
 
