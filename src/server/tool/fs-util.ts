@@ -7,6 +7,10 @@ import { insideMemory } from "../memory/paths"
 import { guardAppData } from "./app-data"
 import { worktreeTop } from "../session/worktree"
 
+function isInsideRelative(relative: string): boolean {
+  return relative !== ".." && !/^\.\.[\\/]/.test(relative) && !path.isAbsolute(relative)
+}
+
 /**
  * Resolves a model-supplied path against the session directory and refuses
  * anything that escapes it. The model is not a trusted source of paths, so
@@ -16,7 +20,7 @@ export function resolveInside(directory: string, target: string): string {
   const resolved = path.isAbsolute(target) ? path.resolve(target) : path.resolve(directory, target)
   const root = path.resolve(directory)
   const relative = path.relative(root, resolved)
-  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+  if (!isInsideRelative(relative)) {
     // A deliberate refusal, not a defect: reported as a crash it read like the
     // app had broken, when the sandbox was doing exactly its job.
     throw new ToolError(
@@ -101,7 +105,7 @@ export async function truePath(target: string): Promise<string> {
 /** Whether `target` really lies inside `root` (or is it), links followed on both sides. */
 export async function insideReal(root: string, target: string): Promise<boolean> {
   const relative = path.relative(await truePath(path.resolve(root)), await truePath(path.resolve(target)))
-  return !relative.startsWith("..") && !path.isAbsolute(relative)
+  return isInsideRelative(relative)
 }
 
 /**
@@ -188,10 +192,7 @@ export async function resolvePath(context: ToolContext, target: string, access: 
    * walk straight out through it.
    */
   const real = await truePath(resolved)
-  const within = (root: string) => {
-    const relative = path.relative(root, real)
-    return !relative.startsWith("..") && !path.isAbsolute(relative)
-  }
+  const within = (root: string) => isInsideRelative(path.relative(root, real))
   if (within(await truePath(path.resolve(context.directory)))) return resolved
   // MiMo's project is the whole repository the conversation works in, not only its folder (T10-12).
   const repository = await repositoryRoot(context.directory)

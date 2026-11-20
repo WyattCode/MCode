@@ -68,6 +68,38 @@ const GIT_DESTRUCTIVE = new Map<string, Set<string>>([
   ["stash", new Set(["drop", "clear"])],
 ])
 
+const GIT_GLOBAL_VALUES = new Set(["-c", "-C", "--git-dir", "--work-tree", "--namespace", "--config-env", "--super-prefix", "--attr-source"])
+const GIT_GLOBAL_FLAGS = new Set([
+  "-p", "-P", "--paginate", "--no-pager", "--bare", "--no-replace-objects", "--no-lazy-fetch",
+  "--no-optional-locks", "--no-advice", "--literal-pathspecs", "--glob-pathspecs", "--noglob-pathspecs",
+  "--icase-pathspecs",
+])
+
+function unquoteGitArg(token: string): string {
+  return token.replace(/^(['"])(.*)\1$/s, "$2")
+}
+
+/** Reads Git's global options before its subcommand. An unfamiliar option leaves its arity uncertain. */
+export function gitSubcommand(tokens: readonly string[]): { name: string; args: string[] } | undefined {
+  for (let at = 1; at < tokens.length; at++) {
+    const token = unquoteGitArg(tokens[at]!)
+    if (GIT_GLOBAL_VALUES.has(token)) {
+      if (++at >= tokens.length) return undefined
+      continue
+    }
+    const equals = token.indexOf("=")
+    if (equals !== -1) {
+      const option = token.slice(0, equals)
+      if (option === "--exec-path" || (option.startsWith("--") && GIT_GLOBAL_VALUES.has(option))) continue
+    }
+    if (GIT_GLOBAL_FLAGS.has(token)) continue
+    const name = token === "--version" || token === "--help" ? token.slice(2) : token
+    if (!/^[a-z][a-z0-9-]*$/.test(name)) return undefined
+    return { name, args: tokens.slice(at + 1).map(unquoteGitArg) }
+  }
+  return undefined
+}
+
 export interface SimpleCommand {
   tokens: string[]
   source: string
@@ -664,10 +696,12 @@ export function isDelete(tokens: string[], powershell: boolean): boolean {
   if (computedProgram(tokens, powershell)) return true
   // `find . -delete` removes every file it matches.
   if (head === "find") return tokens.includes("-delete")
-  if (head !== "git" || tokens.length < 2) return false
-  const flags = GIT_DESTRUCTIVE.get(tokens[1])
+  if (head !== "git") return false
+  const sub = gitSubcommand(tokens)
+  if (!sub) return true
+  const flags = GIT_DESTRUCTIVE.get(sub.name)
   if (!flags) return false
-  return flags.size === 0 || tokens.slice(2).some((token) => flags.has(token))
+  return flags.size === 0 || sub.args.some((token) => flags.has(token))
 }
 
 /** Commands whose first ordinary argument is what to look for, not where to look. */
@@ -784,7 +818,7 @@ function argPath(arg: string, cwd: string, powershell: boolean): string | undefi
 
 function inside(root: string, target: string): boolean {
   const relative = path.relative(path.resolve(root), path.resolve(target))
-  return !relative.startsWith("..") && !path.isAbsolute(relative)
+  return relative !== ".." && !/^\.\.[\\/]/.test(relative) && !path.isAbsolute(relative)
 }
 
 function realpathBestEffort(target: string): string {
@@ -876,12 +910,16 @@ export function collectMutationTargets(command: string, cwd: string, powershell:
 }
 
 export interface BashScan {
-  /** Each simple command that asks, as written. */
+  /** Each simple command to match against policy, as written. */
   patterns: string[]
+  /** Every segment only changes the shell's working directory. */
+  directoryOnly: boolean
   /** What "always" saves for them: each one's prefix and ` *`. */
   always: string[]
   /** The commands that delete or lose work. */
   deletes: string[]
+  /** The deletion segments that require a fresh approval. */
+  forcedPatterns: string[]
   /** Every delete is of files in the temp folder outside the project, so it needs no question of its own. */
   tempOnlyDeletes: boolean
   /** Folders outside the project that file commands name. */
@@ -894,9 +932,10 @@ export async function scanCommand(command: string, cwd: string, project: string,
   const patterns = new Set<string>()
   const always = new Set<string>()
   const deletes = new Set<string>()
+  const forcedPatterns = new Set<string>()
   const dirs = new Set<string>()
   const files = new Set<string>()
-  let tempOnly = true
+  let directoryOnly = true
   for (const { tokens, source, derived, powershell: own } of simpleCommands(command, powershell)) {
     // Each command by its own shell's rules: see SimpleCommand.powershell.
     const posh = own ?? powershell
@@ -910,8 +949,9 @@ export async function scanCommand(command: string, cwd: string, project: string,
         dirs.add(isDir ? resolved : path.dirname(resolved))
       }
     }
+    patterns.add(source)
     if (!head || !CWD.has(head)) {
-      patterns.add(source)
+      directoryOnly = false
       // Never from a command read out of another one: see SimpleCommand.derived.
       const remembered = derived ? undefined : rememberedPattern(tokens, source)
       if (remembered) always.add(remembered)
@@ -919,12 +959,21 @@ export async function scanCommand(command: string, cwd: string, project: string,
     if (isDelete(tokens, posh)) {
       deletes.add(source)
       const args = head && DELETE_COMMANDS.has(head) ? pathArgs(tokens, posh) : []
-      if (args.length === 0) tempOnly = false
-      for (const arg of args) {
+      const tempOnly = args.length > 0 && args.every((arg) => {
         const resolved = argPath(arg, cwd, posh)
-        if (!resolved || !insideTemp(resolved) || inside(project, resolved)) tempOnly = false
-      }
+        return resolved && insideTemp(resolved) && !inside(project, resolved)
+      })
+      if (!tempOnly) forcedPatterns.add(source)
     }
   }
-  return { patterns: [...patterns], always: [...always], deletes: [...deletes], tempOnlyDeletes: deletes.size > 0 && tempOnly, dirs: [...dirs], files: [...files] }
+  return {
+    patterns: [...patterns],
+    directoryOnly,
+    always: [...always],
+    deletes: [...deletes],
+    forcedPatterns: [...forcedPatterns],
+    tempOnlyDeletes: deletes.size > 0 && forcedPatterns.size === 0,
+    dirs: [...dirs],
+    files: [...files],
+  }
 }
