@@ -35,13 +35,99 @@ import { bindingConflict, changeShortcut, pageRows, recordShortcutKey } from "..
 import { accessPatch, fullAccessOff } from "../lib/confirm-queue"
 import { notifyFailure, notify } from "../lib/toast"
 import { installUpdate, updateState } from "./UpdatePill.vue"
+import { isPickerBusy } from "@shared/native-pick"
 import { writeText } from "./../lib/clipboard"
 
-/* MiMo's 当前版本 button reads the update capsule's phase; a download announced by the app counts as ready. */
-const updatePhase = computed(() =>
-  updateState.phase === "idle" && props.updateReady ? "ready" : updateState.phase,
-)
+// Update status in settings
+type UpdateStatus = Awaited<ReturnType<typeof window.mcode.updateStatus>>
+const mainUpdate = ref<UpdateStatus>()
+const checkingHere = ref(false)
+const updateResult = ref<{ label: string; error?: string }>()
+const updatePhase = computed(() => {
+  const phase = mainUpdate.value?.phase
+  if (phase === "downloading" || phase === "checking") return phase
+  if (checkingHere.value || props.updateChecking) return "checking"
+  if (updateState.phase === "installing") return "installing"
+  if (updateState.phase === "failed") return "failed"
+  if (phase === "ready" || props.updateReady || updateState.phase === "ready") return "ready"
+  return "idle"
+})
+const updateBusy = computed(() => ["checking", "downloading", "installing"].includes(updatePhase.value))
+const checkFailed = computed(() => updateResult.value?.error !== undefined)
+const updateVersion = computed(() => mainUpdate.value?.ready?.version || props.updateReady || updateState.version)
+let offUpdateStatus: (() => void) | undefined
+let updateEvents = 0
+onMounted(() => {
+  if (!window.mcode) return
+  offUpdateStatus = window.mcode.onUpdateState((state) => {
+    updateEvents++
+    mainUpdate.value = state
+    if (state.phase === "checking") updateResult.value = undefined
+  })
+  void window.mcode.updateStatus().then((state) => {
+    if (offUpdateStatus && updateEvents === 0) mainUpdate.value = state
+  }).catch(() => {})
+})
+onBeforeUnmount(() => {
+  offUpdateStatus?.()
+  offUpdateStatus = undefined
+})
 
+async function checkSettingsUpdate() {
+  if (!window.mcode || updateBusy.value) return
+  checkingHere.value = true
+  updateResult.value = undefined
+  const startedAt = updateEvents
+  try {
+    const result = await window.mcode.updateCheckNow()
+    if (startedAt === updateEvents) mainUpdate.value = result
+    if (result.outcome === "current") updateResult.value = { label: "update.current" }
+    else if (result.outcome === "no-feed") updateResult.value = { label: "update.noFeed", error: "" }
+    else if (result.outcome === "failed") {
+      updateResult.value = { label: result.during === "download" ? "update.failed" : "update.checkFailed", error: result.error ?? "" }
+    }
+  } catch {
+    updateResult.value = { label: "update.checkFailed", error: "" }
+  } finally {
+    checkingHere.value = false
+  }
+}
+
+// Local feedback history
+const feedbackRecords = ref<ResponseMap["feedback.list"]["records"]>()
+const feedbackLoadFailed = ref(false)
+const feedbackExporting = ref(false)
+
+async function loadFeedback() {
+  feedbackLoadFailed.value = false
+  feedbackRecords.value = undefined
+  try {
+    const result = await app.client?.request({ type: "feedback.list" })
+    if (result) feedbackRecords.value = result.records
+    else feedbackLoadFailed.value = true
+  } catch {
+    feedbackLoadFailed.value = true
+  }
+}
+
+async function exportFeedback() {
+  const client = app.client
+  if (!client || feedbackExporting.value) return
+  feedbackExporting.value = true
+  try {
+    const { records } = await client.request({ type: "feedback.list", exportAll: true })
+    const saved = await window.mcode.saveText("mcode-feedback.json", JSON.stringify(records, null, 2))
+    if (isPickerBusy(saved)) notifyFailure(t("toast.pickerBusy"))
+  } catch (err) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+  } finally {
+    feedbackExporting.value = false
+  }
+}
+
+onMounted(() => watch(section, (page) => { if (page === "feedback") void loadFeedback() }, { immediate: true }))
+
+// The other update entry points in App keep their existing command and toast.
 const emit = defineEmits<{ close: []; "check-updates": [] }>()
 const app = useApp()
 
@@ -57,6 +143,7 @@ type Section =
   | "environment"
   | "usage"
   | "updates"
+  | "feedback"
   | "models"
   | "smart"
   | "mcp"
@@ -1209,6 +1296,7 @@ const NAV_LABELS: Record<Section, string> = {
   lab: "set.nav.lab",
   archive: "set.nav.archive",
   updates: "set.nav.updates",
+  feedback: "feedback.title",
 }
 
 /* MiMo matches a page by its name or by the words listed for it, so 托盘 finds 常规 (lib/word-match.ts). */
@@ -1230,6 +1318,7 @@ const NAV_KEYWORDS: Record<Section, string> = {
   lab: "set.keywords.lab",
   archive: "set.keywords.archive",
   updates: "set.keywords.updates",
+  feedback: "feedback.title",
 }
 
 type CliRow = ResponseMap["cliPlugin.list"]["plugins"][number]
@@ -1746,6 +1835,12 @@ function archivedDescription(session: { directory: string; updated: number; arch
  * many - is final, so it asks first in a dialog.
  */
 const selecting = ref(false)
+
+function onArchiveTitleSpace(event: KeyboardEvent, id: string) {
+  if (!selecting.value) return
+  event.preventDefault()
+  if (!event.repeat) togglePick(id)
+}
 const picked = ref<string[]>([])
 const pickedLive = computed(() => picked.value.filter((id) => archived.value.some((session) => session.id === id)))
 const allPicked = computed(() => archived.value.length > 0 && pickedLive.value.length >= archived.value.length)
@@ -2163,7 +2258,7 @@ onBeforeUnmount(() => {
             {{ t("set.nav.archive") }}
           </button>
 
-          <div v-show="navShows('updates')" class="nav-group">{{ t("set.groupAbout") }}</div>
+          <div v-show="navShows('updates') || navShows('feedback')" class="nav-group">{{ t("set.groupAbout") }}</div>
 
           <button v-show="navShows('updates')" class="nav-item" :class="{ on: section === 'updates' }" @click="section = 'updates'">
             <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
@@ -2171,6 +2266,13 @@ onBeforeUnmount(() => {
               <path d="M4 13.4h1.5v1.6h9V13.4H16v2.4a.7.7 0 0 1-.7.7H4.7a.7.7 0 0 1-.7-.7v-2.4Z" />
             </svg>
             <span>{{ t("set.nav.updates") }}</span>
+          </button>
+
+          <button v-show="navShows('feedback')" class="nav-item" :class="{ on: section === 'feedback' }" @click="section = 'feedback'">
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+              <path d="M4 4h12v9H9l-4 3v-3H4z" stroke-linejoin="round" />
+            </svg>
+            <span>{{ t("feedback.title") }}</span>
           </button>
 
           <div v-if="!navMatches.length" class="nav-empty">{{ t("set.noMatch") }}</div>
@@ -3517,44 +3619,49 @@ onBeforeUnmount(() => {
 
         <template v-else-if="section === 'updates'">
           <h2>{{ t("set.nav.updates") }}</h2>
-          <!--
-            MiMo's update page: one row for the version, whose button checks,
-            reads 检查中… while it does, and becomes 重启更新 once a new version
-            is downloaded. MCode has no update service, so the address to look at
-            is a second row; without it the check says so.
-          -->
           <div class="card">
-            <div class="line" data-update-row>
+            <div class="line" data-update-row :data-update-version="updateVersion || undefined">
               <div class="line-text">
                 <div class="line-title">{{ t("set.version") }}</div>
-                <div class="line-sub">
-                  MCode {{ app.version }}
-                  <span v-if="updatePhase === 'ready'" class="update-hint" data-update-install-hint>{{ t("set.updateInstallHint") }}</span>
+                <div class="line-sub">MCode {{ app.version }}</div>
+                <div class="line-sub" role="status">
+                  <template v-if="updatePhase === 'checking'">{{ t("set.checking") }}</template>
+                  <template v-else-if="updatePhase === 'downloading'">
+                    {{ t("update.downloading") }}
+                    <progress :aria-label="t('update.downloading')" />
+                  </template>
+                  <template v-else-if="checkFailed && updateResult">{{ t(updateResult.label) }} {{ updateResult.error }}</template>
+                  <template v-else-if="updatePhase === 'ready'">
+                    {{ t("update.readyVersion", { version: updateVersion }) }}
+                    <span class="update-hint" data-update-install-hint>{{ t("set.updateInstallHint") }}</span>
+                  </template>
+                  <template v-else-if="updatePhase === 'failed'">{{ t("update.failed") }} {{ updateState.error }}</template>
+                  <template v-else-if="updateResult">{{ t(updateResult.label) }} {{ updateResult.error }}</template>
                 </div>
               </div>
-              <!-- MiMo's button follows the capsule's phase: 重启更新, 更新中… (disabled), or 重试. -->
               <button
-                v-if="updatePhase !== 'idle'"
+                v-if="updatePhase === 'installing' || (!checkFailed && (updatePhase === 'ready' || updatePhase === 'failed'))"
                 type="button"
                 class="ctl-btn update-install"
                 data-update-install
                 :data-update-phase="updatePhase"
-                :disabled="updatePhase === 'installing'"
+                :disabled="updateBusy"
                 @click="installUpdate()"
               >
                 {{ t(updatePhase === "installing" ? "update.pillInstalling" : updatePhase === "failed" ? "update.pillRetry" : "set.restartUpdate") }}
               </button>
-              <button v-else type="button" class="ctl-btn" data-check-update :disabled="updateChecking" @click="emit('check-updates')">
-                {{ t(updateChecking ? "set.checking" : "update.check") }}
+              <button v-else type="button" class="ctl-btn" data-check-update :disabled="updateBusy" @click="checkSettingsUpdate">
+                {{ t(checkFailed ? "update.pillRetry" : "update.check") }}
               </button>
             </div>
 
             <div class="line">
               <div class="line-text">
-                <div class="line-title">{{ t("set.updateFeed") }}</div>
+                <label for="settings-update-feed" class="line-title">{{ t("set.updateFeed") }}</label>
                 <div class="line-sub">{{ t("set.updateFeedSub") }}</div>
               </div>
               <input
+                id="settings-update-feed"
                 class="field font-field"
                 :value="app.config?.updateFeed ?? ''"
                 placeholder="https://example.com/mcode/"
@@ -3574,6 +3681,33 @@ onBeforeUnmount(() => {
           </div>
           <ThirdPartyDialog v-if="licensesOpen" @close="licensesOpen = false" />
 
+        </template>
+
+        <template v-else-if="section === 'feedback'">
+          <h2>{{ t("feedback.title") }}</h2>
+          <div class="card" data-feedback-history>
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("feedback.localHistory") }}</div>
+                <div v-if="feedbackLoadFailed" class="line-sub" role="status">{{ t("common.requestFailed") }}</div>
+                <div v-else-if="feedbackRecords && !feedbackRecords.length" class="line-sub">{{ t("feedback.empty") }}</div>
+              </div>
+              <button v-if="feedbackLoadFailed" type="button" class="ctl-btn" @click="loadFeedback">{{ t("common.retry") }}</button>
+              <button v-else type="button" class="ctl-btn" data-feedback-export :disabled="feedbackExporting || !feedbackRecords?.length" @click="exportFeedback">
+                {{ t("common.export") }}
+              </button>
+            </div>
+            <div v-for="(record, index) in feedbackRecords" :key="index" class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t(record.rating === "like" ? "feedback.like" : record.rating === "dislike" ? "feedback.dislike" : "feedback.cleared") }}</div>
+                <div class="line-sub">{{ new Date(record.at).toLocaleString(language) }}</div>
+                <div v-if="record.types.length" class="line-sub">
+                  <ul><li v-for="type in record.types" :key="type">{{ t(`feedback.${type}`) }}</li></ul>
+                </div>
+                <div v-if="record.description" class="line-sub">{{ record.description }}</div>
+              </div>
+            </div>
+          </div>
         </template>
 
         <div v-else-if="section === 'keys'" class="keys-page" data-shortcuts-page>
@@ -3802,10 +3936,11 @@ onBeforeUnmount(() => {
                     class="line-title archived-title"
                     :class="{ picking: selecting }"
                     :role="selecting ? 'checkbox' : undefined"
+                    :aria-label="selecting ? sessionTitle(session.title) : undefined"
                     :aria-checked="selecting ? pickedLive.includes(session.id) : undefined"
                     :tabindex="selecting ? 0 : undefined"
                     @click="selecting && togglePick(session.id)"
-                    @keydown.space.prevent="selecting && togglePick(session.id)"
+                    @keydown.space="onArchiveTitleSpace($event, session.id)"
                   >
                     <span v-if="selecting" class="check" :class="{ on: pickedLive.includes(session.id) }" aria-hidden="true">
                       <svg v-if="pickedLive.includes(session.id)" width="12" height="12" viewBox="0 0 12 12" fill="none">

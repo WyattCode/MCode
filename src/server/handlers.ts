@@ -15,6 +15,8 @@ import type {
   SessionArtifacts,
   SessionGoal,
 } from "@shared/protocol"
+import { FEEDBACK_TYPES, type FeedbackRecord } from "@shared/protocol"
+import { adopt, id } from "@shared/id"
 import { sessionFiles } from "@shared/session-files"
 import { artifactCategory } from "@shared/artifact-category"
 import { normalizeBaseURL, normalizeProviderProtocol, validEndpoint } from "@shared/custom-endpoint"
@@ -342,6 +344,10 @@ function customModels(runtime: Runtime, models: CustomModel[], previous?: Custom
     seen.add(checked.id)
     return withImageInput(checked, runtime.config.modelCatalog())
   })
+}
+
+function feedbackID(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9_-]{1,80}$/.test(value)
 }
 
 export async function handle(runtime: Runtime, request: Request, owner?: ShellOwner, emit?: (event: import("@shared/protocol").ServerEvent) => void): Promise<unknown> {
@@ -903,6 +909,49 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     case "config.recheckCredentials": {
       const status = await runtime.config.recheckCredentials()
       return status satisfies Handled<"config.recheckCredentials">
+    }
+
+    case "feedback.record": {
+      if (owner && "remote" in owner && owner.remote === true) throw new Error("Feedback is available on the desktop only")
+      const { sessionID, messageID, rating, types, description, includeMaterials } = request
+      if (!feedbackID(sessionID) || !feedbackID(messageID) ||
+          (rating !== "like" && rating !== "dislike" && rating !== null) ||
+          !Array.isArray(types) || types.length > FEEDBACK_TYPES.length ||
+          types.some((type) => !FEEDBACK_TYPES.includes(type)) || new Set(types).size !== types.length ||
+          typeof description !== "string" || description.length > 4000 ||
+          typeof includeMaterials !== "boolean" ||
+          (rating !== "dislike" && (types.length || description || includeMaterials))) {
+        throw new CodedError("Invalid message feedback", "error.badRequest")
+      }
+      const messages = await runtime.sessions.messages(sessionID)
+      if (!messages.some((message) => message.id === messageID && message.role === "assistant")) {
+        throw new CodedError("Feedback reply was not found in the conversation", "error.badRequest")
+      }
+      const keys = await runtime.storage.list("feedback")
+      const newest = keys.at(-1)
+      if (newest) adopt("fb", newest)
+      const record: FeedbackRecord = { at: Date.now(), sessionID, messageID, rating, types, description, includeMaterials }
+      if (includeMaterials) record.materials = messages
+      await runtime.storage.write(`feedback/${id("fb")}.${sessionID}`, record)
+      return { saved: true } satisfies Handled<"feedback.record">
+    }
+    case "feedback.list": {
+      if (owner && "remote" in owner && owner.remote === true) throw new Error("Feedback is available on the desktop only")
+      const { sessionID, exportAll } = request
+      if ((sessionID !== undefined && !feedbackID(sessionID)) ||
+          (exportAll !== undefined && typeof exportAll !== "boolean")) {
+        throw new CodedError("Invalid feedback filter", "error.badRequest")
+      }
+      const keys = (await runtime.storage.list("feedback")).reverse()
+      const selected = sessionID ? keys.filter((key) => key.endsWith(`.${sessionID}`)) : exportAll ? keys : keys.slice(0, 20)
+      const records: FeedbackRecord[] = []
+      for (const key of selected) {
+        const record = await runtime.storage.read<FeedbackRecord>(`feedback/${key}`)
+        if (!record) continue
+        if (!exportAll) delete record.materials
+        records.push(record)
+      }
+      return { records } satisfies Handled<"feedback.list">
     }
 
     case "storage.problems":

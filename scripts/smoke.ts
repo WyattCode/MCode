@@ -19,6 +19,8 @@ import "./fenced-home"
 import "./safe-listen"
 import { permflowReview } from "./smoke-permflow-review"
 import { permflowCancel } from "./smoke-permflow-cancel"
+import { w3uiFeedbackChecks } from "./smoke-w3ui-feedback"
+import { w3uiUpdateChecks } from "./smoke-w3ui-update"
 import { modelParityChecks } from "./smoke-model-parity"
 import { createRequire } from "node:module"
 import fs from "node:fs/promises"
@@ -354,6 +356,8 @@ section("A second look at 1.0.6: notices keep to their conversation, and the pie
 }
 
 await modelParityChecks(check, section)
+await w3uiFeedbackChecks(check)
+await w3uiUpdateChecks(check)
 await permflowReview(check)
 await permflowCancel(check)
 
