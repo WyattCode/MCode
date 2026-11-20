@@ -53,10 +53,15 @@ test("an inaccessible control tree keeps the PNG and coordinate grid", async () 
 test("permission denial degrades the snapshot and approval gates every native action", { skip: process.platform !== "darwin" }, async () => {
   const bus = new Bus()
   let reviewerCalls = 0
-  let accessLevel = "full"
+  let accessLevel: "auto" | "full" = "auto"
   let rule = "allow"
   const permissions = new Permissions(bus, { get: () => ({
     accessLevel,
+    allowFullAccess: true,
+    permissions: {
+      read: "allow", edit: "allow", glob: "allow", grep: "allow", list: "allow",
+      bash: "allow", webfetch: "allow", outside: "allow", mcp: "allow",
+    },
     permissionRules: [{ action: "bash", resource: "*", effect: rule }],
   }) } as Config)
   permissions.useReviewer(async () => { reviewerCalls++; return true })
@@ -67,7 +72,7 @@ test("permission denial degrades the snapshot and approval gates every native ac
       requests.push(event.request)
     }
   })
-  const context = { sessionID: "macctl-test", permissions, signal: new AbortController().signal } as ToolContext
+  const context = { sessionID: "macctl-test", callID: "macctl-call", permissions, signal: new AbortController().signal } as ToolContext
   const effects: string[] = []
   installMacOSHost({
     enabled: () => true,
@@ -108,27 +113,27 @@ test("permission denial degrades the snapshot and approval gates every native ac
     permissions.respond(requests[2]!.id, "once")
     assert.equal((await accepted).metadata?.done, 1)
     assert.deepEqual(effects, ["open", "activate", "input"])
-    accessLevel = "auto"
-    const unreviewed = AppTool.execute(action, context)
-    const switched = assert.rejects(unreviewed)
+    const switched = AppTool.execute(action, context)
     await tick()
     assert.equal(requests.length, 4)
     accessLevel = "full"
     await permissions.drainDecided()
-    assert.deepEqual(effects, ["open", "activate", "input"])
+    assert.equal(permissions.outstanding().length, 0)
+    assert.equal((await switched).metadata?.done, 1)
+    assert.equal(requests.length, 4)
+    assert.deepEqual(effects, ["open", "activate", "input", "activate", "input"])
     rule = "deny"
-    await permissions.drainDecided()
-    await switched
-    assert.deepEqual(effects, ["open", "activate", "input"])
+    await assert.rejects(AppTool.execute(action, context), { name: "PermissionDenied" })
+    assert.equal(requests.length, 4)
+    assert.deepEqual(effects, ["open", "activate", "input", "activate", "input"])
     assert.equal(reviewerCalls, 0)
     rule = "allow"
     const click = AppTool.execute({ action: "do", steps: [{ action: "click", x: 12, y: 34 }] }, context)
     await tick()
-    assert.equal(requests.length, 5)
-    assert.deepEqual(effects, ["open", "activate", "input"])
-    permissions.respond(requests[4]!.id, "once")
+    assert.equal(requests.length, 4)
+    assert.equal(permissions.outstanding().length, 0)
     assert.equal((await click).metadata?.done, 1)
-    assert.deepEqual(effects, ["open", "activate", "input", "activate", "click 12,34"])
+    assert.deepEqual(effects, ["open", "activate", "input", "activate", "input", "activate", "click 12,34"])
   } finally {
     permissions.rejectAll(context.sessionID)
     await closeAppOf(context.sessionID)
