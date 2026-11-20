@@ -127,6 +127,7 @@ function modelInfo(model: ModelEntry): ModelInfo {
 function defaults(): AppConfig {
   return {
     model: DEFAULT_MODEL,
+    hooks: {},
     theme: "system",
     mcpServers: {},
     trustedMcpProjects: [],

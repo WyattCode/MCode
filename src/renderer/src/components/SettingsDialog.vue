@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import HooksSettings from "./HooksSettings.vue"
 import RemoteDevices from "./RemoteDevices.vue"
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useApp } from "../stores/app"
@@ -146,6 +147,7 @@ type Section =
   | "smart"
   | "mcp"
   | "cliPlugins"
+  | "hooks"
   | "ssh"
   | "lab"
 
@@ -1289,6 +1291,7 @@ const NAV_LABELS: Record<Section, string> = {
   keys: "set.shortcuts",
   mcp: "set.nav.mcp",
   cliPlugins: "set.plugins.title",
+  hooks: "set.hooks.title",
   ssh: "set.ssh.title",
   environment: "set.environment",
   lab: "set.nav.lab",
@@ -1311,12 +1314,17 @@ const NAV_KEYWORDS: Record<Section, string> = {
   keys: "set.keywords.keys",
   mcp: "set.keywords.mcp",
   cliPlugins: "set.plugins.keywords",
+  hooks: "set.hooks.title",
   ssh: "set.ssh.keywords",
   environment: "set.keywords.environment",
   lab: "set.keywords.lab",
   archive: "set.keywords.archive",
   updates: "set.keywords.updates",
   feedback: "feedback.title",
+}
+
+function requestHooks(type: "hooks.list" | "hooks.reload", directory?: string) {
+  return app.client?.request({ type, directory }) ?? Promise.resolve(undefined)
 }
 
 type CliRow = ResponseMap["cliPlugin.list"]["plugins"][number]
@@ -2199,7 +2207,7 @@ onBeforeUnmount(() => {
             {{ t("set.shortcuts") }}
           </button>
 
-          <div v-show="navShows('mcp') || navShows('cliPlugins') || navShows('ssh')" class="nav-group">{{ t("set.group.integrations") }}</div>
+          <div v-show="navShows('mcp') || navShows('cliPlugins') || navShows('hooks') || navShows('ssh')" class="nav-group">{{ t("set.group.integrations") }}</div>
 
           <button v-show="navShows('mcp')" class="nav-item" :class="{ on: section === 'mcp' }" @click="section = 'mcp'">
             <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
@@ -2221,6 +2229,13 @@ onBeforeUnmount(() => {
               <path fill-rule="evenodd" d="M4.5 3.75A2.75 2.75 0 0 0 1.75 6.5v7a2.75 2.75 0 0 0 2.75 2.75h11a2.75 2.75 0 0 0 2.75-2.75v-7a2.75 2.75 0 0 0-2.75-2.75h-11Zm1 3.22a.75.75 0 0 0-1.06 1.06L6.41 10l-1.97 1.97a.75.75 0 0 0 1.06 1.06l2.5-2.5a.75.75 0 0 0 0-1.06l-2.5-2.5Zm4.75 4.28a.75.75 0 0 0 0 1.5h4a.75.75 0 0 0 0-1.5h-4Z" />
             </svg>
             <span>{{ t("set.plugins.title") }}</span>
+          </button>
+
+          <button v-show="navShows('hooks')" class="nav-item" :class="{ on: section === 'hooks' }" @click="section = 'hooks'">
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+              <path d="M10 5a2.5 2.5 0 1 1 2.5 2.5V13a4 4 0 0 1-8 0v-2l2.5 2.5" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <span>{{ t("set.hooks.title") }}</span>
           </button>
 
           <div v-show="navShows('environment')" class="nav-group">{{ t("set.group.coding") }}</div>
@@ -3053,6 +3068,13 @@ onBeforeUnmount(() => {
         </template>
 
         <RemoteDevices v-else-if="section === 'ssh'" @session-started="emit('close')" />
+
+        <HooksSettings
+          v-else-if="section === 'hooks'"
+          :directory="app.current?.directory ?? app.homeProject"
+          :request="requestHooks"
+          @reloaded="notify(t('set.hooks.reloaded'), { level: 'success' })"
+        />
 
         <template v-else-if="section === 'cliPlugins'">
           <h2>{{ t("set.plugins.title") }}</h2>

@@ -730,6 +730,7 @@ export const WriteTool: ToolDefinition = {
         })
       }
 
+      await context.beforeAction?.()
       await context.snapshot(target)
       await fs.mkdir(path.dirname(target), { recursive: true })
       await unchangedSince(target, display, previous)
@@ -842,6 +843,7 @@ export const EditTool: ToolDefinition = {
 
         const { diff, filediff } = changed(display, unifiedDiff(display, previous ?? "", newString))
         await ask(diff)
+        await context.beforeAction?.()
         await context.snapshot(target)
         await fs.mkdir(path.dirname(target), { recursive: true })
         await unchangedSince(target, display, previous)
@@ -891,6 +893,7 @@ export const EditTool: ToolDefinition = {
       const { updated, occurrences, matchTier, ranges, reindented } = replaceIn(original, { oldString, newString, replaceAll }, endingOf(original), display)
       const { diff, filediff } = changed(display, unifiedDiff(display, original.replaceAll("\r\n", "\n"), updated.replaceAll("\r\n", "\n")))
       await ask(diff)
+      await context.beforeAction?.()
       await context.snapshot(target)
       await unchangedSince(target, display, original)
       await fs.writeFile(target, updated, "utf8")

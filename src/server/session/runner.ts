@@ -1,3 +1,4 @@
+import { HookEngine } from "../hooks"
 import { codingSchemas } from "../tool/coding-schema"
 import { leanMode } from "./lean"
 import { MEMORY_FLUSH_PROMPT, memoryText, parseCompactionNotes, shouldFlushMemory } from "./compaction-memory"
@@ -482,6 +483,15 @@ export class SessionRunner {
    */
   private readonly turnOverrides = new Map<string, { agent?: TurnAgent; model?: SessionInfo["model"] }>()
 
+  private readonly hooks: HookEngine
+
+  async listHooks(directory?: string, reload = false) {
+    if (reload) await this.config.reloadFromDisk()
+    const config = this.config.get()
+    const { groups } = await this.hooks.snapshot(directory, config.hooks, config.projectNames)
+    return { groups }
+  }
+
   constructor(
     private readonly store: SessionStore,
     private readonly bus: Bus,
@@ -491,6 +501,7 @@ export class SessionRunner {
     storage: Storage,
     private readonly ssh?: SshPool,
   ) {
+    this.hooks = new HookEngine(permissions)
     this.snapshots = new Snapshots(storage.folder("snapshot"))
     this.backgroundUsage = new BackgroundUsage(storage)
     this.usageDays = new UsageDays(storage, store)
@@ -3096,8 +3107,10 @@ export class SessionRunner {
     this.turnAgents.set(sessionID, session.agent)
     // MiMo's loop detectors watch one turn: what the last turn's calls added up to is not held against this one.
     this.loopWatches.delete(sessionID)
-    // The project's servers are connected (or have failed) before the turn is offered their tools, as MiMo's instance waits for them.
     this.workingIn.set(sessionID, session.directory)
+    const hookConfig = this.config.get()
+    const hooks = await this.hooks.snapshot(session.directory, hookConfig.hooks, hookConfig.projectNames)
+    // The project's servers are connected (or have failed) before the turn is offered their tools, as MiMo's instance waits for them.
     if (!session.sshDeviceId) {
       await this.ensureMcpTrust(sessionID, session.directory, controller.signal)
       await this.mcp?.ready(session.directory)
@@ -3111,12 +3124,12 @@ export class SessionRunner {
     const config = this.config.get()
     // MiMo's prefix snapshot, with the skills and a subagent's notes; memory rides after it (see systemFor).
     let { system, systemTail } = await this.systemFor(session)
-    return { planning, session, definition, adapter, tokens, config, system, systemTail }
+    return { planning, session, definition, adapter, tokens, config, hooks, system, systemTail }
   }
 
   private async run(sessionID: string, apiKey: string, controller: AbortController, resumed: Resumed = false, lead?: Lead, route?: SmartRoute): Promise<void> {
     const prepared = await this.prepareTurn(sessionID, controller, route)
-    const { planning, definition, adapter, tokens, config } = prepared
+    const { planning, definition, adapter, tokens, config, hooks } = prepared
     let { session, system, systemTail } = prepared
     // subagents: a subagent asked for structured output returns it through its tool.
     const outputSchema = session.subagent?.outputSchema
@@ -3147,7 +3160,7 @@ export class SessionRunner {
       }
       assistant.parts.push(part)
       await this.store.saveMessage(assistant)
-      await this.runTool({ part, assistant, session, signal: controller.signal })
+      await this.runTool({ part, assistant, session, hooks, signal: controller.signal })
       assistant.time.completed = Date.now()
       if (controller.signal.aborted) assistant.finish = "aborted"
       await this.store.saveMessage(assistant)
@@ -3803,7 +3816,7 @@ export class SessionRunner {
       const calls = new Semaphore(STEP_TOOL_LIMIT)
       await Promise.all(
         pending.map((part) =>
-          calls.run(() => this.runTool({ part, assistant, session, signal: controller.signal })),
+          calls.run(() => this.runTool({ part, assistant, session, hooks, signal: controller.signal })),
         ),
       )
       // A turn that has been probing for a long while without changing the project is told to stop and think (loop-health.ts).
@@ -4205,6 +4218,7 @@ export class SessionRunner {
   private async runTool(input: {
     part: ToolPart
     assistant: AssistantMessage
+    hooks: Awaited<ReturnType<HookEngine["snapshot"]>>
     session: Pick<TurnSession, "id" | "directory" | "model" | "agent" | "sshDeviceId">
     signal: AbortSignal
   }): Promise<void> {
@@ -4358,6 +4372,15 @@ export class SessionRunner {
       publish()
     })
 
+    const hookCall = { sessionID: input.session.id, messageID: assistant.id, callID: part.callID, tool: tool.name, args: part.input, signal: input.signal }
+    // Self-asking tools can refuse a resource that the initial bucket check cannot see.
+    let actionStarted = false
+    const beforeAction = async () => {
+      if (actionStarted) return
+      await this.hooks.before(input.hooks, hookCall)
+      input.signal.throwIfAborted()
+      actionStarted = true
+    }
     try {
       /*
        * Several tools name a permission bucket and then never mention it again -
@@ -4407,6 +4430,7 @@ export class SessionRunner {
         permissions: this.permissions,
         questions: this.questions,
         signal: input.signal,
+        beforeAction,
         snapshot: (target) => this.record(owner, target),
         removeExplicitWatermark: this.config.get().removeExplicitWatermark === true,
         reportOperation: async (kind) => {
@@ -4452,6 +4476,7 @@ export class SessionRunner {
         // read: the model's inputs, a copy of what it attaches, and the instructions already given.
         ...(tool.name === "read" && !deviceId ? this.readSupport(input.session.id) : {}),
       }
+      if (!remote && !tool.asksForItself && !tool.authorizesPaths) await beforeAction()
       const result = await this.permissions.withSignal(input.signal, () =>
         executeOnDevice(remote?.command, tool.name, part.input, context, remote?.target, () => tool.execute(part.input, context)),
       )
@@ -4478,8 +4503,9 @@ export class SessionRunner {
               })
               .catch(() => undefined)
           : undefined
+      const noted = actionStarted ? await this.hooks.after(input.hooks, hookCall, result.output) : result.output
       part.status = "completed"
-      part.output = capped?.text ?? result.output
+      part.output = (capped?.text ?? result.output) + noted.slice(result.output.length)
       part.title = result.title ?? part.title
       part.metadata = capped?.truncated ? { ...result.metadata, truncated: true, outputPath: capped.file } : result.metadata
       // MiMo's tool results carry media to the model; one attached by path is read when the request is built.
@@ -4492,6 +4518,9 @@ export class SessionRunner {
       // infrastructure problems bubble out of the turn.
       const expected = err instanceof ToolError || err instanceof PermissionDenied
       part.error = expected ? (err as Error).message : `Tool crashed: ${describe(err)}`
+      if (actionStarted && !(err instanceof PermissionDenied)) {
+        part.error = await this.hooks.after(input.hooks, hookCall, part.error)
+      }
       if (err instanceof ToolError && err.code) {
         part.errorCode = err.code
         part.errorParams = err.params

@@ -25,6 +25,8 @@ export interface ToolContext {
    */
   questions: Questions
   signal: AbortSignal
+  /** Run the turn's pre hooks after a tool's internal permission checks, before it acts. */
+  beforeAction?: () => Promise<void>
   /** Delivery policy captured when the tool starts; metadata remains mandatory. */
   removeExplicitWatermark?: boolean
   /** Streams partial output into the tool card while the tool is still running. */
@@ -223,6 +225,8 @@ export interface ToolDefinition {
    * any, is `Permissions.check`'s and the tool need not ask.
    */
   asksForItself?: boolean
+  /** This tool also checks paths internally before it is allowed to act. */
+  authorizesPaths?: boolean
   /** The MCP server an outside tool comes from; absent for this app's own tools. */
   server?: string
   execute(input: Record<string, unknown>, context: ToolContext): Promise<ToolResult>

@@ -182,6 +182,7 @@ export const PatchTool: ToolDefinition = {
         })
       }
 
+      await context.beforeAction?.()
       for (const target of paths) await context.snapshot(target)
       const applied: string[] = []
       for (const change of changes) {

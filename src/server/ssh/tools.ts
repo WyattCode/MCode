@@ -95,6 +95,7 @@ cat > "$temp" && [ "$(wc -c < "$temp")" -eq ${Buffer.byteLength(stdin)} ] && mv 
       throw new ToolError("Unknown SSH tool.")
   }
 
+  await context.beforeAction?.()
   const result = await remote(command, { signal: context.signal, timeout, stdin, progress: tool === "bash" ? context.progress : undefined })
   const metadata = { exit: result.code, ...(result.timedOut ? { timedOut: true } : {}) }
   const output = [result.stdout, result.stderr].filter(Boolean).join("\n")

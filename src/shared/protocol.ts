@@ -1,3 +1,4 @@
+import type { HooksConfig, HooksListing } from "./hooks"
 import type { SshDevice, SshDeviceInput, SshTest } from "./ssh"
 import type { LabState } from "./lab"
 import type { SmartRoute } from "./smart"
@@ -1587,6 +1588,7 @@ export interface CliPlugin {
 }
 
 export interface AppConfig {
+  hooks?: HooksConfig
   cliPlugins?: { version: 1; entries: CliPlugin[] }
   /**
    * Which build's idea of this document it is.
@@ -2514,6 +2516,8 @@ export type Request =
   | { type: "ssh.save"; device: SshDeviceInput }
   | { type: "ssh.remove"; id: string }
   | { type: "ssh.test"; device: { id: string } | SshDeviceInput }
+  | { type: "hooks.list"; directory?: string }
+  | { type: "hooks.reload"; directory?: string }
   | { type: "cliPlugin.list" }
   | { type: "cliPlugin.install"; operationID: string; name: string; command: string; binary?: string }
   | { type: "cliPlugin.set"; id: string; action: boolean | "delete" }
@@ -2795,6 +2799,8 @@ export interface ResponseMap {
   "ssh.save": { device: SshDevice }
   "ssh.remove": Record<string, never>
   "ssh.test": SshTest
+  "hooks.list": HooksListing
+  "hooks.reload": HooksListing
   "cliPlugin.list": { plugins: (CliPlugin & { available: boolean })[] }
   "cliPlugin.install": { plugin: CliPlugin }
   "cliPlugin.set": Record<string, never>

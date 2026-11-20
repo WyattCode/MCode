@@ -142,6 +142,7 @@ export const FanoutTool: ToolDefinition = {
     const mustContain = typeof input.must_contain === "string" && input.must_contain ? input.must_contain : undefined
     const retries = typeof input.retries === "number" ? Math.max(0, Math.min(3, Math.floor(input.retries))) : 1
 
+    await context.beforeAction?.()
     // Made before any request: a folder that cannot exist should cost no tokens.
     await fs.mkdir(directory, { recursive: true }).catch((failure: Error) => {
       throw new ToolError(`Could not create ${displayDir}: ${failure.message}`)

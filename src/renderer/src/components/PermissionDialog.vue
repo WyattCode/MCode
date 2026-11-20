@@ -17,6 +17,7 @@ const app = useApp()
 const busy = computed(() => app.responding === props.request.id)
 
 const isMacOSControl = computed(() => props.request.titleCode?.startsWith("perm.app.macos") ?? false)
+const isHook = computed(() => props.request.titleCode === "set.hooks.approval")
 const isBash = computed(() => props.request.kind === "bash")
 const isDiff = computed(() => props.request.preview?.startsWith("--- a/") ?? false)
 
@@ -31,6 +32,7 @@ const VERBS: Record<string, string> = {
 
 const verb = computed(() => {
   if (isMacOSControl.value) return t(props.request.titleCode!)
+  if (isHook.value) return t("set.hooks.approval")
   if (props.request.forced) return t("perm.verb.bashDelete")
   const key = VERBS[props.request.kind]
   return t(key ?? "perm.verb.fallback")
@@ -55,7 +57,7 @@ const chip = computed(() => {
 const describedBy = computed(() => (chip.value ? "confirm-dock-chip confirm-dock-desc" : "confirm-dock-desc"))
 
 /** The command or subject in full, capped so a runaway argument cannot flood the dock. */
-const full = computed(() => (isBash.value && !props.request.titleCode?.startsWith("perm.app.") ? `$ ${props.request.subject}` : props.request.subject).slice(0, 3000))
+const full = computed(() => isHook.value ? props.request.subject : (isBash.value && !props.request.titleCode?.startsWith("perm.app.") ? `$ ${props.request.subject}` : props.request.subject).slice(0, 3000))
 
 /*
  * One line at most, at most 120 characters of it. Anything longer, or anything
@@ -160,7 +162,7 @@ function onReasonKey(event: KeyboardEvent) {
       </div>
     </template>
 
-    <div v-if="request.forced" class="forced" data-perm-forced>{{ t("perm.forcedHint") }}</div>
+    <div v-if="request.forced && !isHook" class="forced" data-perm-forced>{{ t("perm.forcedHint") }}</div>
 
     <div class="actions">
       <button type="button" class="perm-btn" data-cnav data-perm-reject :disabled="busy" @click="answer('reject')">

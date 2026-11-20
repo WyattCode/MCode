@@ -165,6 +165,7 @@ export const NotebookEditTool: ToolDefinition = {
       subject: display,
       preview: diff,
     })
+    await context.beforeAction?.()
     await context.snapshot(target)
     await fs.writeFile(target, after, "utf8")
 

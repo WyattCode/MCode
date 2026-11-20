@@ -168,6 +168,7 @@ export const WebSearchTool: ToolDefinition = {
       subject: query,
       ...(named ? { preview: `${named.name}: ${query}` } : {}),
     })
+    await context.beforeAction?.()
     let provider: WebSearchProviderID | undefined
     try {
       const found = await searchWeb(query, {

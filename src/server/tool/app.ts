@@ -189,6 +189,7 @@ async function perform(input: Record<string, unknown>, context: ToolContext): Pr
   }
   const driver = drivers.get(context.sessionID)
   if (action === "close") {
+    await context.beforeAction?.()
     if (!driver) return { output: "Nothing was open.", title: "close" }
     drivers.delete(context.sessionID)
     await driver.close()
@@ -200,6 +201,7 @@ async function perform(input: Record<string, unknown>, context: ToolContext): Pr
   }
   switch (action) {
     case "snapshot":
+      await context.beforeAction?.()
       return { output: await driver.snapshot(input.full === true), title: "snapshot" }
     case "do": {
       const steps = stepsOf(input.steps)
@@ -209,15 +211,18 @@ async function perform(input: Record<string, unknown>, context: ToolContext): Pr
           await askMacOS(context, driver.label, steps)
           context.signal.throwIfAborted()
           if (drivers.get(context.sessionID) !== driver || !driver.alive) throw new ToolError("The desktop session changed. Open the app again.")
+          await context.beforeAction?.()
           await driver.activate()
           context.signal.throwIfAborted()
         } else context.permissions.waive(context.callID)
       }
+      await context.beforeAction?.()
       const { output, done } = await driver.run(steps, context.signal)
       return { output, title: stepsTitle(steps, done), metadata: { steps: steps.length, done } }
     }
     case "tabs": {
       const target = typeof input.target === "string" ? input.target.trim() : ""
+      await context.beforeAction?.()
       const pages = await driver.pages()
       if (target) {
         const page = pages.find((entry) => entry.id === target) ?? pages.find((entry) => entry.title.includes(target) || entry.url.includes(target))
@@ -229,12 +234,14 @@ async function perform(input: Record<string, unknown>, context: ToolContext): Pr
     }
     case "screenshot": {
       const file = typeof input.path === "string" && input.path.trim() ? await resolvePath(context, input.path, "write") : path.join(os.tmpdir(), "mcode-app-shots", `${Date.now()}.png`)
+      await context.beforeAction?.()
       await driver.screenshot(file)
       return { output: `Saved the window as ${file}`, title: path.basename(file), metadata: { path: file } }
     }
     case "eval": {
       const expression = String(input.expression ?? "").trim()
       if (!expression) throw new ToolError("eval needs an expression")
+      await context.beforeAction?.()
       return { output: await driver.evaluate(expression), title: "eval" }
     }
     default:
@@ -292,6 +299,7 @@ async function attach(port: number, target: string | undefined, context: ToolCon
 
 /** The conversation's app from now on: whatever it had open before is let go (or closed, if this tool opened it). */
 async function replace(context: ToolContext, start: () => Promise<SteppingDriver>): Promise<SteppingDriver> {
+  await context.beforeAction?.()
   const previous = drivers.get(context.sessionID)
   drivers.delete(context.sessionID)
   surfaces.delete(context.sessionID)

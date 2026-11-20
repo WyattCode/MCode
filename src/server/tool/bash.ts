@@ -609,6 +609,7 @@ export const BashTool: ToolDefinition = {
       context.permissions.waive(context.callID)
     }
 
+    await context.beforeAction?.()
     const identity = await gitIdentityEnv(context.directory)
     if (context.signal.aborted) throw new ToolError(ABORTED_TOOL)
 

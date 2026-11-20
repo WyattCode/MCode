@@ -103,6 +103,7 @@ export const WorktreeCreateTool: ToolDefinition = {
      */
     const display = path.relative(context.directory, folder) || folder
     await disclosed(context, "Create worktree", display, branch)
+    await context.beforeAction?.()
     try {
       await fs.stat(folder)
       throw new ToolError(`There is already something at ${folder}`)
@@ -199,6 +200,7 @@ export const WorktreeRemoveTool: ToolDefinition = {
     if (!entry) throw new ToolError(`${target} is not one of this repository's worktrees`)
     if (entry.main) throw new ToolError(`Refused: ${target} is the repository's main checkout, not a worktree`)
     await disclosed(context, "Remove worktree", path.relative(context.directory, target) || target, entry.branch ?? "(detached)")
+    await context.beforeAction?.()
     try {
       await removeWorktree(root, target, input.force === true)
     } catch (err) {

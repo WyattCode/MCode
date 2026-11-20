@@ -219,6 +219,7 @@ export const WebFetchTool: ToolDefinition = {
       subject: url.toString(),
     })
 
+    await context.beforeAction?.()
     const seconds = input.timeout === undefined ? DEFAULT_TIMEOUT_SECONDS : Number(input.timeout)
     const timeout = Math.min((Number.isFinite(seconds) && seconds > 0 ? seconds : DEFAULT_TIMEOUT_SECONDS) * 1000, MAX_TIMEOUT_MS)
     const expiry = AbortSignal.timeout(timeout)

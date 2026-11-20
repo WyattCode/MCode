@@ -1782,6 +1782,7 @@ export class McpServers {
       // Its server's rules allow it, so it needed no question; recorded as consulting the gate.
       context.permissions.waive(context.callID)
     }
+    await context.beforeAction?.()
     // Counted as this conversation's for as long as it runs, so a sampling request is asked in the right place.
     return connection.callingFrom(context.sessionID, () => connection.call(tool.name, input, context.signal))
   }
@@ -1892,8 +1893,9 @@ export class McpServers {
           if (named && !byName.has(named)) throw new ToolError(`MCP server "${named}" is not connected or does not expose resources`)
           const servers = named ? [named] : [...byName.keys()]
           const sections: string[] = []
+          for (const server of servers) await ask(context, server, `${server}: list resources`, server)
+          await context.beforeAction?.()
           for (const server of servers) {
-            await ask(context, server, `${server}: list resources`, server)
             const { resources, templates } = await byName.get(server)!.resources()
             const lines = [
               ...resources.map((entry) => `- ${entry.uri}${entry.title ?? entry.name ? ` - ${entry.title ?? entry.name}` : ""}${entry.mimeType ? ` (${entry.mimeType})` : ""}${entry.description ? `: ${entry.description}` : ""}`),
@@ -1926,6 +1928,7 @@ export class McpServers {
           if (!connection) throw new ToolError(`MCP server "${server}" is not connected or does not expose resources`)
           if (!uri) throw new ToolError("uri is required")
           await ask(context, server, `${server}: read resource`, `${server}:${uri}`)
+          await context.beforeAction?.()
           let contents: McpResourceContent[]
           try {
             contents = await connection.callingFrom(context.sessionID, () => connection.readResource(uri, context.signal))

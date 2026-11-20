@@ -1801,6 +1801,10 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       return {} satisfies Handled<"ssh.remove">
     }
 
+    case "hooks.list":
+    case "hooks.reload":
+      return await runtime.runner.listHooks(request.directory, request.type === "hooks.reload") satisfies Handled<"hooks.list">
+
     case "cliPlugin.list":
       return { plugins: listPlugins(runtime.config.get()) } satisfies Handled<"cliPlugin.list">
 

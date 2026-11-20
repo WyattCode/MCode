@@ -127,6 +127,7 @@ async function globFiles(root: string, pattern: string, limit: number, signal: A
 
 export const GlobTool: ToolDefinition = {
   name: "glob",
+  authorizesPaths: true,
   description: [
     "Find files by name. The pattern is a glob: `*.ts`, `src/**/*.vue`, `*.{js,jsx}`, `**/test/*.py`.",
     "A pattern with no slash in it matches file names at any depth, so `*.ts` finds every TypeScript file under the folder searched; one with a slash is matched against the path from that folder down.",
@@ -146,6 +147,7 @@ export const GlobTool: ToolDefinition = {
   },
   async execute(input, context) {
     const root = input.path ? await resolvePath(context, String(input.path)) : path.resolve(context.directory)
+    await context.beforeAction?.()
     const stat = await fs.stat(root).catch(() => undefined)
     if (stat?.isFile()) throw new ToolError(`glob's path has to be a folder: ${root}`)
     if (!stat) throw noFolder(root)
@@ -197,6 +199,7 @@ async function grepWithRipgrep(binary: string, cwd: string, pattern: string, inc
 
 export const GrepTool: ToolDefinition = {
   name: "grep",
+  authorizesPaths: true,
   description: [
     "Search what is inside files, with a regular expression.",
     "The pattern is ripgrep's regular-expression syntax (Rust), matched line by line: `(?i)` makes it case-insensitive, `\\w` and `\\b` understand Unicode; escape the characters that mean something in it (`\\.`, `\\(`, `\\$`) when you are looking for them literally.",
@@ -220,6 +223,7 @@ export const GrepTool: ToolDefinition = {
     const pattern = String(input.pattern ?? "")
     if (!pattern) throw new ToolError("pattern is required")
     const target = input.path ? await resolvePath(context, String(input.path)) : path.resolve(context.directory)
+    await context.beforeAction?.()
     const include = input.include ? String(input.include) : undefined
 
     // As MiMo's: a folder is searched from itself, anything else from its folder, which has to exist.

@@ -17,6 +17,7 @@ const isLspAction = (value: string): value is LspAction =>
  */
 export const LspTool: ToolDefinition = {
   name: "lsp",
+  authorizesPaths: true,
   description: [
     "Ask a language server about a file. Read-only: it changes nothing.",
     "",
@@ -47,6 +48,7 @@ export const LspTool: ToolDefinition = {
       throw new ToolError(`action must be diagnostics, definition, references or hover: ${action}`)
     }
     const target = await resolvePath(context, String(input.file_path), "read")
+    await context.beforeAction?.()
     const display = relative(context.directory, target)
     const allow = allowProjectTools(context)
     const spec = serverForFile(target)

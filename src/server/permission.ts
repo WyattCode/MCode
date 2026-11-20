@@ -1,3 +1,4 @@
+import type { HookEvent } from "@shared/hooks"
 import { AsyncLocalStorage } from "node:async_hooks"
 import { addAbortListener } from "node:events"
 import type {
@@ -524,6 +525,56 @@ export class Permissions {
     return this.callSignal.run(signal, run)
   }
 
+  private readonly hookAnswers = new Map<string, boolean>()
+  private readonly hookQuestions = new Map<string, Promise<void>>()
+
+  async allowHook(event: HookEvent, command: string, patterns: string[], call: {
+    sessionID: string
+    messageID: string
+    callID: string
+    directory?: string
+    signal: AbortSignal
+  }): Promise<boolean> {
+    const key = JSON.stringify([event, command])
+    while (!call.signal.aborted) {
+      const found = this.levelOf(this.background.get(call.sessionID) ?? call.sessionID)
+      const level = found instanceof Promise ? await found : found
+      if (call.signal.aborted || this.requestAction("bash", level, patterns) === "deny") return false
+      if (level === "full") return true
+      const saved = this.hookAnswers.get(key)
+      if (saved !== undefined) return saved
+      if (this.background.has(call.sessionID)) return false
+      const pending = this.hookQuestions.get(key)
+      if (pending) {
+        try {
+          await waitForPermission(call.signal, () => pending)
+        } catch (error) {
+          if (call.signal.aborted) return false
+          throw error
+        }
+        continue
+      }
+
+      let allowed = false
+      const question = this.ask({
+        ...call,
+        kind: "bash",
+        title: event,
+        titleCode: "set.hooks.approval",
+        subject: command,
+        patterns,
+        humanOnly: true,
+        onHumanAnswer: (approved) => this.hookAnswers.set(key, approved),
+      }).then(() => { allowed = true }).catch((error: unknown) => {
+        if (!(error instanceof PermissionDenied)) throw error
+      }).finally(() => this.hookQuestions.delete(key))
+      this.hookQuestions.set(key, question)
+      await question
+      return allowed && !call.signal.aborted
+    }
+    return false
+  }
+
   async ask(input: {
     sessionID: string
     messageID: string
@@ -549,6 +600,7 @@ export class Permissions {
     forced?: boolean
     /** Requires a current human response below full access. */
     humanOnly?: boolean
+    onHumanAnswer?: (approved: boolean) => void
     /** A pattern rule asks for this call even where its bucket allows it - a `.env` read - except at full access. */
     patternAsks?: boolean
     signal?: AbortSignal
@@ -665,6 +717,7 @@ export class Permissions {
         decided = "policy"
         throw new PermissionDenied(input.subject, refusal(input.kind, input.subject))
       }
+      if (entry.response) input.onHumanAnswer?.(response !== "reject")
       const reason = entry.reason?.trim()
       decided = entry.settledBy ?? decisionOf(response, reason)
       if (response === "reject") throw new PermissionDenied(input.subject, userRefusal(input.subject, reason))

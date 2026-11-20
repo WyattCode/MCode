@@ -75,6 +75,7 @@ export const VerifyPageTool: ToolDefinition = {
       patterns: [`verify_page: ${display}`],
       always: [`verify_page: ${display}`],
     })
+    await context.beforeAction?.()
     context.progress("Loading the page in a headless browser...")
     let result: Awaited<ReturnType<typeof checkPage>>
     try {

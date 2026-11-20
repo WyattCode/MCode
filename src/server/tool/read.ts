@@ -295,6 +295,7 @@ async function linesOf(file: string, offset: number, limit: number, maxBytes = M
 
 const UncappedReadTool: ToolDefinition = {
   name: "read",
+  authorizesPaths: true,
   description: [
     "Read a file, or list a folder, from this machine.",
     "",
@@ -330,6 +331,7 @@ const UncappedReadTool: ToolDefinition = {
     if (!Number.isInteger(limit) || limit < 1) throw new ToolError(`limit has to be a whole number of 1 or more: ${String(input.limit)}`)
 
     const target = await resolvePath(context, String(input.file_path))
+    await context.beforeAction?.()
     const display = relative(context.directory, target)
     /*
      * Why the stat failed, not merely that it did.

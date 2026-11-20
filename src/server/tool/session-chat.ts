@@ -107,6 +107,7 @@ export const TalkToSessionTool: ToolDefinition = {
 
 export const CreateSessionTool: ToolDefinition = {
   name: "create_session",
+  authorizesPaths: true,
   description: [
     "Create a new conversation in this app and record what it is for. It is a real conversation the user sees in the side column, with its own history.",
     "Only create one when the user asks for it, or when work genuinely has to go on in a separate conversation and no suitable one exists; the task tool is for one-off delegated work.",
@@ -142,6 +143,7 @@ export const CreateSessionTool: ToolDefinition = {
      * once and is then remembered for that folder.
      */
     if (isAbsolute(workspace)) await resolvePath(context, workspace)
+    await context.beforeAction?.()
     const made = await chatOf(context).create({
       name: text(input.name) ?? "",
       purpose: text(input.purpose) ?? "",
