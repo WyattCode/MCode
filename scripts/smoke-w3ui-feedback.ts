@@ -142,6 +142,12 @@ async function feedbackSettings() {
   const ui = await mount(`
     const section = ref("feedback"), language = "en"
     const isPickerBusy = () => false
+    // SettingsDialog reaches the save dialog through lib/native-pick's wrapper, which owns the busy
+    // warning; the fragment needs that wrapper too, not just the raw bridge under window.mcode.
+    const saveText = async (suggested, text) => {
+      const answer = await window.mcode.saveText(suggested, text)
+      return isPickerBusy(answer) ? undefined : answer
+    }
     const app = { client: { request: fixture.request } }
     window.mcode = { saveText: fixture.saveText }
     ${between(source, "// Local feedback history", "const emit =")}
@@ -154,6 +160,7 @@ async function feedbackSettings() {
     assert.match(ui.get("[data-feedback-history]").textContent ?? "", /test entry/)
     ui.get("[data-feedback-export]").click()
     await ui.settle()
+    assert.equal(exports[0][0], "mcode-feedback.json")
     assert.deepEqual(JSON.parse(String(exports[0][1])), [record])
   } finally { ui.close() }
 }
