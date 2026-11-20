@@ -4332,6 +4332,7 @@ export class SessionRunner {
         arguments: part.input,
         directory: deviceId ? undefined : input.session.directory,
         target: remote?.target,
+        signal: input.signal,
       })
       /*
        * plan: only the tools that turn on the promise are told about it - the
@@ -4399,7 +4400,9 @@ export class SessionRunner {
         // read: the model's inputs, a copy of what it attaches, and the instructions already given.
         ...(tool.name === "read" && !deviceId ? this.readSupport(input.session.id) : {}),
       }
-      const result = await executeOnDevice(remote?.command, tool.name, part.input, context, remote?.target, () => tool.execute(part.input, context))
+      const result = await this.permissions.withSignal(input.signal, () =>
+        executeOnDevice(remote?.command, tool.name, part.input, context, remote?.target, () => tool.execute(part.input, context)),
+      )
       if (selfAskViolated(tool, askedBefore, this.permissions.asked(part.callID))) {
         part.metadata = { ...(part.metadata ?? {}), selfAsk: { tool: tool.name, kind: tool.permission ?? null, missing: true } }
         throw new ToolError(

@@ -100,8 +100,14 @@ export async function denyWins(check: Check): Promise<void> {
     answer(response)
     settings.permissions.webfetch = "deny"
     const result = await attempt.running
+    /*
+     * 记录分成两笔：`response` 是人选的（审计要留），`decided` 是策略复查后的最终结论。
+     * 这条断言同时钉住两笔——把用户选择写回 decided、或把最终结论写成放行，都会红。
+     */
     check(`人工批准 ${response} 后桶拒绝续跑并保留人工审计`,
-      result instanceof PermissionDenied && attempt.records[0]?.decided === (response === "once" ? "allow-once" : "allow-always"))
+      result instanceof PermissionDenied &&
+        (attempt.records[0] as { response?: string } | undefined)?.response === response &&
+        attempt.records[0]?.decided === "policy", { records: attempt.records })
   }
 
   {
