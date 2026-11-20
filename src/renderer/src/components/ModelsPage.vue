@@ -19,6 +19,30 @@ const app = useApp()
 /* Everything configured, and every custom provider whether or not it has a key yet. */
 const listed = computed(() => app.providers.filter((provider) => provider.configured || provider.custom))
 
+/*
+ * Two providers can share a display name (two "Qwen"s on different servers), and
+ * their tabs would then read alike. A name that repeats is followed by the host
+ * its provider talks to.
+ */
+const tabLabels = computed(() => {
+  const count = new Map<string, number>()
+  for (const provider of listed.value) count.set(providerLabel(provider), (count.get(providerLabel(provider)) ?? 0) + 1)
+  return new Map(
+    listed.value.map((provider) => {
+      const name = providerLabel(provider)
+      let host = ""
+      if ((count.get(name) ?? 0) > 1 && provider.baseURL) {
+        try {
+          host = new URL(provider.baseURL).host
+        } catch {
+          host = ""
+        }
+      }
+      return [provider.id, host ? `${name} · ${host}` : name] as const
+    }),
+  )
+})
+
 const ADD = "+add"
 const selected = ref<string>(listed.value[0]?.id ?? ADD)
 const current = computed(() => listed.value.find((provider) => provider.id === selected.value))
@@ -268,10 +292,11 @@ async function confirmClone(id: string) {
         :class="{ on: selected === provider.id }"
         :aria-pressed="selected === provider.id"
         :data-provider-tab="provider.id"
+        :title="tabLabels.get(provider.id)"
         @click="selectProvider(provider.id)"
       >
         <ProviderIcon :id="provider.id" :name="provider.name" />
-        <span class="tab-name">{{ providerLabel(provider) }}</span>
+        <span class="tab-name">{{ tabLabels.get(provider.id) ?? providerLabel(provider) }}</span>
       </button>
     </div>
 
@@ -494,11 +519,16 @@ h2 {
 }
 
 /* MiMo 26.920's tabs: 36 high, an 8px corner, a line; the shown one has a strong line and a soft fill. */
+/*
+ * The tabs wrap onto further lines. They used to scroll sideways with no visible
+ * bar, so a fifth provider sat out of sight to the right and looked as if it did
+ * not exist - there was no way to open and edit it.
+ */
 .tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   padding-bottom: 4px;
-  overflow-x: auto;
 }
 
 .tab {
@@ -543,8 +573,9 @@ h2 {
   cursor: default;
 }
 
+/* Wide enough for a name and a server address: the end of a long label is what tells two providers apart. */
 .tab-name {
-  max-width: 140px;
+  max-width: 260px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
