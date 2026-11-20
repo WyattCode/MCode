@@ -235,8 +235,10 @@ test("sidebar separator is focusable and emits keyboard width changes", async ()
 })
 
 /* Standalone entry: runs what this file registered, in file order. The battery ignores this and
- * drives `uiA11yChecks` instead, so the case count is never left to an argv match. */
-if (process.argv[1]?.endsWith("smoke-ui-a11y.mjs")) {
+ * drives `uiA11yChecks` instead, so the case count is never left to an argv match. The basename is
+ * compared exactly because the battery builds this file as `rounds-smoke-ui-a11y.mjs`. */
+const entry = process.argv[1]?.split("/").pop()
+if (entry === "smoke-ui-a11y.ts" || entry === "smoke-ui-a11y.mjs") {
   void (async () => {
     let failed = 0
     for (const { name, run } of registered) {

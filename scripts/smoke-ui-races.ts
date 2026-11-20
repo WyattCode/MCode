@@ -421,7 +421,10 @@ export function raceTests() {
   })
 }
 raceTests()
-if (process.argv[1]?.endsWith("smoke-ui-races.mjs")) {
+// The battery builds this file as `rounds-smoke-ui-races.mjs`, so a loose suffix match would run
+// every case a second time alongside the harness-driven ones; compare the basename exactly.
+const entry = process.argv[1]?.split("/").pop()
+if (entry === "smoke-ui-races.ts" || entry === "smoke-ui-races.mjs") {
   void (async () => {
     let failed = 0
     for (const { name, run } of registered) {
