@@ -1,3 +1,5 @@
+import { gitSubcommand, simpleCommands } from "./tool/bash-scan"
+
 /**
  * Whether a shell command is one the "auto" access level still asks about.
  *
@@ -21,7 +23,6 @@ const SYSTEM = new Set(["format", "mkfs", "dd", "diskpart", "fdisk", "parted", "
 
 /* Tools whose subcommand decides: `git push` sends work away, `git status` does not. */
 const SUBCOMMANDS: Record<string, string[]> = {
-  git: ["push", "clean"],
   npm: ["publish", "unpublish"],
   pnpm: ["publish"],
   yarn: ["publish", "npm"],
@@ -53,18 +54,21 @@ export const LOST_WORK: readonly CommandRisk[] = ["delete", "reset"]
  */
 const WRAPPERS = new Set(["env", "xargs", "nohup", "time", "timeout", "nice", "ionice", "stdbuf", "command", "exec", "setsid", "unbuffer"])
 
-function pieceRisk(piece: string): CommandRisk | undefined {
-  const lowered = piece.toLowerCase()
-  if (/-verb\s+runas\b/.test(lowered)) return "elevate"
-  // Environment assignments in front of the program (`FOO=1 rm x`) are not the program.
-  const all = piece.split(/\s+/).filter((token) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(token))
+function commandTokens(all: string[]): string[] {
   let at = 0
-  while (at < all.length && WRAPPERS.has(program(all[at] ?? ""))) {
+  const assignment = /^[A-Za-z_][A-Za-z0-9_]*=/
+  while (at < all.length && assignment.test(all[at]!)) at++
+  while (at < all.length && WRAPPERS.has(program(all[at]!))) {
     at++
     // The wrapper's own flags, and the count or duration one of them takes.
-    while (at < all.length && (/^-/.test(all[at] ?? "") || /^\d+(?:\.\d+)?[smhd]?$/.test(all[at] ?? "") || all[at] === "{}")) at++
+    while (at < all.length && (assignment.test(all[at]!) || /^-/.test(all[at]!) || /^\d+(?:\.\d+)?[smhd]?$/.test(all[at]!) || all[at] === "{}")) at++
   }
-  const tokens = all.slice(at)
+  return all.slice(at)
+}
+
+function pieceRisk(piece: string): CommandRisk | undefined {
+  if (/-verb\s+runas\b/i.test(piece)) return "elevate"
+  const tokens = commandTokens(piece.split(/\s+/))
   const first = program(tokens[0] ?? "")
   if (!first) return undefined
   if (DELETE.has(first)) return "delete"
@@ -73,8 +77,17 @@ function pieceRisk(piece: string): CommandRisk | undefined {
   if (RIGHTS.has(first)) return "rights"
   if (SYSTEM.has(first)) return "system"
   const sub = (tokens.slice(1).find((token) => !token.startsWith("-")) ?? "").toLowerCase()
-  if (SUBCOMMANDS[first]?.includes(sub)) return first === "git" && sub === "clean" ? "delete" : "publish"
-  if (first === "git" && sub === "reset" && /--hard\b/.test(lowered)) return "reset"
+  if (SUBCOMMANDS[first]?.includes(sub)) return "publish"
+  return undefined
+}
+
+function gitRisk(tokens: string[]): CommandRisk | undefined {
+  const words = commandTokens(tokens)
+  if (program(words[0] ?? "") !== "git") return undefined
+  const sub = gitSubcommand(words)
+  if (!sub || sub.name === "clean") return "delete"
+  if (sub.name === "reset" && sub.args.includes("--hard")) return "reset"
+  if (sub.name === "push") return "publish"
   return undefined
 }
 
@@ -321,6 +334,13 @@ export function readOnlyCommand(command: string): boolean {
  * delete is never left to the model however harmless the push in front of it.
  */
 export function commandRisk(command: string): CommandRisk | undefined {
+  // Git option values may contain spaces and quotes. Keep the tokenizer's argument boundaries.
+  let gitPublish: CommandRisk | undefined
+  for (const { tokens } of simpleCommands(command, process.platform === "win32")) {
+    const risk = gitRisk(tokens)
+    if (risk && LOST_WORK.includes(risk)) return risk
+    gitPublish ??= risk
+  }
   /*
    * A quote ends a piece as surely as a semicolon does. Without this, the whole
    * of `bash -c "rm -rf src"` was one piece whose first word is `bash`, and the
@@ -339,5 +359,5 @@ export function commandRisk(command: string): CommandRisk | undefined {
     if (risk && LOST_WORK.includes(risk)) return risk
     found ??= risk
   }
-  return found
+  return found ?? gitPublish
 }

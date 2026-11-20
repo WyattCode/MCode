@@ -564,9 +564,8 @@ export const BashTool: ToolDefinition = {
      * arguments name are asked about first; then a command that deletes gets a
      * question of its own, listing what it deletes, asked every time and never
      * remembered - unless everything it deletes is in the temp folder; anything
-     * else is one question whose "always" keeps each command's prefix. A bare
-     * `cd` asks nothing. There is no list of commands refused outright, as
-     * MiMo has none: a delete is what its own question is for.
+     * else is one question whose "always" keeps each eligible command's prefix.
+     * Policy is evaluated against every segment.
      */
     const scan = await scanCommand(command, cwd, context.directory, powershell)
     const mutations = collectMutationTargets(command, cwd, powershell)
@@ -593,16 +592,25 @@ export const BashTool: ToolDefinition = {
       // A `.env` named on the line asks where its bucket would allow it, as a read of one does.
       patternAsks: namesAskingFile(command),
     }
-    if (scan.deletes.length && !scan.tempOnlyDeletes) {
-      await context.permissions.ask({ ...question, patterns: scan.deletes, always: [], forced: true })
-    } else if (scan.patterns.length) {
-      await context.permissions.ask({ ...question, patterns: scan.patterns, always: scan.always, forced: false })
+    // A directory change needs no approval by default, but its segments still match policy.
+    const needsAsk = scan.patterns.length > 0 &&
+      (!scan.directoryOnly || context.permissions.action("bash", "full", scan.patterns) !== "allow")
+    if (needsAsk) {
+      const { forcedPatterns } = scan
+      const request = {
+        ...question,
+        patterns: scan.patterns,
+        forcedPatterns,
+        forced: forcedPatterns.length > 0,
+        always: forcedPatterns.length ? [] : scan.always,
+      }
+      await context.permissions.ask(request)
     } else {
-      // A line made only of `cd`: it changes nothing this process can see, so it asks nothing.
       context.permissions.waive(context.callID)
     }
 
     const identity = await gitIdentityEnv(context.directory)
+    if (context.signal.aborted) throw new ToolError(ABORTED_TOOL)
 
     const shellCold = !bashShellWarmed
     /*
@@ -626,7 +634,8 @@ export const BashTool: ToolDefinition = {
        * error. Measured under Electron in scripts/tool-check-nested-electron.cjs:
        * 8,035ms to the timeout with a pipe, 379ms without one.
        */
-      const child = spawn(bin, args(command), {
+      const shellArgs = args(command)
+      const options = {
         cwd,
         env: {
           ...process.env,
@@ -649,7 +658,7 @@ export const BashTool: ToolDefinition = {
           MCODE_SESSION_ID: context.sessionID,
           ...identity,
         },
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: ["ignore", "pipe", "pipe"] as ["ignore", "pipe", "pipe"],
         windowsHide: true,
         windowsVerbatimArguments: call.verbatim,
         /*
@@ -659,7 +668,9 @@ export const BashTool: ToolDefinition = {
          * opposite of what is wanted here.
          */
         detached: process.platform !== "win32",
-      })
+      }
+      if (context.signal.aborted) throw new ToolError(ABORTED_TOOL)
+      const child = spawn(bin, shellArgs, options)
 
       /*
        * Held only while it runs: quitting ends what is still in here. `close`
@@ -863,6 +874,7 @@ export const BashTool: ToolDefinition = {
         if (settled) return
         settled = true
         clearTimeout(timer)
+        context.signal.removeEventListener("abort", onAbort)
         void halt().then(() => {
           seal()
           context.progress(latestCut ? `...\n\n${latest}` : latest)
@@ -870,6 +882,7 @@ export const BashTool: ToolDefinition = {
         })
       }
       context.signal.addEventListener("abort", onAbort, { once: true })
+      if (context.signal.aborted) onAbort()
 
       /*
        * A command sitting on a window it opened: answered at once with what
