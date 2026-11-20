@@ -2,17 +2,24 @@ name: Release Windows
 
 # The Windows installer is built here because node-pty's terminal module is
 # installed per system (see scripts/package-target.mjs): the artifact must come
-# from a Windows machine. This makes that machine a runner. Dispatched by hand;
-# packaging advances the patch version by one (scripts/bump-version.mjs), the
-# release tag and title follow the version the build produced.
+# from a Windows machine. An omitted version selects the next version from
+# the source version and existing release tags.
 
 on:
   workflow_dispatch:
     inputs:
+      version:
+        description: "Release version (x.y.z). Leave blank to use the next available version."
+        type: string
+        required: false
       publish:
         description: "Create the GitHub Release (untick for a build-only dry run)"
         type: boolean
         default: true
+
+concurrency:
+  group: release-windows
+  cancel-in-progress: false
 
 jobs:
   windows-installer:
@@ -21,11 +28,30 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
+
+      - name: Select the Windows release version
+        id: ver
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          version=$(node scripts/bump-version.mjs --select "$REQUESTED_VERSION")
+          tag="v$version"
+          if git ls-remote --exit-code origin "refs/tags/$tag"; then
+            echo "::error::Tag $tag already exists. Choose an unused version."
+            exit 1
+          else
+            status=$?
+            if [[ "$status" != 2 ]]; then exit "$status"; fi
+          fi
+          printf 'version=%s\ntag=%s\n' "$version" "$tag" >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies
         run: npm ci
@@ -40,35 +66,53 @@ jobs:
         # would flag the vendor's own bytes. A neutral home for this step keeps
         # the guard pointed at the real staging and pip-cache paths.
         env:
+          MCODE_RELEASE_VERSION: ${{ steps.ver.outputs.version }}
+          RELEASE_TAG: ${{ steps.ver.outputs.tag }}
           USERPROFILE: D:\cihome
           HOME: D:\cihome
           LOCALAPPDATA: D:\cihome\AppData\Local
           APPDATA: D:\cihome\AppData\Roaming
-        run: npm run package:win
-
-      - name: Read the version the build produced
-        id: ver
         shell: bash
-        run: echo "v=$(node -p 'require("./package.json").version')" >> "$GITHUB_OUTPUT"
+        run: |
+          if [[ "v$MCODE_RELEASE_VERSION" != "$RELEASE_TAG" ]]; then
+            echo "::error::Build version $MCODE_RELEASE_VERSION does not match $RELEASE_TAG."
+            exit 1
+          fi
+          npm run package:win
+
+      - name: Verify the packaged version
+        env:
+          RELEASE_TAG: ${{ steps.ver.outputs.tag }}
+        shell: bash
+        run: |
+          version=$(node -p 'require("./package.json").version')
+          if [[ "v$version" != "$RELEASE_TAG" ]]; then
+            echo "::error::Packaged version $version does not match $RELEASE_TAG."
+            exit 1
+          fi
 
       - name: Keep the installer as a build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MCode-${{ steps.ver.outputs.v }}-x64
+          name: MCode-${{ steps.ver.outputs.version }}-x64
           path: |
-            dist/MCode-${{ steps.ver.outputs.v }}-x64.exe
-            dist/MCode-${{ steps.ver.outputs.v }}-x64.exe.blockmap
+            dist/MCode-${{ steps.ver.outputs.version }}-x64.exe
+            dist/MCode-${{ steps.ver.outputs.version }}-x64.exe.blockmap
             dist/latest.yml
 
       - name: Publish the release
         if: inputs.publish
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          RELEASE_TAG: ${{ steps.ver.outputs.tag }}
         shell: bash
         run: |
-          V="${{ steps.ver.outputs.v }}"
-          gh release create "v$V" \
-            "dist/MCode-$V-x64.exe" \
-            "dist/MCode-$V-x64.exe.blockmap" \
+          # Creating the ref fails if another publisher already claimed the tag.
+          gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f ref="refs/tags/$RELEASE_TAG" -f sha="$GITHUB_SHA" --silent
+          gh release create "$RELEASE_TAG" --verify-tag \
+            "dist/MCode-$VERSION-x64.exe" \
+            "dist/MCode-$VERSION-x64.exe.blockmap" \
             "dist/latest.yml" \
-            --title "MCode $V"
+            --title "MCode $VERSION"

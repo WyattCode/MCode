@@ -1,3 +1,5 @@
+import { LINK_SCHEME } from "../shared/session-link"
+
 /**
  * The desktop rules MiMo's main process applies, as plain functions.
  *
@@ -241,8 +243,13 @@ const HANDED_OVER_SWITCHES = ["--allow-file-access-from-files", "--original-proc
  * The arguments to relaunch with for a second launch that arrived while this
  * copy was quitting (I13-2): the second launch's own, less the executable and
  * what Chromium added on the way. A link among them is kept, so the new copy
- * opens it.
+ * opens it. For an open-url event, use this process's arguments and replace
+ * any earlier app links with the incoming link.
  */
-export function relaunchArgs(argv: readonly string[]): string[] {
-  return argv.slice(1).filter((entry) => !HANDED_OVER_SWITCHES.some((name) => entry === name || entry.startsWith(`${name}=`)))
+export function relaunchArgs(argv: readonly string[], link?: string): string[] {
+  const args = argv.slice(1)
+  if (link !== undefined) {
+    return [...args.filter((entry) => !entry.toLowerCase().startsWith(`${LINK_SCHEME}://`)), link]
+  }
+  return args.filter((entry) => !HANDED_OVER_SWITCHES.some((name) => entry === name || entry.startsWith(`${name}=`)))
 }

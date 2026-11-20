@@ -10,7 +10,7 @@
  *  - the first check 5 s after launch, then every 3 h; failures are silent;
  *  - only a newer version is an update. An older one is taken only when its
  *    `latest.yml` says `rollback: true` and it was released within 30 days
- *    (N9-1);
+ *    (N9-1), with up to five minutes of future clock skew;
  *  - every file must carry the sha512 electron-updater verifies the download
  *    against; a feed without one offers nothing (N9-2);
  *  - a newer installer downloads in the background (differentially when the
@@ -54,6 +54,7 @@ export const FIRST_CHECK_DELAY = 5_000
 export const CHECK_INTERVAL = 3 * 60 * 60 * 1000
 /** MiMo's rollback window. */
 export const ROLLBACK_DAYS = 30
+const ROLLBACK_CLOCK_SKEW_MS = 5 * 60 * 1000
 const NOTES_LIMIT = 20_000
 
 export const UPDATE_AUTH_RESIDUAL = "sha512 proves the download matches the feed only; there is no code signing or publisher check"
@@ -207,7 +208,9 @@ export function refusal(info: FeedInfo, currentVersion: string, now: number): st
   if (info.rollback !== true) return `${info.version} is older than ${currentVersion} and the feed does not declare a rollback`
   const released = Date.parse(String(info.releaseDate ?? ""))
   if (!Number.isFinite(released)) return `the rollback to ${info.version} has no release date`
-  if (now - released > ROLLBACK_DAYS * 24 * 60 * 60 * 1000) return `the rollback to ${info.version} was released more than ${ROLLBACK_DAYS} days ago`
+  const age = now - released
+  if (age < -ROLLBACK_CLOCK_SKEW_MS) return `the rollback to ${info.version} has a release date too far in the future`
+  if (age > ROLLBACK_DAYS * 24 * 60 * 60 * 1000) return `the rollback to ${info.version} was released more than ${ROLLBACK_DAYS} days ago`
   return undefined
 }
 

@@ -505,11 +505,11 @@ function deliverLink(raw: string) {
  * has exited and let go of the lock.
  */
 let relaunchQueued = false
-function relaunchAfterQuit(argv: readonly string[]) {
+function relaunchAfterQuit(argv: readonly string[], link?: string) {
   if (relaunchQueued) return
   relaunchQueued = true
   console.info("[quit] a launch arrived while quitting; it starts once the quit is done")
-  app.relaunch({ args: relaunchArgs(argv) })
+  app.relaunch({ args: relaunchArgs(argv, link) })
 }
 
 app.on("second-instance", (_event, argv) => {
@@ -533,7 +533,7 @@ setRecoveryHost({
 // macOS delivers links as an event rather than as arguments.
 app.on("open-url", (event, url) => {
   event.preventDefault()
-  if (closing) return relaunchAfterQuit([process.execPath, url])
+  if (closing) return relaunchAfterQuit(process.argv, url)
   deliverLink(url)
 })
 
