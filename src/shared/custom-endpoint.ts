@@ -19,6 +19,43 @@ export function normalizeBaseURL(raw: string): string {
     .replace(/\/+$/, "")
 }
 
+/**
+ * Whether the address names a server on a network the person owns.
+ *
+ * A box on the LAN answering OpenAI-compatible traffic - vLLM, llama.cpp,
+ * ExLlama - usually has no key at all, and asking for one there teaches the
+ * habit of typing `test` into the field, which leaves a config that describes a
+ * credential nobody uses. For those the trust boundary is the network: nothing
+ * outside it can reach the port.
+ *
+ * 100.64.0.0/10 counts because that is what a tailnet hands out, and a tailnet
+ * is the same owned network one hop away. A public hostname does not, even when
+ * DNS happens to point it somewhere private - the address in the settings field
+ * is what gets judged, because that is what the person chose.
+ */
+export function selfHostedEndpoint(baseURL: string): boolean {
+  let host: string
+  try {
+    host = new URL(baseURL.trim()).hostname.toLowerCase().replace(/^\[|\]$/g, "")
+  } catch {
+    return false
+  }
+  if (!host) return false
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) return true
+  if (host === "::1" || host === "0:0:0:0:0:0:0:1") return true
+  // IPv6 link-local and unique-local: both are only reachable inside the network.
+  if (/^fe[89ab]/.test(host) || /^f[cd]/.test(host)) return true
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(host)
+  if (!v4) return false
+  const [a, b] = [Number(v4[1]), Number(v4[2])]
+  if (a > 255 || b > 255) return false
+  if (a === 10 || a === 127) return true
+  if (a === 192 && b === 168) return true
+  if (a === 172 && b >= 16 && b <= 31) return true
+  if (a === 169 && b === 254) return true
+  return a === 100 && b >= 64 && b <= 127
+}
+
 /** The model id with every whitespace character removed. */
 export function normalizeModelId(raw: string): string {
   return raw.replace(/\s+/g, "")

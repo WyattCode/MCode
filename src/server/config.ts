@@ -47,7 +47,7 @@ import type { Catalog, CatalogModel } from "@shared/models-dev"
 import { conversational } from "./provider/discover"
 import { modelVariants } from "./provider/variants"
 import { menuEfforts, thinkingMenu, thinkingOf } from "@shared/effort-menu"
-import { modelLimitProblem, normalizeBaseURL, normalizeModelId } from "@shared/custom-endpoint"
+import { modelLimitProblem, normalizeBaseURL, normalizeModelId, selfHostedEndpoint } from "@shared/custom-endpoint"
 import type { OAuthTokens } from "./auth/oauth"
 import { parseJsonc, renderJsonc } from "./jsonc"
 import { ProjectLocations } from "./project-location"
@@ -1712,7 +1712,18 @@ export class Config {
   usable(id: string): boolean {
     if (this.apiKey(id) || this.oauth[id]) return true
     const entry = this.definition(id)
-    return Boolean(entry?.handEntered && entry.headers && Object.keys(entry.headers).length)
+    if (!entry?.handEntered) return false
+    if (entry.headers && Object.keys(entry.headers).length) return true
+    /*
+     * The third way in: a server on the person's own network. The reasoning
+     * above this function held that neither a key nor a header means nothing to
+     * authenticate with, and for a public API that is right. Measured on
+     * 192.168.10.131:8020 it is wrong for a LAN box - `/models` and chat both
+     * answered 200 with no Authorization header, and the only way to make the
+     * model appear in the picker was to store a key that is never sent, which
+     * leaves a config describing a credential that does not exist.
+     */
+    return selfHostedEndpoint(entry.baseURL ?? "")
   }
 
   /**

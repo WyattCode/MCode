@@ -787,6 +787,48 @@ async function checkMemoryReset() {
   }
 }
 
+/*
+ * A server on the person's own network answers without a key, and being told to
+ * type one anyway teaches the wrong habit. Measured against a DeepSeek server on
+ * 192.168.10.131:8020: `/models` and chat both answered 200 with no
+ * Authorization header at all, while the app refused to list the model until a
+ * placeholder key was stored — which leaves a config that lies about the setup.
+ * A public address keeps the old rule, because there a missing key really is a
+ * missing credential.
+ */
+async function checkSelfHostedKeyless(): Promise<void> {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-selfhost-"))
+  try {
+    const storage = new Storage(path.join(root, "data"))
+    const config = new Config(storage, new Bus(), path.join(root, "credentials.json"))
+    await fs.mkdir(storage.directory, { recursive: true })
+    await config.load()
+    const at = (id: string, baseURL: string) => ({ id, name: id, baseURL, models: [{ id: "tiny", name: "tiny" }] })
+    await config.set({
+      customProviders: [
+        at("lan", "http://192.168.10.131:8020/v1"),
+        at("loopback", "http://127.0.0.1:8020/v1"),
+        at("loopback-v6", "http://[::1]:8020/v1"),
+        at("tailscale", "http://100.127.4.9:8080/v1"),
+        at("carrier", "http://172.20.1.5:8000/v1"),
+        at("public-ip", "http://8.8.8.8/v1"),
+        at("public-host", "https://api.example.com/v1"),
+      ],
+    })
+    note("a hand-entered provider on a LAN address is selectable without a key", config.usable("lan") === true)
+    note("loopback is selectable without a key", config.usable("loopback") === true && config.usable("loopback-v6") === true)
+    note("a tailnet address is selectable without a key", config.usable("tailscale") === true && config.usable("carrier") === true)
+    note("a public address still needs a key or a header", config.usable("public-ip") === false && config.usable("public-host") === false)
+    const listed = config.enabled().map((entry) => entry.provider)
+    note("the picker offers the LAN provider and not the public one", listed.includes("lan") && !listed.includes("public-host"), listed)
+    await config.setApiKey("public-host", "a-key")
+    note("a public address with a key becomes selectable", config.usable("public-host") === true)
+  } finally {
+    await fs.rm(root, { recursive: true, force: true })
+  }
+}
+
 await checkSmartRouting()
 await checkMemoryReset()
+await checkSelfHostedKeyless()
 void main()

@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from "vue"
 import type { CustomModel, CustomProvider, Effort, ModelCandidate, ModelInfo } from "@shared/protocol"
 import { THINKING_LEVELS } from "@shared/effort-menu"
-import { modelLimitProblem, normalizeBaseURL, normalizeModelId, normalizeProviderProtocol, PROVIDER_PRESETS } from "@shared/custom-endpoint"
+import { modelLimitProblem, normalizeBaseURL, normalizeModelId, normalizeProviderProtocol, selfHostedEndpoint, PROVIDER_PRESETS } from "@shared/custom-endpoint"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
 import { notice, notifyFailure } from "../lib/toast"
@@ -286,6 +286,13 @@ watch(() => [form.value.baseURL, form.value.apiKey, form.value.protocol, form.va
   probeTurn++
   form.value.probe = idleProbe()
 }, { deep: true, flush: "sync" })
+
+/*
+ * A server on the person's own network answers without a key, so the field says
+ * that rather than implying a credential is missing. The predicate is the one
+ * the server's own gate uses, so the hint cannot drift from what is enforced.
+ */
+const keyOptional = computed(() => selfHostedEndpoint(normalizeBaseURL(form.value.baseURL)))
 
 function headersOf(): Record<string, string> {
   return Object.fromEntries(form.value.headers.map((row) => [row.key.trim(), row.value.trim()] as const).filter(([key, value]) => key && value))
@@ -868,7 +875,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
               v-model="form.apiKey"
               class="cp-in"
               :type="keyShown ? 'text' : 'password'"
-              :placeholder="editing ? t('provider.custom.field.apiKey.keep') : t('model.apiKeyPlaceholder')"
+              :placeholder="editing ? t('provider.custom.field.apiKey.keep') : keyOptional ? t('provider.custom.field.apiKey.optional') : t('model.apiKeyPlaceholder')"
               spellcheck="false"
               autocomplete="off"
               data-custom-key
