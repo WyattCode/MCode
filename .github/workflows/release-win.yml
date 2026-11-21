@@ -113,16 +113,6 @@ jobs:
           npm run build
           node scripts/rounds-check.mjs
 
-      - name: WIN-ENV diagnostics (temporary)
-        shell: bash
-        run: |
-          node scripts/tmp-win-diag-20261122/cmd-bytes.mjs
-          node scripts/tmp-win-diag-20261122/fs-watch-node.mjs
-          npx --no-install esbuild scripts/tmp-win-diag-20261122/watch-electron.ts --bundle --platform=node --format=esm --target=node22 --packages=external --external:electron --alias:@shared=./src/shared --outfile=tmp-local-diag/watch-electron.mjs
-          node scripts/tmp-win-diag-20261122/watch-run.mjs tmp-local-diag/watch-electron.mjs
-          npx --no-install esbuild scripts/tmp-win-diag-20261122/r39-probe.ts --bundle --platform=node --format=esm --target=node22 --packages=external --alias:@shared=./src/shared --outfile=tmp-local-diag/r39-probe.mjs
-          node tmp-local-diag/r39-probe.mjs
-
       - name: Keep the installer as a build artifact
         uses: actions/upload-artifact@v4
         with:
