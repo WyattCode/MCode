@@ -76,10 +76,11 @@ export async function roundThirtyNineChecks(check: Check, section: (name: string
   } else {
     const work = fs.mkdtempSync(path.join(os.tmpdir(), "mcode-r39-page-"))
     const page = path.join(work, "index.html")
-    // A button that counts, and a box animated from script: its style is rewritten every frame, for ever.
+    // A button that counts, and a box animated from script: its style is rewritten every frame, for ever,
+    // and the same interval bumps a monotonic counter the recorder reads - never the time modulo 360.
     fs.writeFileSync(
       page,
-      "<!doctype html><title>R39</title><button id=b onclick=\"this.textContent='clicked '+(++window.n||(window.n=1))\">press</button><a href=\"#\">link</a><div id=spin style=\"width:10px;height:10px;background:red\"></div><script>setInterval(function(){document.getElementById('spin').style.transform='rotate('+Date.now()%360+'deg)'},16)</script>",
+      "<!doctype html><title>R39</title><button id=b onclick=\"this.textContent='clicked '+(++window.n||(window.n=1))\">press</button><a href=\"#\">link</a><div id=spin style=\"width:10px;height:10px;background:red\"></div><script>window.__tick=0;setInterval(function(){window.__tick++;document.getElementById('spin').style.transform='rotate('+Date.now()%360+'deg)'},16)</script>",
     )
     const context = { sessionID: "r39-web", messageID: "m", callID: "c", directory: work, permissions: { ask: async () => undefined, waive: () => undefined }, questions: {}, signal: new AbortController().signal, progress: () => undefined, snapshot: async () => undefined } as unknown as ToolContext
     const run = (input: Record<string, unknown>) => AppTool.execute(input, context)
@@ -98,20 +99,25 @@ export async function roundThirtyNineChecks(check: Check, section: (name: string
        * took 137-143 ms with settle waits of 124-135 ms there (probe in run
        * 44944764891), while the battery's five concurrent modules pushed the
        * same step's wall time to 2,075 / 2,326 / 4,365 ms across three runs.
-       * What separates them on any machine: while the spinner's transform
-       * keeps moving between two reads 1.2 s apart (one animation period of
-       * Chromium's 1 s background clamp, so a throttled page still ticks), the
+       * What separates them on any machine: while the page's own interval keeps
+       * bumping its monotonic tick counter between two reads 1.2 s apart, the
        * recorder's own "last counted change" stamp must not move at all - a
        * style-only frame is never a counted change. Mutating page-scripts to
        * watch style again moves the stamp and puts the step at its 2,500 ms
        * cap (measured on the Mac: took 2,536 ms, stamp 5113 -> 5513).
+       * The tick counter is read directly, not as the transform string: two
+       * reads of `Date.now() % 360` collide whenever the gap between them lands
+       * on a multiple of 360 ms - the 1.2 s read plus the battery's jitter does
+       * that near +224~240 and +584~616 ms, and a false red followed. A counter
+       * has no modulo to collide on, and one tick inside the window is all the
+       * strict `>` needs.
        */
-      const recorder = '({ spin: document.getElementById("spin").style.transform, changedAt: Math.round(window.__mcodeApp.changed) })'
+      const recorder = '({ spin: document.getElementById("spin").style.transform, tick: window.__tick, changedAt: Math.round(window.__mcodeApp.changed) })'
       const readRecorder = async () => JSON.parse(String((await run({ action: "eval", expression: recorder })).output))
       const first = await readRecorder()
       await new Promise((resolve) => setTimeout(resolve, 1_200))
       const second = await readRecorder()
-      check("the page is still animating from script between the two reads", Boolean(first.spin) && first.spin !== second.spin, { first, second })
+      check("the page is still animating from script between the two reads", Number.isFinite(first.tick) && Number.isFinite(second.tick) && second.tick > first.tick, { first, second })
       check("and style changes the animation writes every frame never count as a page change", first.changedAt === second.changedAt, { took, first, second })
 
       const reloaded = await run({ action: "do", steps: [{ action: "reload" }, { action: "click", ref: button }] })
