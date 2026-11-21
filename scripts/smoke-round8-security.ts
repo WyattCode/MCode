@@ -575,9 +575,21 @@ async function maskingChecks(check: Check, section: Section, root: string): Prom
      * it was caught. Replay both publishers here, with the secret still the
      * stored one, so the hole is caught on any machine and any network.
      */
+    /*
+     * A pushed frame crosses the socket when the publish's scheduler gets to
+     * it; a fixed 100 ms pause reads as "the window never got the frame"
+     * whenever a machine pause outruns it - a false red under the battery, not
+     * a masked hole. Poll for arrival with a generous cap and judge on the
+     * facts: the checks below still demand every kind arrived and still count
+     * leaks over everything that did (P2-3).
+     */
+    const waitFrames = async (arrived: (lines: string[]) => boolean, capMs = 2_000) => {
+      const until = Date.now() + capMs
+      while (!arrived(seen) && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 10))
+    }
     backend.runtime.bus.publish({ type: "providers.updated", providers: backend.runtime.config.providers() })
     backend.runtime.bus.publish({ type: "auth.expired", provider: "ollama", name: "Ollama", providers: backend.runtime.config.providers() })
-    await new Promise((resolve) => setTimeout(resolve, 100))
+    await waitFrames((lines) => lines.some((line) => line.includes('"providers.updated"')) && lines.some((line) => line.includes('"auth.expired"')))
     const pushedProviders = seen.filter((line) => line.includes('"providers.updated"'))
     const pushedExpired = seen.filter((line) => line.includes('"auth.expired"'))
     check(
@@ -602,7 +614,7 @@ async function maskingChecks(check: Check, section: Section, root: string): Prom
     await ask(socket, { type: "provider.updateCustom", id: "gw2", name: "Gateway 2c", baseURL: "https://gw3.example/v1", apiKey: "", models: [{ id: "m", name: "M" }] })
     check("round 9: ...while a newly typed address replaces it", backend.runtime.config.get().customProviders[0]?.baseURL === "https://gw3.example/v1")
 
-    await new Promise((resolve) => setTimeout(resolve, 100))
+    await waitFrames((lines) => lines.some((line) => line.includes('"config.updated"')))
     const events = seen.filter((line) => line.includes('"config.updated"'))
     check("every settings event sent to the window is masked", events.length > 0 && events.every((line) => leaks(line) === 0), events.length)
     check("nothing the window was sent holds a secret", seen.every((line) => leaks(line) === 0), seen.length)
@@ -724,11 +736,29 @@ async function approvalChecks(check: Check, section: Section, root: string): Pro
   await config.set({ accessLevel: "ask", permissions: { bash: "ask" } })
   const gate = new Permissions(bus, config)
   const pause = () => new Promise((resolve) => setTimeout(resolve, 20))
+  /*
+   * Two observable facts say whether this call asked (P2-4): a question
+   * parked on the gate, or the call resolved on its own. The fixed 20 ms
+   * pause read "not parked yet" as "did not ask" - a false red under load,
+   * and a question arriving past the pause hung there never answered. Poll
+   * until one fact shows; a call that neither asks nor resolves inside the
+   * cap is a real deadlock and said to be one.
+   */
   const settle = async (running: Promise<string>, answer: "always" | "reject") => {
-    await pause()
-    const parked = gate.outstanding()[0]
+    let resolved = false
+    const done = running.then((outcome) => {
+      resolved = true
+      return outcome
+    })
+    let parked = gate.outstanding()[0]
+    const until = Date.now() + 5_000
+    while (!parked && !resolved && Date.now() < until) {
+      await pause()
+      parked = gate.outstanding()[0]
+    }
     if (parked) gate.respond(parked.id, answer)
-    return { asked: Boolean(parked), outcome: await running }
+    else if (!resolved) throw new Error("neither a permission question nor an answer within 5s")
+    return { asked: Boolean(parked), outcome: await done }
   }
   const attempt = (sessionID: string, subject: string, patterns: string[], always: string[], patternAsks = false) =>
     gate
