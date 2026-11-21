@@ -567,6 +567,36 @@ async function maskingChecks(check: Check, section: Section, root: string): Prom
       keptConfig.customProviders[0]?.baseURL === secretBase && keptConfig.providerEndpoints.ollama === secretLocal,
       leaks(JSON.stringify(keptConfig.customProviders)) + leaks(JSON.stringify(keptConfig.providerEndpoints)),
     )
+    /*
+     * The two bus events that carry a providers list (the models.dev catalog
+     * subscription and an expired sign-in) used to cross the socket unmasked:
+     * frameForWindow masked config.updated and auth.completed only. On the
+     * Windows battery the catalog download lands mid-section, which is where
+     * it was caught. Replay both publishers here, with the secret still the
+     * stored one, so the hole is caught on any machine and any network.
+     */
+    backend.runtime.bus.publish({ type: "providers.updated", providers: backend.runtime.config.providers() })
+    backend.runtime.bus.publish({ type: "auth.expired", provider: "ollama", name: "Ollama", providers: backend.runtime.config.providers() })
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    const pushedProviders = seen.filter((line) => line.includes('"providers.updated"'))
+    const pushedExpired = seen.filter((line) => line.includes('"auth.expired"'))
+    check(
+      "a providers list pushed as an event reaches the window with nothing secret in it",
+      pushedProviders.length > 0 && pushedExpired.length > 0 && [...pushedProviders, ...pushedExpired].every((line) => leaks(line) === 0),
+      pushedProviders.length + pushedExpired.length,
+    )
+    const pushedShows = (source: string, id: string, masked: string) => {
+      try {
+        const frame = JSON.parse(source) as { event?: { providers?: { id: string; baseURL?: string }[] } }
+        return frame.event?.providers?.some((entry) => entry.id === id && entry.baseURL === masked) ?? false
+      } catch {
+        return false
+      }
+    }
+    check(
+      "the pushed list still shows each address, its credential part masked",
+      pushedProviders.some((line) => pushedShows(line, "gw2", `https://${MASK}@gw2.example/v1?api_key=${MASK}&region=eu`) && pushedShows(line, "ollama", `http://${MASK}@127.0.0.1:11434/v1`)),
+    )
     const edited = await ask(socket, { type: "provider.updateCustom", id: "gw2", name: "Gateway 2b", baseURL: shownConfig.customProviders[0]!.baseURL, apiKey: "", models: [{ id: "m", name: "M" }] })
     check("round 9: the provider form saved with the address as shown keeps the stored one", edited.ok && backend.runtime.config.get().customProviders[0]?.baseURL === secretBase && leaks(JSON.stringify(edited.data)) === 0)
     await ask(socket, { type: "provider.updateCustom", id: "gw2", name: "Gateway 2c", baseURL: "https://gw3.example/v1", apiKey: "", models: [{ id: "m", name: "M" }] })
