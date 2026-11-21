@@ -1,4 +1,5 @@
 import { transformTool } from "./transform"
+import { refuseRedirect } from "./redirect"
 import type { Message, ModelModalities, ModelRef } from "@shared/protocol"
 import { TOOL_MEDIA_NOTE, attachmentParts, type WirePart } from "./attachment-parts"
 import { userText } from "@shared/annotations"
@@ -264,6 +265,7 @@ async function streamResponses(
   const guard = stallGuard(request.signal, true)
   const response = await fetch(target.url, {
     method: "POST",
+    redirect: "manual",
     headers,
     signal: guard.signal,
     body: JSON.stringify({
@@ -288,6 +290,7 @@ async function streamResponses(
     throw guard.failure(err)
   })
 
+  refuseRedirect(target.url, response)
   if (!response.ok || !response.body) {
     guard.dispose()
     const detail = await response.text().catch(() => "")

@@ -1,4 +1,5 @@
 import { compatibleOptions } from "./gemini"
+import { refuseRedirect } from "./redirect"
 import type { Message, ModelModalities, ModelRef, Usage } from "@shared/protocol"
 import { transformTool } from "./transform"
 import { TOOL_MEDIA_NOTE, attachmentParts, type WirePart } from "./attachment-parts"
@@ -273,6 +274,7 @@ export const OpenAICompatible: ProviderAdapter = {
     const guard = stallGuard(request.signal, false)
     const response = await fetch(`${root}/chat/completions`, {
       method: "POST",
+      redirect: "manual",
       headers: {
         /*
          * A custom provider's own headers, first, so that the two this call
@@ -312,6 +314,7 @@ export const OpenAICompatible: ProviderAdapter = {
       throw guard.failure(err)
     })
 
+    refuseRedirect(`${root}/chat/completions`, response)
     if (!response.ok || !response.body) {
       guard.dispose()
       const detail = await response.text().catch(() => "")
