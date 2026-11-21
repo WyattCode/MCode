@@ -38,3 +38,14 @@ line(
   "powershell-echo",
   spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "$OutputEncoding = [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false; echo 中文"], hide()),
 )
+// 8. what the app's consoleEncoding() and the test's codePage() themselves see: chcp.com launched directly, hidden
+try {
+  const answer = execFileSync("chcp.com", { windowsHide: true }).toString("latin1")
+  console.log(`chcp-com-direct: bytes=[${Buffer.from(answer, "latin1").toString("hex").match(/../g).join(" ")}]`)
+  const page = /(\d{3,5})/.exec(answer)?.[1]
+  console.log(`codePage-resolved: ${JSON.stringify(page)}`)
+} catch (error) {
+  console.log(`chcp-com-direct: threw ${String(error?.message ?? error).slice(0, 160)}`)
+  console.log("codePage-resolved: undefined")
+}
+// note: probes 1-2 ran without windowsVerbatimArguments and cmd choked on the quoting; probes 3-6 are the production shape.
