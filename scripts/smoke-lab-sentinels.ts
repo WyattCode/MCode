@@ -7,7 +7,7 @@
  * then failed on behaviour the model never meant to touch. Sentinels travel as visible tokens
  * and come back as themselves, so a file can be rewritten without losing what cannot be seen.
  */
-import { controlTokens, tokensToControl } from "../src/server/lab"
+import { controlTokens, decodeTokensForFiles, tokensToControl, tokenScope } from "../src/server/lab"
 
 type Check = (label: string, ok: boolean, detail?: unknown) => void
 
@@ -33,4 +33,30 @@ export async function labControlTokensChecks(check: Check) {
   check("unrelated bracketed text is not restored", tokensToControl("a ⟦ not a token ⟧ b") === "a ⟦ not a token ⟧ b")
   check("every control character has a token", controlTokens("\x01\x02\x03\x1f\x0b\x0c\x7f").text === "⟦0001⟧⟦0002⟧⟦0003⟧⟦001f⟧⟦000b⟧⟦000c⟧⟦007f⟧", controlTokens("\x01\x02\x03\x1f\x0b\x0c\x0d\x7f").text.replace(/\n/g, "\\n"))
   check("tabs, newlines and carriage returns stay as they are", controlTokens("a\tb\nc\r\nd").text === "a\tb\nc\r\nd", JSON.stringify(controlTokens("a\tb\nc\r\nd").text))
+
+  /*
+   * The escape decision is made per source file, so the restore has to be made per file too:
+   * a two-file task where one file carries a sentinel and the other already spells the token
+   * must not have its second file rewritten. Measured on 1.2.5, one global flag decoded every
+   * returned file, so `⟦0041⟧` in the untouched file came back as "A".
+   */
+  const scope = tokenScope(['const x = "\x03svg\x03"\n', 'const y = "⟦0041⟧"\n'], ["a.ts", "b.ts"])
+  check("only the file with a sentinel is in the decode scope", scope.size === 1 && scope.has("a.ts"), [...scope])
+  const patch = [
+    "diff --git a/a.ts b/a.ts",
+    "--- a/a.ts",
+    "+++ b/a.ts",
+    "@@ -1 +1 @@",
+    '-const x = "svg"',
+    '+const x = "⟦0003⟧svg⟦0003⟧"',
+    "diff --git a/b.ts b/b.ts",
+    "--- a/b.ts",
+    "+++ b/b.ts",
+    "@@ -1 +1 @@",
+    '-const y = 0',
+    '+const y = "⟦0041⟧"',
+    "",
+  ].join("\n")
+  const decoded = decodeTokensForFiles(patch, scope)
+  check("a patch is decoded only inside the escaped file", decoded.includes('+const x = "\x03svg\x03"') && decoded.includes('+const y = "⟦0041⟧"'), JSON.stringify(decoded))
 }

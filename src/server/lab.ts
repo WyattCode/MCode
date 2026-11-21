@@ -137,7 +137,7 @@ export function labFiles(text: string, task: LabTask): { file: string; content: 
     // A model that closes its own block leaves its marker and a sign-off inside the range.
     const end = content.search(/^=== END ===\s*$/m)
     if (end >= 0) content = content.slice(0, end)
-    content = content.replace(/^\s*\n/, "").replace(/[ \t]+$/gm, "").replace(/\n+$/, "")
+    content = content.replace(/^\s*\n/, "").replace(/\n+$/, "")
     if (!content.trim()) throw Error(`The reply has no file content for ${file}`)
     out.push({ file, content: `${content}\n` })
   }
@@ -166,6 +166,32 @@ export function tokensToControl(text: string): string {
 }
 
 /**
+ * Which of the task's files were sent off with their control characters tokenised.
+ *
+ * `sources` is built by mapping over `task.files`, so position `n` here describes file `n`.
+ */
+export function tokenScope(sources: string[], files: string[]): Set<string> {
+  return new Set(files.filter((_, at) => controlTokens(sources[at] ?? "").escaped))
+}
+
+/**
+ * Restore the tokens, but only inside the sections of a reply that belong to a file that was
+ * tokenised. One global flag was the first version and it was wrong in the ordinary way: a
+ * two-file task where `a.ts` carries a sentinel and `b.ts` already spells `⟦0041⟧` in its own
+ * source came back with `b.ts` rewritten to contain a literal "A".
+ */
+export function decodeTokensForFiles(reply: string, escaped: Set<string>): string {
+  if (!escaped.size) return reply
+  return reply
+    .split(/(?=^diff --git )/m)
+    .map((section) => {
+      const file = /^\+\+\+ b\/(.*)$/m.exec(section)?.[1]?.trim() ?? /^diff --git a\/(.+?) b\/(.+?)$/m.exec(section)?.[2]
+      return file && escaped.has(file) ? tokensToControl(section) : section
+    })
+    .join("")
+}
+
+/**
  * The model is asked for a bare diff and hands back a sentence, a fence, or both. Taking
  * the diff out of that reply is not a loosening: every rule below still runs on what is
  * left, so an unscoped, renamed or binary patch is refused exactly as before.
@@ -185,7 +211,12 @@ function extractDiff(text: string): string {
       if (body[line].trim() === "```") return body.slice(0, line).join("\n")
     }
   }
-  while (body.length && !body[body.length - 1].trim()) body.pop()
+  // Only a truly empty line is padding. A line holding nothing but a space is the context line
+  // for an unchanged blank line in the file, and the hunk header counts it: dropping it leaves a
+  // patch that `git apply` answers `corrupt patch at line N` (measured: exit 128 on a two-line
+  // hunk whose last line was that space), so a correct reply is thrown away as if the model had
+  // produced garbage.
+  while (body.length && body[body.length - 1] === "") body.pop()
   return body.join("\n")
 }
 
@@ -424,7 +455,8 @@ export class Lab {
         // A model that was given whole files may hand whole files back; one that saw excerpts may only send a diff.
         const whole = sources.every((text) => !text.includes(" (excerpts):"))
         const given = sources.map((text) => controlTokens(text))
-        const escaping = given.some((entry) => entry.escaped)
+        const escapedFiles = tokenScope(sources, task.files)
+        const escaping = escapedFiles.size > 0
         for (const candidate of candidates) candidate.card.stage = "patching"
         const outcomes = await fanout.generate(candidates.map(({ card }) => ({
           name: `${task.id}-${card.worker}`,
@@ -472,7 +504,7 @@ export class Lab {
             const files = whole ? labFiles(outcome.text, task) : null
             if (files) {
               for (const entry of files) {
-                await fs.writeFile(path.join(directory, entry.file), escaping ? tokensToControl(entry.content) : entry.content)
+                await fs.writeFile(path.join(directory, entry.file), escapedFiles.has(entry.file) ? tokensToControl(entry.content) : entry.content)
               }
               card.diff = await candidateDiff(directory, task)
               if (!card.diff.trim()) throw Error("The reply rewrote the files without changing them")
@@ -480,7 +512,7 @@ export class Lab {
               patch = card.diff
             } else {
               try {
-                patch = labPatch(escaping ? tokensToControl(outcome.text) : outcome.text, task)
+                patch = labPatch(escaping ? decodeTokensForFiles(outcome.text, escapedFiles) : outcome.text, task)
               } catch (error) {
                 throw Error(`${problem(error)}${outcome.note ? ` — ${outcome.note}` : ""}`)
               }

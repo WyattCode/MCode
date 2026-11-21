@@ -5,7 +5,7 @@
  * files instead and lets Git make the patch. Scope still has to be enforced here, because
  * the reply is model text and a file outside the task must never be written to the checkout.
  */
-import { labFiles } from "../src/server/lab"
+import { labFiles, labPatch } from "../src/server/lab"
 import type { LabTask } from "../src/server/lab-catalog"
 
 type Check = (label: string, ok: boolean, detail?: unknown) => void
@@ -29,6 +29,13 @@ function refuse(text: string): string {
 }
 
 export async function labFilesChecks(check: Check) {
+  /*
+   * Two trailing spaces are a line break in Markdown and padding inside a template literal, so
+   * a whole-file reply is not ours to tidy. Stripping them made an unchanged reply look like a
+   * change, and quietly edited lines the model never meant to touch.
+   */
+  const padded = labFiles("=== FILE src/a.ts ===\nmarkdown hard break  \nexport const b = 2\n", task)
+  check("trailing spaces inside the file are kept", padded?.[0]?.content === "markdown hard break  \nexport const b = 2\n", JSON.stringify(padded?.[0]?.content))
   const two = [
     "=== FILE src/a.ts ===",
     "export const a = 1",
@@ -50,6 +57,24 @@ export async function labFilesChecks(check: Check) {
   // A reply that is not this contract at all returns nothing, so the caller can fall back to the diff.
   check("a diff reply is not this contract", labFiles("diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-x\n+y\n", task) === null)
   check("an empty reply is not this contract", labFiles("", task) === null)
+
+  /*
+   * The last hunk line of a patch is often the single space that stands for an unchanged blank
+   * line in the file. Trimming it off the end of a reply is not cosmetic: the hunk header still
+   * counts that line, so `git apply` calls the result corrupt and a correct reply is thrown away.
+   */
+  const trailingBlank = [
+    "diff --git a/src/a.ts b/src/a.ts",
+    "--- a/src/a.ts",
+    "+++ b/src/a.ts",
+    "@@ -1,2 +1,2 @@",
+    "-const a = 1",
+    "+const a = 2",
+    " ",
+    "",
+  ].join("\n")
+  const kept = labPatch(trailingBlank, task)
+  check("a patch's trailing blank context line survives", kept.endsWith("\n \n"), JSON.stringify(kept))
 
   // Scope is the whole point: a file the task does not own is refused by name, not written.
   check("an unscoped file is refused by name", /src\/c\.ts/.test(refuse("=== FILE src/c.ts ===\nnope\n")), refuse("=== FILE src/c.ts ===\nnope\n"))
