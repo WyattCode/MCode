@@ -247,7 +247,18 @@ export async function roundTenBashChecks(check: Check, section: (name: string) =
       const posix = `/${target[0].toLowerCase()}${target.slice(2).replace(/\\/g, "/")}`
       check("a /c/ path names drive C", windowsPath("/c/Users/x") === "C:/Users/x" && windowsPath("/mnt/d/a") === "D:/a" && windowsPath("/cygdrive/e") === "E:/" && windowsPath("/tmp") === "/tmp")
       const ran = await run({ command: `node "${where}"`, workdir: posix })
-      check("a workdir written /c/... runs the command in that folder", ran.output.trim().toLowerCase() === target.toLowerCase(), { posix, output: ran.output })
+      /*
+       * Compared by folder, not by spelling: GitHub's Windows runners name the
+       * temp folder in 8.3 form (`C:\Users\RUNNER~1\...`) while the command's
+       * own process.cwd() answers with the long name of that same folder.
+       * realpath expands the short spelling, and a command that really ran
+       * somewhere else still lands on a different folder.
+       */
+      const folder = (text: string) => {
+        const flat = path.win32.resolve(text.trim())
+        return fs.realpath(flat).then((real) => real.toLowerCase(), () => flat.toLowerCase())
+      }
+      check("a workdir written /c/... runs the command in that folder", (await folder(ran.output)) === (await folder(target)), { posix, output: ran.output, target })
     }
     const missing = await run({ command: `node "${where}"`, workdir: "no-such-folder" })
     check("a workdir that does not exist is named as such, not as a missing shell", missing.output.startsWith("ERROR workdir does not exist") && !/ENOENT/.test(missing.output), missing.output)
