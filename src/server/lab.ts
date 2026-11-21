@@ -74,6 +74,33 @@ function problem(error: unknown): string {
  * the way a hand-written diff did. Scope is checked here because the reply is model text and
  * a file the task does not own must never reach the checkout.
  */
+/*
+ * The candidate's checkout has to carry the bug in its index as well as in its files, because
+ * the patch handed to the arena is whatever `git diff` says there, and the arena is a checkout
+ * with the bug applied to its index. When only the files were changed, the candidate's diff was
+ * measured against clean code: it replayed onto a bugged tree and `git apply` refused it at the
+ * hunk the regression itself had moved — a run whose candidate had passed every acceptance test
+ * died there, reporting only `patch does not apply` far from the cause.
+ */
+export async function enterBugState(directory: string, scratch: string, task: LabTask): Promise<void> {
+  await applyPatch(directory, scratch, task.regression, task, true)
+}
+
+/*
+ * Only one candidate per task is replayed into the arena, so this order decides which patch the
+ * project gets. Sorting by length alone — which is what it was — lets a one-line guess outrank
+ * the candidate that passed every acceptance test, and the round then dies in the arena over the
+ * weaker choice. Correctness first, then the smaller diff, then the worker slot for determinism.
+ */
+export function rankRepairs<T extends { patch: string; card: { score?: number; worker: number } }>(repairs: T[]): T[] {
+  return [...repairs].sort((a, b) => (b.card.score ?? 0) - (a.card.score ?? 0) || a.patch.length - b.patch.length || a.card.worker - b.card.worker)
+}
+
+/** What the candidate claims to have fixed, relative to the bug it was shown. */
+export async function candidateDiff(directory: string, task: LabTask): Promise<string> {
+  return labGit(directory, ["diff", "--no-color", "--", ...task.files])
+}
+
 export function labFiles(text: string, task: LabTask): { file: string; content: string }[] | null {
   const marks = [...text.matchAll(/^=== FILE (.+?) ===$/gm)]
   if (!marks.length) return null
@@ -164,7 +191,7 @@ export function labPatch(text: string, task: LabTask): string {
   return patch
 }
 
-async function applyPatch(directory: string, scratch: string, patch: string, task: LabTask, index = false): Promise<string> {
+export async function applyPatch(directory: string, scratch: string, patch: string, task: LabTask, index = false): Promise<string> {
   const file = path.join(scratch, `${randomUUID()}.diff`)
   await fs.writeFile(file, patch, { mode: 0o600 })
   try {
@@ -346,7 +373,7 @@ export class Lab {
           const card: LabCard = { round: index + 1, worker: slot, task: task.id, title: task.title, stage: "selecting" }
           run.cards.push(card)
           const directory = await checkout(`round-${index + 1}-${slot}`)
-          await applyPatch(directory, scratch, task.regression, task)
+          await enterBugState(directory, scratch, task)
           candidates.push({ card, directory })
         }
         // The tool-free model sees only the scoped source paths from its bug-state checkout.
@@ -354,7 +381,8 @@ export class Lab {
           const source = await fs.readFile(path.join(candidates[0].directory, file), "utf8")
           if (source.length <= 64_000) return `File ${file}:\n${source}`
           // Use the actual bug-state line numbers, since HEAD can be newer than the seed commit.
-          const diff = await labGit(candidates[0].directory, ["diff", "--no-ext-diff", "--no-textconv", "--", file])
+          // The index carries the bug too, so the bug's own lines are only visible against `base`.
+          const diff = await labGit(candidates[0].directory, ["diff", "--no-ext-diff", "--no-textconv", base, "--", file])
           const lines = source.split("\n")
           const excerpts = [...diff.matchAll(/^@@ .*? \+(\d+)(?:,\d+)? @@/gm)].map((match) => {
             const first = Math.max(0, Number(match[1]) - 18)
@@ -416,9 +444,9 @@ export class Lab {
               for (const entry of files) {
                 await fs.writeFile(path.join(directory, entry.file), escaping ? tokensToControl(entry.content) : entry.content)
               }
-              card.diff = await labGit(directory, ["diff", "--no-color", "--", ...task.files])
+              card.diff = await candidateDiff(directory, task)
               if (!card.diff.trim()) throw Error("The reply rewrote the files without changing them")
-              // What the arena replays is this patch, so a candidate's own checkout and the arena end up identical.
+              // Both sides start from the bug, so this patch and the arena's replay cannot disagree.
               patch = card.diff
             } else {
               try {
@@ -447,8 +475,7 @@ export class Lab {
         }))
         for (const result of verified) if (result.status === "rejected") throw result.reason
         signal.throwIfAborted()
-        const ranked = verified.flatMap((result) => result.status === "fulfilled" && result.value ? [result.value] : [])
-          .sort((a, b) => a.patch.length - b.patch.length || a.card.worker - b.card.worker)
+        const ranked = rankRepairs(verified.flatMap((result) => result.status === "fulfilled" && result.value ? [result.value] : []))
         if (ranked[0]) repairs.push(ranked[0])
         for (const repair of ranked.slice(1)) repair.card.stage = "discarded"
       }
