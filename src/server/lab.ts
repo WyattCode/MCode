@@ -96,6 +96,29 @@ export function rankRepairs<T extends { patch: string; card: { score?: number; w
   return [...repairs].sort((a, b) => (b.card.score ?? 0) - (a.card.score ?? 0) || a.patch.length - b.patch.length || a.card.worker - b.card.worker)
 }
 
+/*
+ * A task is a patch taken from real history, and history moves. LAB-05's file took 185 commits
+ * since the task was written, so its regression no longer lands — and because that patch is
+ * applied while preparing the candidates, outside a candidate's error handling, one rotten task
+ * failed the whole run and swept seven healthy ones into `discarded` with no reason. Checking
+ * the patch against the arena, which is still pristine at this point, costs one Git call and
+ * lets a stale task cost only its own round.
+ */
+export async function staleTask(arena: string, scratch: string, task: LabTask): Promise<string> {
+  const file = path.join(scratch, `${randomUUID()}.check.diff`)
+  await fs.writeFile(file, task.regression, { mode: 0o600 })
+  try {
+    await labGit(arena, ["apply", "--check", "--whitespace=nowarn", file])
+    return ""
+  } catch (error) {
+    const text = problem(error)
+    const first = text.split("\n").find((line) => line.includes("error:")) ?? text.split("\n")[0]
+    return `The task's regression no longer applies to this checkout — ${task.id}: ${first}`
+  } finally {
+    await fs.rm(file, { force: true })
+  }
+}
+
 /** What the candidate claims to have fixed, relative to the bug it was shown. */
 export async function candidateDiff(directory: string, task: LabTask): Promise<string> {
   return labGit(directory, ["diff", "--no-color", "--", ...task.files])
@@ -368,6 +391,13 @@ export class Lab {
       const fanout = this.runner.fanoutControl({ sessionID, signal })
       const repairs: Repair[] = []
       for (const [index, task] of labTasks.slice(0, options.rounds).entries()) {
+        const stale = await staleTask(arena, scratch, task)
+        if (stale) {
+          for (let slot = 1; slot <= options.concurrency; slot++) {
+            run.cards.push({ round: index + 1, worker: slot, task: task.id, title: task.title, stage: "discarded", error: stale })
+          }
+          continue
+        }
         const candidates: Candidate[] = []
         for (let slot = 1; slot <= options.concurrency; slot++) {
           const card: LabCard = { round: index + 1, worker: slot, task: task.id, title: task.title, stage: "selecting" }
