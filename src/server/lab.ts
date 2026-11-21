@@ -112,6 +112,12 @@ export async function staleTask(arena: string, scratch: string, task: LabTask): 
     return ""
   } catch (error) {
     const text = problem(error)
+    // Only Git's own mismatch complaints may be called stale. Everything else — a repository it
+    // could not open, an object it could not read, a `git` that never started — is an outage, and
+    // an outage reported as stale costs the task in silence while the round finishes green with
+    // fewer tasks than the catalog holds. Default to raising: a task is dropped only on evidence.
+    const mismatch = /error: (?:patch failed|patch does not apply|does not match index|corrupt patch|repository lacks these prerequisite commits)/i
+    if (!mismatch.test(text)) throw error
     const first = text.split("\n").find((line) => line.includes("error:")) ?? text.split("\n")[0]
     return `The task's regression no longer applies to this checkout — ${task.id}: ${first}`
   } finally {

@@ -47,10 +47,33 @@ export async function labStaleChecks(check: Check) {
     check("the message names the task so a card can show which one", stale.includes("LAB-X"), stale)
     check("the message carries Git's own complaint", stale.includes("steps.ts"), stale)
 
+    // Asked before the fixture restores anything: after a restore commit the tree is clean
+    // whatever the check did to it, so the assertion below could never notice a side effect.
+    check("checking leaves the checkout untouched", git(repo, "status", "--porcelain") === "", git(repo, "status", "--porcelain"))
+
+    /*
+     * A Git that could not run at all — no repository, an index lock, an unreadable object — says
+     * `fatal:`, which is not the same event as a patch that no longer matches the file. Reported as
+     * stale, the task is skipped and the round goes green with fewer tasks than the catalog has.
+     */
+    const savedPath = process.env.PATH
+    try {
+      process.env.PATH = ""
+      let infrastructure = ""
+      try {
+        await staleTask(repo, scratch, task)
+      } catch (error) {
+        infrastructure = error instanceof Error ? error.message : String(error)
+      }
+      check("a Git that never started is raised instead of called stale", infrastructure !== "", infrastructure)
+    } finally {
+      process.env.PATH = savedPath
+    }
+
     await fs.writeFile(path.join(repo, "steps.ts"), ORIGINAL)
     git(repo, "add", "steps.ts")
     git(repo, "-c", "user.name=t", "-c", "user.email=t@localhost", "commit", "-q", "-m", "back")
-    check("checking leaves the checkout untouched", git(repo, "status", "--porcelain") === "", git(repo, "status", "--porcelain"))
+    check("the checkout is clean again once the fixture restores the file", git(repo, "status", "--porcelain") === "", git(repo, "status", "--porcelain"))
     check("no patch file is left behind in scratch", (await fs.readdir(scratch)).length === 0, await fs.readdir(scratch))
   } finally {
     await fs.rm(repo, { recursive: true, force: true })
