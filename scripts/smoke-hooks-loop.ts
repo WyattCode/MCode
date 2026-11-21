@@ -218,7 +218,19 @@ register("a hook that refuses the call keeps the tool from acting and the model 
   const r = await rig()
   try {
     const sideEffect = path.join(r.root, "must-not-exist")
-    await projectHooks(r.directory, { PreToolUse: [{ matcher: "*", command: `printf 'no bash on this project\\nsecond line the model never needs' >&2; exit 2` }] })
+    /*
+     * The refusal is spelled in the one interpreter either shell can run, for the same reason
+     * the first case abandoned printf: on Windows the hook goes through `cmd.exe /d /s /c`,
+     * where printf is not a command, `;` is an argument separator rather than a statement
+     * separator, and `>&2` is not cmd redirection — the old POSIX fixture never reached
+     * `exit 2`, the engine correctly read a non-2 code as "not a refusal", and the command
+     * ran; that is the measured cause of this case's Windows failure in run 44949680691
+     * ("the blocked command still ran"). A node script writing stderr and exiting 2 says the
+     * same thing in both shells, so every assert below keeps its exact meaning on Windows.
+     */
+    const refuser = path.join(r.root, "hook-refuse.mjs")
+    await fs.writeFile(refuser, "process.stderr.write('no bash on this project\\nsecond line the model never needs\\n')\nprocess.exit(2)\n", "utf8")
+    await projectHooks(r.directory, { PreToolUse: [{ matcher: "*", command: `node "${refuser}"` }] })
     const { parts, seen } = await r.turn("HOOKBLOCK", bash(`${markCommand(sideEffect)} && echo should-not-run`))
     expect(!(await fs.stat(sideEffect).then(() => true, () => false)), "the blocked command still ran")
     expect(!String(parts[0]?.output ?? "").includes("should-not-run"), parts[0]?.output)
