@@ -31,8 +31,20 @@ const LAB_GIT_ENV: NodeJS.ProcessEnv = {
   GIT_INDEX_FILE: undefined, GIT_NAMESPACE: undefined, GIT_OBJECT_DIRECTORY: undefined,
   GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined, GIT_CONFIG: undefined,
   GIT_TERMINAL_PROMPT: "0",
-  GIT_CONFIG_COUNT: "2", GIT_CONFIG_KEY_0: "core.hooksPath", GIT_CONFIG_VALUE_0: "/dev/null",
-  GIT_CONFIG_KEY_1: "core.fsmonitor", GIT_CONFIG_VALUE_1: "false", GIT_CONFIG_PARAMETERS: undefined,
+  GIT_CONFIG_COUNT: "5", GIT_CONFIG_KEY_0: "core.hooksPath", GIT_CONFIG_VALUE_0: "/dev/null",
+  GIT_CONFIG_KEY_1: "core.fsmonitor", GIT_CONFIG_VALUE_1: "false",
+  /*
+   * The diff contract is pinned, not inherited. A person's own `diff.noprefix = true` turns the
+   * recorded patch into one whose `---`/`+++` lines disagree with its `diff --git` headers, so the
+   * arena refuses candidates that are perfectly good; a `diff.external` tool sends the diff to a
+   * GUI and leaves stdout empty, which reads as an empty patch. Line-ending rules are pinned for
+   * the same reason: the candidate side records the patch and the arena side replays it, and the
+   * two must be speaking the same rules whatever the machine is set to.
+   */
+  GIT_CONFIG_KEY_2: "diff.noprefix", GIT_CONFIG_VALUE_2: "false",
+  GIT_CONFIG_KEY_3: "core.autocrlf", GIT_CONFIG_VALUE_3: "false",
+  GIT_CONFIG_KEY_4: "core.safecrlf", GIT_CONFIG_VALUE_4: "false",
+  GIT_CONFIG_PARAMETERS: undefined,
 }
 
 function labGit(directory: string, args: string[]): Promise<string> {
@@ -127,7 +139,9 @@ export async function staleTask(arena: string, scratch: string, task: LabTask): 
 
 /** What the candidate claims to have fixed, relative to the bug it was shown. */
 export async function candidateDiff(directory: string, task: LabTask): Promise<string> {
-  return labGit(directory, ["diff", "--no-color", "--", ...task.files])
+  // `--no-ext-diff`: a configured external diff tool is a person's choice for looking at code,
+  // not a licence to hand the lab an empty patch.
+  return labGit(directory, ["diff", "--no-color", "--no-ext-diff", "--", ...task.files])
 }
 
 export function labFiles(text: string, task: LabTask): { file: string; content: string }[] | null {

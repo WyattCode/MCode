@@ -132,6 +132,36 @@ export async function labReplayChecks(check: Check) {
       replay = error instanceof Error ? error.message : String(error)
     }
     check("an accepted candidate can be replayed from what was recorded", replay === "", replay)
+
+    /*
+     * The person's own git config must not be able to change the shape of a recorded diff. With
+     * `diff.noprefix = true` git answers `--- a/a.ts` as `--- a/a.ts` minus its prefix, so the
+     * header agreement rule rejects every candidate on that machine, and `diff.external` hands the
+     * diff to a GUI tool and leaves stdout empty — which reads as "the patch changed nothing". Both
+     * are ordinary settings on a developer box, and neither has anything to do with the candidate.
+     */
+    const configHome = await fs.mkdtemp(path.join(os.tmpdir(), "lab-gitconfig-"))
+    const personalConfig = path.join(configHome, "config")
+    await fs.writeFile(
+      personalConfig,
+      "[diff]\n\tnoprefix = true\n" + (process.platform === "win32" ? "" : "\texternal = /bin/true\n"),
+    )
+    const savedGlobalConfig = process.env.GIT_CONFIG_GLOBAL
+    try {
+      process.env.GIT_CONFIG_GLOBAL = personalConfig
+      let shaped = ""
+      let shapedError = ""
+      try {
+        shaped = await candidateDiff(second, task)
+      } catch (error) {
+        shapedError = error instanceof Error ? error.message.split("\n")[0] : String(error)
+      }
+      check("a personal gitconfig cannot reshape a recorded diff", shaped.includes("--- a/a.ts") && shaped.includes("+++ b/a.ts"), { shapedError, shaped: shaped.slice(0, 120) })
+    } finally {
+      if (savedGlobalConfig === undefined) delete process.env.GIT_CONFIG_GLOBAL
+      else process.env.GIT_CONFIG_GLOBAL = savedGlobalConfig
+      await fs.rm(configHome, { recursive: true, force: true })
+    }
   } finally {
     for (const directory of worktrees) {
       try {
