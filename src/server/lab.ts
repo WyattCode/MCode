@@ -134,7 +134,10 @@ export async function staleTask(arena: string, scratch: string, task: LabTask): 
     // an outage reported as stale costs the task in silence while the round finishes green with
     // fewer tasks than the catalog holds. Default to raising: a task is dropped only on evidence.
     const mismatch = /error: (?:patch failed|patch does not apply|does not match index|corrupt patch|repository lacks these prerequisite commits)/i
-    if (!mismatch.test(text)) throw error
+    // Git reports a pre-image that is gone as `error: <path>: No such file or directory`, with the
+    // path between the prefix and the complaint, so it cannot share the alternation above. A file
+    // the regression was cut against no longer exists: that is staleness, and it costs one task.
+    if (!mismatch.test(text) && !/: no such file or directory/i.test(text)) throw error
     const first = text.split("\n").find((line) => line.includes("error:")) ?? text.split("\n")[0]
     return `The task's regression no longer applies to this checkout — ${task.id}: ${first}`
   } finally {
@@ -146,7 +149,10 @@ export async function staleTask(arena: string, scratch: string, task: LabTask): 
 export async function candidateDiff(directory: string, task: LabTask): Promise<string> {
   // `--no-ext-diff`: a configured external diff tool is a person's choice for looking at code,
   // not a licence to hand the lab an empty patch.
-  const diff = await labGit(directory, ["diff", "--no-color", "--no-ext-diff", "--", ...task.files])
+  // The prefixes are spelled out rather than left to `diff.noprefix=false`: a personal
+  // `diff.srcPrefix`/`diff.dstPrefix` overrides that pin and renames the headers, and the arena
+  // replays this exact text with `git apply`.
+  const diff = await labGit(directory, ["diff", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", "--unified=3", "--", ...task.files])
   if (diff.length > MAX_PATCH_BYTES) {
     throw Error(`The candidate's patch is ${diff.length} bytes, over the ${MAX_PATCH_BYTES} (96KB) limit every candidate patch obeys`)
   }
