@@ -102,13 +102,26 @@ export class RepoRoots {
         console.warn(`[repo-roots] the cache was damaged; the file was kept as ${aside}`)
       }
       const stored = read.value
+      let foldedOldSpellings = false
       for (const [directory, entry] of Object.entries(stored?.e ?? {})) {
         if (!directory || !entry || typeof entry !== "object") continue
         const root = typeof entry.root === "string" ? entry.root : null
         const at = typeof entry.at === "number" && Number.isFinite(entry.at) ? entry.at : 0
-        const known = this.entries.get(directory)
-        if (!known || known.at < at) this.entries.set(directory, { root, at })
+        /*
+         * The first version stored each answer under the raw string it was
+         * asked with. Before an upgrade those keys are in the document, and a
+         * later lookup - which always asks by folder key - never hits them:
+         * the folder looked unknown, got re-asked, and the stale key rode
+         * every save back into the file, one folder holding two keys for
+         * good (P3-3). Fold each into its folder key at load, the newer
+         * answer winning, and save so the old spelling leaves the document.
+         */
+        const key = await folderKey(directory)
+        if (key !== directory) foldedOldSpellings = true
+        const known = this.entries.get(key)
+        if (!known || known.at < at) this.entries.set(key, { root, at })
       }
+      if (foldedOldSpellings) this.save()
     })()
     return this.loaded
   }

@@ -504,6 +504,42 @@ export async function roundTenGitChecks(check: Check, section: (name: string) =>
       (await same((await keptFor(linked))?.root ?? undefined, main)) && (await keptFor(plain))?.root === null && !(await keptFor(gone)),
       kept,
     )
+
+    /*
+     * Before the folderKey rule existed, each answer was stored under the raw
+     * string it was asked with. Those legacy keys never hit a later lookup,
+     * were never collected, and rode every save back into the document - one
+     * folder, two keys, forever (P3-3). Seed one as it stands on such a disk
+     * and demand it folds into the folder's own key at load, the newer answer
+     * winning, and that the saved document is left with the one key.
+     */
+    const legacyAlias = path.join(temp, "legacy-spelling-of-sub")
+    await fs.symlink(sub, legacyAlias, "junction")
+    const subPhysical = process.platform === "win32" ? (await fs.realpath(sub)).toLowerCase() : await fs.realpath(sub)
+    const newerAnswer = path.join(temp, "the-newer-answer")
+    const olderAnswer = path.join(temp, "the-older-answer")
+    await storage.write("repo-roots-cache", {
+      v: 1,
+      e: {
+        [legacyAlias]: { root: newerAnswer, at: 999 },
+        [subPhysical]: { root: olderAnswer, at: 900 },
+      },
+    })
+    const upgraded = new RepoRoots(storage, () => 1000)
+    const foldedAnswer = await upgraded.resolve([sub])
+    check(
+      "a cached answer stored under a legacy raw spelling still answers its folder, and the newer answer wins the fold",
+      foldedAnswer.roots[sub] === newerAnswer,
+      foldedAnswer,
+    )
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    const foldedDoc = (await storage.read<{ e?: Record<string, { root: string | null; at: number }> }>("repo-roots-cache"))?.e ?? {}
+    check(
+      "the saved document holds one key for that folder - the folder's own - the old spelling gone",
+      foldedDoc[subPhysical]?.root === newerAnswer && foldedDoc[subPhysical]?.at === 999 && !(legacyAlias in foldedDoc),
+      Object.keys(foldedDoc),
+    )
+
     let clock = Date.now()
     const later = new RepoRoots(storage, () => clock)
     check("a kept answer is used at once", (await same((await later.resolve([linked])).roots[linked], main)))
