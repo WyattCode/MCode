@@ -475,6 +475,21 @@ export async function roundTenGitChecks(check: Check, section: (name: string) =>
       await fs.symlink(linked, viaJunction, "junction")
       await roots.resolve([viaJunction])
     }
+    // A repository that one of the queried folders itself names is answered back in
+    // that folder's spelling: conversations are filed against a project list that
+    // keeps one string per folder, and a git-spelled answer never matches it when
+    // the list was spelled otherwise (Windows battery run 44933235897: the worktree
+    // conversation filed under the long name while the list held the short one, so
+    // "a worktree conversation makes its repository recent" could not fire).
+    const mainReal = await fs.realpath(main)
+    const mainAlias = mainReal !== main ? mainReal : path.join(temp, "main-via-junction")
+    if (mainReal === main) await fs.symlink(main, mainAlias, "junction")
+    const aliased = await roots.resolve([mainAlias, linked])
+    check(
+      "a repository among the queried folders is answered in the spelling those folders use",
+      (await same(aliased.roots[linked], main)) && aliased.roots[linked] === mainAlias && !(mainAlias in aliased.roots),
+      aliased.roots,
+    )
     await new Promise((resolve) => setTimeout(resolve, 400))
     const kept = (await storage.read<{ e?: Record<string, { root: string | null }> }>("repo-roots-cache"))?.e ?? {}
     const keptByReal = Object.fromEntries(await Promise.all(Object.keys(kept).map(async (key) => [key, await fs.realpath(key).catch(() => key)] as const)))

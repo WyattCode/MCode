@@ -143,9 +143,26 @@ export class RepoRoots {
     const missing: string[] = []
     const unknown: string[] = []
     const stale: string[] = []
+    /*
+     * The spelling this call's folders already use, by identity. A repository
+     * someone handed over in this same call is answered back in that spelling:
+     * the answer's whole purpose is to match conversations against listed
+     * projects, and those lists keep one string per folder (Windows shows the
+     * two-string case directly: run 44933235897 filed the worktree
+     * conversation under `C:\Users\runneradmin\...` while the project list
+     * said `C:\Users\RUNNER~1\...`, and the repository never went recent).
+     */
+    const asked = new Map<string, string>()
+    for (const directory of unique) {
+      const identity = await folderKey(directory)
+      if (!asked.has(identity)) asked.set(identity, directory)
+    }
     // One folder is one entry whatever spelling it arrived in.
     const note = async (directory: string, root: string | null) => {
-      if (root && (await folderKey(root)) !== (await folderKey(directory))) roots[directory] = root
+      if (!root) return
+      const identity = await folderKey(root)
+      if (identity === (await folderKey(directory))) return
+      roots[directory] = asked.get(identity) ?? root
     }
     for (const directory of unique) {
       const exists = await fs.stat(directory).then((stat) => stat.isDirectory(), () => false)
