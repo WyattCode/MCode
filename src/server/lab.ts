@@ -309,6 +309,15 @@ export class Lab {
         })), {
           concurrency: options.concurrency,
           maxTokens: 8192,
+          /*
+           * A thinking model handed this budget spends nearly all of it planning and
+           * returns no diff at all, which is what the Lab measured on its own model
+           * server: both candidates came back with an empty reply. The gates and the
+           * task's acceptance tests decide whether a patch is worth keeping, so an
+           * off-thinking candidate is worth more than no candidate, and this follows the
+           * same rule the runner applies to a step that was cut inside the call.
+           */
+          effort: "off",
           system: "Return only a git unified diff to fix the requested bug. Change only the listed implementation files. Include diff --git, --- and +++ headers and accurate hunk line numbers.",
         })
         signal.throwIfAborted()
@@ -316,7 +325,20 @@ export class Lab {
           try {
             const outcome = outcomes[at]
             if (!outcome?.ok) throw Error(outcome?.error ?? "Patch generation failed")
-            const patch = labPatch(outcome.text, task)
+            /*
+             * An empty reply used to look like a formatting refusal, which sent the search for
+             * the cause in the wrong direction. How the request stopped and what it spent says
+             * whether the model ran out of budget or simply ignored the contract.
+             */
+            if (!outcome.text.trim()) {
+              throw Error(`The model returned no text (stop=${outcome.stop ?? "unknown"}, output=${outcome.usage?.output ?? "?"}, reasoning=${outcome.usage?.reasoning ?? "?"})${outcome.note ? ` — ${outcome.note}` : ""}`)
+            }
+            let patch: string
+            try {
+              patch = labPatch(outcome.text, task)
+            } catch (error) {
+              throw Error(`${problem(error)}${outcome.note ? ` — ${outcome.note}` : ""}`)
+            }
             card.diff = await applyPatch(directory, scratch, patch, task)
             card.stage = "testing"
             const tests: SandboxResult[] = []
