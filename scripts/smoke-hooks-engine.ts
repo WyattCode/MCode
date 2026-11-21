@@ -308,7 +308,12 @@ async function answer(permissions: Permissions, command: string, response: "reje
 
 export async function hooksEngineChecks(check: Check) {
   for (const [name, run] of cases) {
-    const directory = await fs.mkdtemp(path.resolve("tmp-local/hooks-case-"))
+    // `mkdtemp` needs its parent: on a clean checkout (Linux box, another runner)
+    // nothing has created `tmp-local/` yet and the whole module aborted (measured on
+    // a fresh 1.2.6 checkout, 2026-11-22: ENOENT mkdtemp .../tmp-local/hooks-case-).
+    const caseRoot = path.resolve("tmp-local")
+    await fs.mkdir(caseRoot, { recursive: true })
+    const directory = await fs.mkdtemp(path.join(caseRoot, "hooks-case-"))
     try {
       await runGit(directory, ["init", "--quiet", "--template="])
       await run(directory)
