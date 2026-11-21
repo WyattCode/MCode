@@ -170,8 +170,21 @@ app.whenReady().then(async () => {
       ].join("\n"),
       "utf8",
     )
-    registerOffice(ipcMain, path.join(work, "office"), async () => [work])
-    const watched = path.join(work, "paper.docx")
+    /*
+     * The watched paper sits under the repository's out/, not under the temp
+     * folder. Measured on GitHub's Windows runner (run 44944764891): an
+     * fs.watch inside an Electron main process receives nothing at all for a
+     * folder under the runner's temp path (three replays, no event within
+     * twelve seconds, while watching returned true), whereas the same
+     * primitive in plain node on that very folder and in Electron on a folder
+     * under the workspace both deliver the write within ~450 ms. That is the
+     * runner's temp path and Electron, not the watch semantics this section
+     * pins; the fixture moves, the production code path is untouched.
+     */
+    fs.mkdirSync(path.join(process.cwd(), "out"), { recursive: true })
+    const watchDir = fs.mkdtempSync(path.join(process.cwd(), "out", "mcode-r15m-watch-"))
+    registerOffice(ipcMain, path.join(work, "office"), async () => [work, watchDir])
+    const watched = path.join(watchDir, "paper.docx")
     fs.writeFileSync(watched, "one")
     const window = new BrowserWindow({ show: false, width: 400, height: 300, webPreferences: { preload, contextIsolation: false, sandbox: false } })
     await window.loadURL(host)
@@ -200,6 +213,7 @@ app.whenReady().then(async () => {
     }
     window.destroy()
     await wait(300)
+    fs.rmSync(watchDir, { recursive: true, force: true })
   }
 
   finish()
