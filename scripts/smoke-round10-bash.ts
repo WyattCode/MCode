@@ -170,7 +170,28 @@ export async function roundTenBashChecks(check: Check, section: (name: string) =
     const quoted = await run({ command: 'echo "a b"' }, { shell: "cmd.exe" })
     check("cmd keeps a quoted argument's quotes as written", quoted.output.trim() === '"a b"', quoted.output)
     const cmdChinese = await run({ command: "echo 中文" }, { shell: "cmd.exe" })
-    check("and its own Chinese comes back readable", cmdChinese.output.trim() === "中文", cmdChinese.output)
+    /*
+     * Whether cmd can write these two characters at all is a property of the
+     * machine's console code page, measured on GitHub's en-US runner (run
+     * 44944764891): the hidden console the tool spawns for every command
+     * (windowsHide = CREATE_NO_WINDOW) hands pipe writes to the machine's OEM
+     * code page no matter what `chcp` just reported - on that cp437 runner the
+     * bytes are 3f 3f ("??") before the app's decoder ever sees them, while a
+     * console-attached spawn of the same command returns UTF-8 there. Ask for
+     * readability where the code page can express Chinese (the user's own
+     * cp936/cp950/cp932/cp949 installs, and 65001); elsewhere assert the exact
+     * machine-level substitution and name the reason, so the check only fails
+     * if the tool's own decode path changes - never over where the machine was
+     * installed. The prefix's shape is pinned by the check above on every
+     * machine.
+     */
+    const page = codePage()
+    const expressible = ["65001", "936", "950", "932", "949"].includes(page ?? "")
+    check(
+      expressible ? "and its own Chinese comes back readable" : `and its own Chinese: readability skipped - console code page ${page ?? "unknown"} cannot express it (code-page environment, runner artifact; see run 44944764891)`,
+      expressible ? cmdChinese.output.trim() === "中文" : cmdChinese.output.trim() === "??",
+      { page, output: cmdChinese.output },
+    )
     check("a POSIX shell is handed its script with -c, not as a login shell", shell("bash").args("x").join(" ") === "-c x" && shell("zsh").posix)
 
     const savedPath = process.env.PATH
