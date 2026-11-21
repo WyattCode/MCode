@@ -484,7 +484,16 @@ export class Lab {
               } catch (error) {
                 throw Error(`${problem(error)}${outcome.note ? ` — ${outcome.note}` : ""}`)
               }
-              card.diff = await applyPatch(directory, scratch, patch, task)
+              await applyPatch(directory, scratch, patch, task)
+              /*
+               * `applyPatch` answers with a one-line-per-file summary, and storing that as the card's
+               * diff cost two things: the UI shows prose where the other contract shows a patch, and an
+               * accepted candidate could not be replayed afterwards — a re-audit of a LAB-08 adoption
+               * had a `+0 / −5` summary where the patch should have been. Git's own diff is what the
+               * arena replays, so it is what the record has to hold.
+               */
+              card.diff = await candidateDiff(directory, task)
+              if (!card.diff.trim()) throw Error("The patch changed nothing in the task's files")
             }
             card.stage = "testing"
             const tests: SandboxResult[] = []

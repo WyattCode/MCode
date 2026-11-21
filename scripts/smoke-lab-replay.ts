@@ -100,6 +100,38 @@ export async function labReplayChecks(check: Check) {
       refused = error instanceof Error ? error.message : String(error)
     }
     check("a patch outside the task's files is refused", refused.includes("outside the task scope"), refused)
+
+    /*
+     * The other contract — the model writes the diff itself. What the card records has to be the
+     * patch the arena replays, not the summary `applyPatch` answers with, or an accepted candidate
+     * cannot be replayed later. A hand-written diff stands in for the model's reply here.
+     */
+    const hand = [
+      "--- a/a.ts",
+      "+++ b/a.ts",
+      "@@ -1,3 +1,4 @@",
+      " export const width = (text: string): number => {",
+      "-  return 0",
+      "+  const trimmed = text.trim()",
+      "+  return trimmed.length",
+      " }",
+      "",
+    ].join("\n")
+    const second = await open("candidate2")
+    await enterBugState(second, scratch, task)
+    await applyPatch(second, scratch, hand, task)
+    const recorded = await candidateDiff(second, task)
+    check("a hand-written patch is recorded as a diff, not a summary", recorded.startsWith("diff --git"), recorded.slice(0, 120))
+    check("the recorded diff still describes the fix", recorded.includes("+  return trimmed.length"), recorded)
+    const arena2 = await open("arena2")
+    await applyPatch(arena2, scratch, task.regression, task, true)
+    let replay = ""
+    try {
+      await applyPatch(arena2, scratch, recorded, task, true)
+    } catch (error) {
+      replay = error instanceof Error ? error.message : String(error)
+    }
+    check("an accepted candidate can be replayed from what was recorded", replay === "", replay)
   } finally {
     for (const directory of worktrees) {
       try {
