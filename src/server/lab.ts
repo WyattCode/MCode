@@ -25,6 +25,11 @@ const JOB_GATES = ["mdcheck", "providercheck", "themecheck"]
 const ARENA_GATES = [...JOB_GATES, "i18ncheck", "androidtheme", "gencheck"]
 const BRANCH = /^lab\/evolve-\d{4}-\d{2}-\d{2}(?:-\d+)?$/
 const OBJECT_ID = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/
+/** One limit for every route a candidate's patch can arrive by — typed by the model, or produced
+ * by git from a whole-file reply. A bound only on the typed route leaves the other route free to
+ * retain an arbitrarily large diff on the card and replay it: measured at 421,667 bytes for a
+ * 6,000-line rewrite, with git's 8 MiB output buffer the only thing that ever said no. */
+const MAX_PATCH_BYTES = 96_000
 // A shell that launched MCode may itself be holding an alternate Git index.
 const LAB_GIT_ENV: NodeJS.ProcessEnv = {
   GIT_DIR: undefined, GIT_WORK_TREE: undefined, GIT_COMMON_DIR: undefined,
@@ -141,7 +146,11 @@ export async function staleTask(arena: string, scratch: string, task: LabTask): 
 export async function candidateDiff(directory: string, task: LabTask): Promise<string> {
   // `--no-ext-diff`: a configured external diff tool is a person's choice for looking at code,
   // not a licence to hand the lab an empty patch.
-  return labGit(directory, ["diff", "--no-color", "--no-ext-diff", "--", ...task.files])
+  const diff = await labGit(directory, ["diff", "--no-color", "--no-ext-diff", "--", ...task.files])
+  if (diff.length > MAX_PATCH_BYTES) {
+    throw Error(`The candidate's patch is ${diff.length} bytes, over the ${MAX_PATCH_BYTES} (96KB) limit every candidate patch obeys`)
+  }
+  return diff
 }
 
 export function labFiles(text: string, task: LabTask): { file: string; content: string }[] | null {
@@ -253,7 +262,7 @@ export function labPatch(text: string, task: LabTask): string {
   const outside = [...new Set(headers.flatMap(([, left, right]) => (left === right ? [left] : [left, right]))
     .filter((file) => !task.files.includes(file)))]
   if (outside.length) throw Error(`Patch touches files outside the task scope: ${outside.join(", ")}`)
-  if (patch.length > 96_000) throw Error("Patch is larger than 96KB")
+  if (patch.length > MAX_PATCH_BYTES) throw Error(`Patch is larger than ${MAX_PATCH_BYTES} (96KB)`)
   if (changed("---").join("\n") !== headers.map((entry) => `a/${entry[1]}`).join("\n") ||
       changed("\\+\\+\\+").join("\n") !== headers.map((entry) => `b/${entry[2]}`).join("\n")) {
     throw Error("Patch headers disagree (diff --git, --- and +++ must name the same files in order)")
