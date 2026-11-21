@@ -13,8 +13,14 @@ import { FANOUT_MAX_CONCURRENCY, type SessionRunner } from "./session/runner"
 import type { Storage } from "./storage"
 
 const HISTORY_KEY = "lab/runs.json"
-const DIFF_SYSTEM = "Return only a git unified diff to fix the requested bug. Change only the listed implementation files. Include diff --git, --- and +++ headers and accurate hunk line numbers."
-const FILES_SYSTEM = "Fix the bug by rewriting the affected files. For each file output a line `=== FILE <path> ===` and then that file's complete new content. Never output a diff, never leave part of a file out, and change nothing outside the listed files."
+/*
+ * Both contracts are answered by weaker models as an essay: the round before these words
+ * existed, two candidates independently explained the bug — correctly, naming the function —
+ * and returned neither a diff nor a file, because nothing said the answer may not contain
+ * prose. The shape comes first, and the answer has to begin with it.
+ */
+const DIFF_SYSTEM = "Begin your reply with the line `diff --git` and write nothing before it. No prose, no explanation, no analysis: only a git unified diff that fixes the bug, touching only the listed implementation files, with --- and +++ headers and accurate hunk line numbers."
+const FILES_SYSTEM = "Begin your reply with the line `=== FILE <path> ===` and write nothing before it. No prose, no explanation, no analysis: for each file you change, that marker line followed by the file's complete new content, unchanged parts included. Never output a diff, never leave part of a file out, and change nothing outside the listed files."
 const JOB_GATES = ["mdcheck", "providercheck", "themecheck"]
 const ARENA_GATES = [...JOB_GATES, "i18ncheck", "androidtheme", "gencheck"]
 const BRANCH = /^lab\/evolve-\d{4}-\d{2}-\d{2}(?:-\d+)?$/
@@ -284,7 +290,13 @@ export class Lab {
       // Wait for checkout to exit before removing its Git registration on abort.
       await addWorktree(root, ["--detach", directory, base], { env: LAB_GIT_ENV, timeout: 120_000 })
       signal.throwIfAborted()
-      await fs.symlink("/deps", path.join(directory, "node_modules"), "dir")
+      /*
+       * The mount point has to exist before bwrap runs: /work is mounted read-only, so the
+       * bind of the dependencies at /work/node_modules cannot create its own target there.
+       * A symlink would work as a mount target too, but it is the indirection that broke the
+       * sibling lookup in the first place.
+       */
+      await fs.mkdir(path.join(directory, "node_modules"), { recursive: true })
       return directory
     }
     const clean = async (directory: string) => {
@@ -335,10 +347,15 @@ export class Lab {
         for (const candidate of candidates) candidate.card.stage = "patching"
         const outcomes = await fanout.generate(candidates.map(({ card }) => ({
           name: `${task.id}-${card.worker}`,
-          prompt: `Fix this regression: ${task.title}\n\n${sources.join("\n\n")}`,
+          prompt: `Fix this regression: ${task.title}\n\n${sources.join("\n\n")}\n\n${whole ? "Write the complete fixed file(s). Begin your reply with the `=== FILE <path> ===` line; put nothing before it." : "Return the git unified diff. Begin your reply with the `diff --git` line; put nothing before it."}`,
         })), {
           concurrency: options.concurrency,
-          maxTokens: 8192,
+          /*
+           * No ceiling of our own: a whole file has to fit in one reply. The run that asked
+           * for 8192 got a `markdown.ts` that stopped mid-regex, and the acceptance test then
+           * reported a syntax error rather than the truncation it was. The runner already
+           * holds a call to the model's own limit and to its context window.
+           */
           /*
            * A thinking model handed this budget spends nearly all of it planning and
            * returns no diff at all, which is what the Lab measured on its own model
@@ -362,6 +379,14 @@ export class Lab {
              */
             if (!outcome.text.trim()) {
               throw Error(`The model returned no text (stop=${outcome.stop ?? "unknown"}, output=${outcome.usage?.output ?? "?"}, reasoning=${outcome.usage?.reasoning ?? "?"})${outcome.note ? ` — ${outcome.note}` : ""}`)
+            }
+            /*
+             * A reply cut off at the output limit looks like a broken file or a corrupt patch
+             * further down, so it says what it is here: the answer is a larger budget, not a
+             * different parser.
+             */
+            if (outcome.stop === "max_tokens") {
+              throw Error(`The reply was cut off at the model's output limit after ${outcome.usage?.output ?? "?"} tokens; the file or diff is incomplete`)
             }
             /*
              * Whole files, because a hand-written diff is where rounds were lost: `git apply`

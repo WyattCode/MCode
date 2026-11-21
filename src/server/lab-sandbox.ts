@@ -17,6 +17,16 @@ export function sandboxCommand(platform: NodeJS.Platform, worker: string, depend
     "--ro-bind-try", "/lib", "/lib", "--ro-bind-try", "/lib64", "/lib64",
     "--ro-bind-try", "/etc/ld.so.cache", "/etc/ld.so.cache",
     "--ro-bind", dependencies, "/deps", "--ro-bind", worker, "/work",
+    /*
+     * Dependencies are mounted a second time, inside the project, because Node looks for a
+     * package's siblings by walking up from that package for a `node_modules` directory:
+     * mounted only at /deps, `import 'vue'` resolves and `import '@vue/runtime-dom'` from
+     * inside vue does not, since /deps/node_modules is a path that never exists. Measured on
+     * Linux with this exact sandbox — the plain repository layout loads vue (172 exports),
+     * the /deps layout fails with MODULE_NOT_FOUND, and every acceptance test and gate the Lab
+     * runs imports through a package.
+     */
+    "--ro-bind", dependencies, "/work/node_modules",
     "--ro-bind", "/dev/null", "/work/.git", "--tmpfs", "/work/out",
     "--chdir", "/work", "--", command, ...args,
   ]
