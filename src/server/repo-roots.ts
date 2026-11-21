@@ -51,6 +51,22 @@ async function inBatches<T>(items: readonly T[], width: number, work: (item: T) 
   await Promise.all(Array.from({ length: Math.min(width, items.length) }, lane))
 }
 
+/**
+ * The key one folder shares with its other spellings.
+ *
+ * A folder arrives as a Windows 8.3 short name (`C:\Users\RUNNER~1\...`) from
+ * the environment and as its long name from git - one folder, two strings,
+ * measured inside one cache document on run 44933235897; macOS has the same
+ * with `/var` and `/private/var`. Storing by the string asked with gave one
+ * folder several answers; the physical path is the key, letter case folded
+ * where the file system folds it.
+ */
+async function folderKey(folder: string): Promise<string> {
+  const resolved = path.resolve(folder)
+  const physical = await fs.realpath(resolved).catch(() => resolved)
+  return process.platform === "win32" ? physical.toLowerCase() : physical
+}
+
 export class RepoRoots {
   private readonly entries = new Map<string, Entry>()
   private loaded: Promise<void> | undefined
@@ -111,7 +127,7 @@ export class RepoRoots {
   private async ask(directory: string): Promise<string | null> {
     const out = await runGit(directory, ["rev-parse", "--path-format=absolute", "--git-common-dir"]).catch(() => "")
     const root = rootFromCommonDir(out)
-    this.entries.set(directory, { root, at: this.now() })
+    this.entries.set(await folderKey(directory), { root, at: this.now() })
     this.save()
     return root
   }
@@ -127,10 +143,9 @@ export class RepoRoots {
     const missing: string[] = []
     const unknown: string[] = []
     const stale: string[] = []
-    // The same folder in another letter case is the same folder on Windows.
-    const key = (folder: string) => (process.platform === "win32" ? path.resolve(folder).toLowerCase() : path.resolve(folder))
-    const note = (directory: string, root: string | null) => {
-      if (root && key(root) !== key(directory)) roots[directory] = root
+    // One folder is one entry whatever spelling it arrived in.
+    const note = async (directory: string, root: string | null) => {
+      if (root && (await folderKey(root)) !== (await folderKey(directory))) roots[directory] = root
     }
     for (const directory of unique) {
       const exists = await fs.stat(directory).then((stat) => stat.isDirectory(), () => false)
@@ -138,15 +153,15 @@ export class RepoRoots {
         missing.push(directory)
         continue
       }
-      const entry = this.entries.get(directory)
+      const entry = this.entries.get(await folderKey(directory))
       if (!entry) unknown.push(directory)
       else {
-        note(directory, entry.root)
+        await note(directory, entry.root)
         if (this.now() - entry.at >= REPO_ROOTS_FRESH_MS) stale.push(directory)
       }
     }
     if (stale.length) void inBatches(stale, CONCURRENCY, async (directory) => void (await this.ask(directory))).catch(() => undefined)
-    await inBatches(unknown, CONCURRENCY, async (directory) => note(directory, await this.ask(directory)))
+    await inBatches(unknown, CONCURRENCY, async (directory) => void (await note(directory, await this.ask(directory))))
     return { roots, missing }
   }
 

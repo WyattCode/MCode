@@ -454,21 +454,46 @@ export async function roundTenGitChecks(check: Check, section: (name: string) =>
     const storage = new Storage(path.join(temp, "group-storage"))
     const roots = new RepoRoots(storage)
     const answer = await roots.resolve([main, sub, linked, plain, gone, bareTree])
-    const same = (a?: string, b?: string) => Boolean(a && b) && path.resolve(a!).toLowerCase() === path.resolve(b!).toLowerCase()
+    // One folder has more than one spelling on Windows (the 8.3 short name the runner's
+    // TEMP carries and the long name git answers with - run 44933235897 shows both forms
+    // of one directory inside one cache document) and on macOS (the /var link and /private).
+    // They are one folder: a comparison by text is the wrong question, so the checks below
+    // ask fs.realpath whether two strings name the same directory.
+    const same = async (a?: string, b?: string) => Boolean(a && b) && (await fs.realpath(a!).catch(() => a!)) === (await fs.realpath(b!).catch(() => b!))
     check(
       "a subdirectory and a linked worktree answer the main repository; the repository itself, a plain folder and a bare repository's worktree answer nothing",
-      same(answer.roots[sub], main) && same(answer.roots[linked], main) && !(main in answer.roots) && !(plain in answer.roots) && !(bareTree in answer.roots),
+      (await same(answer.roots[sub], main)) && (await same(answer.roots[linked], main)) && !(main in answer.roots) && !(plain in answer.roots) && !(bareTree in answer.roots),
       answer,
     )
     check("a folder that is gone is reported, not filed", answer.missing.length === 1 && answer.missing[0] === gone, answer.missing)
+    const linkedReal = await fs.realpath(linked)
+    if (linkedReal !== linked) await roots.resolve([linkedReal])
+    else {
+      // The harness hands out an already-canonical TMPDIR on macOS: make the second
+      // spelling of the folder deliberately so this check is not vacuous there.
+      const viaJunction = path.join(temp, "link-to-linked")
+      await fs.symlink(linked, viaJunction, "junction")
+      await roots.resolve([viaJunction])
+    }
     await new Promise((resolve) => setTimeout(resolve, 400))
     const kept = (await storage.read<{ e?: Record<string, { root: string | null }> }>("repo-roots-cache"))?.e ?? {}
-    check("answers are kept for the next launch", same(kept[linked]?.root ?? undefined, main) && kept[plain]?.root === null && !(gone in kept), kept)
+    const keptByReal = Object.fromEntries(await Promise.all(Object.keys(kept).map(async (key) => [key, await fs.realpath(key).catch(() => key)] as const)))
+    const keptEntriesFor = async (folder: string) => {
+      const real = await fs.realpath(folder).catch(() => folder)
+      return Object.entries(kept).filter(([key]) => keptByReal[key] === real)
+    }
+    const keptFor = async (folder: string) => (await keptEntriesFor(folder))[0]?.[1]
+    check("one folder in two spellings is one cache entry", (await keptEntriesFor(linked)).length === 1, Object.keys(kept))
+    check(
+      "answers are kept for the next launch",
+      (await same((await keptFor(linked))?.root ?? undefined, main)) && (await keptFor(plain))?.root === null && !(await keptFor(gone)),
+      kept,
+    )
     let clock = Date.now()
     const later = new RepoRoots(storage, () => clock)
-    check("a kept answer is used at once", same((await later.resolve([linked])).roots[linked], main))
+    check("a kept answer is used at once", (await same((await later.resolve([linked])).roots[linked], main)))
     clock += REPO_ROOTS_FRESH_MS + 1
-    check("an old answer is still used while a fresh one is asked", same((await later.resolve([linked])).roots[linked], main))
+    check("an old answer is still used while a fresh one is asked", (await same((await later.resolve([linked])).roots[linked], main)))
 
     const listed = new Set([main, plain])
     const context = {
@@ -480,8 +505,8 @@ export async function roundTenGitChecks(check: Check, section: (name: string) =>
     check(
       "filing: a listed folder is itself, a worktree or subdirectory goes under the repository, a gone folder under nothing",
       sessionGroup(at(main), context) === main &&
-        same(sessionGroup(at(linked), context), main) &&
-        same(sessionGroup(at(sub), context), main) &&
+        (await same(sessionGroup(at(linked), context), main)) &&
+        (await same(sessionGroup(at(sub), context), main)) &&
         sessionGroup(at(plain), context) === plain &&
         sessionGroup(at(gone), context) === undefined,
     )
@@ -504,7 +529,7 @@ export async function roundTenGitChecks(check: Check, section: (name: string) =>
     await config.load()
     await config.set({ projects: [], closedProjects: [] })
     await config.adoptProjects([linked], { byRepository: true })
-    check("a conversation opened in a worktree adds the repository's project", (config.get().projects ?? []).length === 1 && same(config.get().projects?.[0], main), config.get().projects)
+    check("a conversation opened in a worktree adds the repository's project", (config.get().projects ?? []).length === 1 && (await same(config.get().projects?.[0], main)), config.get().projects)
     await config.adoptProjects([sub], { byRepository: true })
     await config.adoptProjects([gone], { byRepository: true })
     check("a subdirectory adds nothing more, and a folder that is gone adds nothing", (config.get().projects ?? []).length === 1, config.get().projects)
@@ -521,7 +546,7 @@ export async function roundTenGitChecks(check: Check, section: (name: string) =>
     const migrated = config.get()
     check(
       "the one-time migration files an existing worktree project under its repository",
-      !migrated.projects?.includes(linked) && migrated.projects?.some((entry) => same(entry, main)) && migrated.projects?.includes(plain) && !migrated.pinnedProjects?.includes(linked) && migrated.migrations?.includes(REPOSITORY_PROJECTS_MIGRATION),
+      !migrated.projects?.includes(linked) && Boolean(await Promise.all((migrated.projects ?? []).map((entry) => same(entry, main))).then((filed) => filed.some(Boolean))) && migrated.projects?.includes(plain) && !migrated.pinnedProjects?.includes(linked) && migrated.migrations?.includes(REPOSITORY_PROJECTS_MIGRATION),
       migrated.projects,
     )
     await config.set({ projects: [linked] })
