@@ -1,4 +1,5 @@
 import path from "node:path"
+import { realpathSync } from "node:fs"
 
 /**
  * One queue per repository for the git commands that change it (N11-14).
@@ -27,9 +28,28 @@ export function onGitWaiting(next: Listener | undefined): void {
   listener = next
 }
 
+/**
+ * The queue key: the folder itself, not the string the caller happened to hold.
+ *
+ * One folder can be spelled two legal ways on Windows (an 8.3 short name and
+ * the long name a folder carries), and `commit` re-keys itself by git's own
+ * physical answer. Comparing those two by text made one repository two
+ * queues: the commit ran while a checkout was still under way — measured as
+ * the FAIL "a commit waits while another write on the repository is under
+ * way" on the Windows battery (runs 44949680691 through 44956037950), and
+ * reproducible on Mac by queueing a write under a link's name to the folder.
+ * A folder that does not exist yet (a checkout about to be created) keeps
+ * its resolved spelling, the way `canonicalDirectory` in git.ts does.
+ */
 function keyOf(root: string): string {
   const resolved = path.resolve(root)
-  return process.platform === "win32" ? resolved.toLowerCase() : resolved
+  let key = resolved
+  try {
+    key = realpathSync(resolved)
+  } catch {
+    // A folder git has not made yet keeps its resolved spelling until it exists.
+  }
+  return process.platform === "win32" ? key.toLowerCase() : key
 }
 
 /**

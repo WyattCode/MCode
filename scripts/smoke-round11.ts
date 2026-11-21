@@ -551,6 +551,30 @@ export async function roundElevenChecks(check: Check, section: (name: string) =>
     const restoring = checkoutFile(repo, path.join(repo, "a.txt"))
     setTimeout(() => void fs.rm(lock, { force: true }), 300)
     check("a file put back through git waits out another git's index.lock", (await restoring) === true && (await fs.readFile(path.join(repo, "a.txt"), "utf8")).replace(/\r/g, "") === "two\n")
+
+    /*
+     * One folder can arrive by two spellings — a Windows 8.3 short name and its long name are the
+     * same folder — and the queue that takes turns has to hold then too. A commit re-keys itself by
+     * git's own physical answer, so a write queued under the other spelling let it through:
+     * measured on the Windows battery, the FAIL "a commit waits while another write on the
+     * repository is under way" from runs 44949680691 through 44956037950. The link stands in for
+     * the second spelling (a junction on Windows needs no elevation, a plain symlink elsewhere).
+     */
+    const link = path.join(temp, "repo-link")
+    await fs.symlink(repo, link, "junction")
+    let letGoAgain!: () => void
+    const heldByLink = serialisedWrite(link, link, () => new Promise<void>((resolve) => (letGoAgain = resolve)))
+    await fs.writeFile(path.join(repo, "a.txt"), "four\n", "utf8")
+    let committedAgain = false
+    const committingAgain = gitCommit(repo, "third", true).then((result) => {
+      committedAgain = true
+      return result
+    })
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    check("a write queued under a second spelling of the folder still holds the commit back", committedAgain === false)
+    letGoAgain()
+    await heldByLink
+    check("and that commit goes through once it is done", (await committingAgain).ok === true)
     await fs.rm(temp, { recursive: true, force: true }).catch(() => undefined)
   }
 
