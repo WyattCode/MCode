@@ -13,6 +13,8 @@ import { FANOUT_MAX_CONCURRENCY, type SessionRunner } from "./session/runner"
 import type { Storage } from "./storage"
 
 const HISTORY_KEY = "lab/runs.json"
+const DIFF_SYSTEM = "Return only a git unified diff to fix the requested bug. Change only the listed implementation files. Include diff --git, --- and +++ headers and accurate hunk line numbers."
+const FILES_SYSTEM = "Fix the bug by rewriting the affected files. For each file output a line `=== FILE <path> ===` and then that file's complete new content. Never output a diff, never leave part of a file out, and change nothing outside the listed files."
 const JOB_GATES = ["mdcheck", "providercheck", "themecheck"]
 const ARENA_GATES = [...JOB_GATES, "i18ncheck", "androidtheme", "gencheck"]
 const BRANCH = /^lab\/evolve-\d{4}-\d{2}-\d{2}(?:-\d+)?$/
@@ -58,6 +60,32 @@ interface Repair {
 
 function problem(error: unknown): string {
   return (error instanceof Error ? error.message : String(error)).slice(0, 4000)
+}
+
+/**
+ * The whole-file contract: `=== FILE <path> ===`, then that file's new content, repeated.
+ * Git makes the patch from what the model wrote, so a wrong hunk count cannot sink a round
+ * the way a hand-written diff did. Scope is checked here because the reply is model text and
+ * a file the task does not own must never reach the checkout.
+ */
+export function labFiles(text: string, task: LabTask): { file: string; content: string }[] | null {
+  const marks = [...text.matchAll(/^=== FILE (.+?) ===$/gm)]
+  if (!marks.length) return null
+  const out: { file: string; content: string }[] = []
+  for (const [at, mark] of marks.entries()) {
+    const file = (mark[1] ?? "").trim().replace(/^\.?\//, "")
+    if (!task.files.includes(file)) throw Error(`Reply covers a file outside the task scope: ${file}`)
+    const from = (mark.index ?? 0) + mark[0].length + 1
+    const to = at + 1 < marks.length ? (marks[at + 1].index ?? text.length) : text.length
+    let content = text.slice(from, to)
+    // A model that closes its own block leaves its marker and a sign-off inside the range.
+    const end = content.search(/^=== END ===\s*$/m)
+    if (end >= 0) content = content.slice(0, end)
+    content = content.replace(/^\s*\n/, "").replace(/[ \t]+$/gm, "").replace(/\n+$/, "")
+    if (!content.trim()) throw Error(`The reply has no file content for ${file}`)
+    out.push({ file, content: `${content}\n` })
+  }
+  return out
 }
 
 /**
@@ -302,6 +330,8 @@ export class Lab {
           if (!excerpts.length) throw Error(`Could not locate the regression in ${file}`)
           return `File ${file} (excerpts):\n` + excerpts.join("\n\n")
         }))
+        // A model that was given whole files may hand whole files back; one that saw excerpts may only send a diff.
+        const whole = sources.every((text) => !text.includes(" (excerpts):"))
         for (const candidate of candidates) candidate.card.stage = "patching"
         const outcomes = await fanout.generate(candidates.map(({ card }) => ({
           name: `${task.id}-${card.worker}`,
@@ -318,7 +348,7 @@ export class Lab {
            * same rule the runner applies to a step that was cut inside the call.
            */
           effort: "off",
-          system: "Return only a git unified diff to fix the requested bug. Change only the listed implementation files. Include diff --git, --- and +++ headers and accurate hunk line numbers.",
+          system: whole ? FILES_SYSTEM : DIFF_SYSTEM,
         })
         signal.throwIfAborted()
         const verified = await Promise.allSettled(candidates.map(async ({ card, directory }, at): Promise<Repair | undefined> => {
@@ -333,13 +363,27 @@ export class Lab {
             if (!outcome.text.trim()) {
               throw Error(`The model returned no text (stop=${outcome.stop ?? "unknown"}, output=${outcome.usage?.output ?? "?"}, reasoning=${outcome.usage?.reasoning ?? "?"})${outcome.note ? ` — ${outcome.note}` : ""}`)
             }
-            let patch: string
-            try {
-              patch = labPatch(outcome.text, task)
-            } catch (error) {
-              throw Error(`${problem(error)}${outcome.note ? ` — ${outcome.note}` : ""}`)
+            /*
+             * Whole files, because a hand-written diff is where rounds were lost: `git apply`
+             * called one corrupt at line 4 over a hunk count off by one. Git makes the patch
+             * here, and the task's own acceptance tests and the gates still decide its fate.
+             */
+            let patch = ""
+            const files = whole ? labFiles(outcome.text, task) : null
+            if (files) {
+              for (const entry of files) await fs.writeFile(path.join(directory, entry.file), entry.content)
+              card.diff = await labGit(directory, ["diff", "--no-color", "--", ...task.files])
+              if (!card.diff.trim()) throw Error("The reply rewrote the files without changing them")
+              // What the arena replays is this patch, so a candidate's own checkout and the arena end up identical.
+              patch = card.diff
+            } else {
+              try {
+                patch = labPatch(outcome.text, task)
+              } catch (error) {
+                throw Error(`${problem(error)}${outcome.note ? ` — ${outcome.note}` : ""}`)
+              }
+              card.diff = await applyPatch(directory, scratch, patch, task)
             }
-            card.diff = await applyPatch(directory, scratch, patch, task)
             card.stage = "testing"
             const tests: SandboxResult[] = []
             for (const command of task.tests) tests.push(await verify(directory, deps, command, signal))
