@@ -43,11 +43,17 @@ export function onGitWaiting(next: Listener | undefined): void {
  */
 function keyOf(root: string): string {
   const resolved = path.resolve(root)
+  // The native call asks the file system for the folder's final spelling; the
+  // pure-JS realpathSync only follows links and would keep an 8.3 short name.
   let key = resolved
   try {
-    key = realpathSync(resolved)
+    key = realpathSync.native(resolved)
   } catch {
-    // A folder git has not made yet keeps its resolved spelling until it exists.
+    try {
+      key = realpathSync(resolved)
+    } catch {
+      // A folder git has not made yet keeps its resolved spelling until it exists.
+    }
   }
   return process.platform === "win32" ? key.toLowerCase() : key
 }

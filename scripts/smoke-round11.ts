@@ -8,6 +8,7 @@
  * happen at once, which a probe can stage but a smoke run cannot.
  */
 import { execFileSync } from "node:child_process"
+import { realpathSync } from "node:fs"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
@@ -523,6 +524,28 @@ export async function roundElevenChecks(check: Check, section: (name: string) =>
     const repo = path.join(temp, "repo")
     await fs.mkdir(repo)
     const g = (...args: string[]) => execFileSync("git", args, { cwd: repo, windowsHide: true })
+    const seg = (p: string) => /Users[\\/]+([^\\/]+)/i.exec(p)?.[1] ?? p.slice(-30)
+    const rpJs = (p: string) => {
+      try {
+        return seg(realpathSync(p))
+      } catch {
+        return "<throw>"
+      }
+    }
+    const rpNative = (p: string) => {
+      try {
+        return seg(realpathSync.native(p))
+      } catch {
+        return "<throw>"
+      }
+    }
+    const topSeg = () => {
+      try {
+        return seg(execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd: repo, encoding: "utf8", windowsHide: true }).trim())
+      } catch {
+        return "<throw>"
+      }
+    }
     g("init", "-q")
     g("config", "user.email", "t@example.com")
     g("config", "user.name", "t")
@@ -539,7 +562,7 @@ export async function roundElevenChecks(check: Check, section: (name: string) =>
       return result
     })
     await new Promise((resolve) => setTimeout(resolve, 400))
-    check("a commit waits while another write on the repository is under way", committed === false)
+    check("a commit waits while another write on the repository is under way", committed === false, { jsRepo: rpJs(repo), nativeRepo: rpNative(repo), top: topSeg() })
     letGo()
     await busy
     check("and goes through once it is done", (await committing).ok === true)
@@ -571,7 +594,7 @@ export async function roundElevenChecks(check: Check, section: (name: string) =>
       return result
     })
     await new Promise((resolve) => setTimeout(resolve, 400))
-    check("a write queued under a second spelling of the folder still holds the commit back", committedAgain === false)
+    check("a write queued under a second spelling of the folder still holds the commit back", committedAgain === false, { jsLink: rpJs(link), nativeLink: rpNative(link), top: topSeg() })
     letGoAgain()
     await heldByLink
     check("and that commit goes through once it is done", (await committingAgain).ok === true)
