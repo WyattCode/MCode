@@ -24,56 +24,6 @@ const FIXED = "export const width = (text: string): number => {\n  const trimmed
 const git = (directory: string, ...args: string[]): string =>
   execFileSync("git", ["-C", directory, ...args], { encoding: "utf8" })
 
-/* TEMPORARY DIAGNOSTIC (probe): which git apply fails on Windows, on one line the harness prints. */
-const probe = async (step: string, directory: string, patch: string, run: () => Promise<unknown>): Promise<void> => {
-  try {
-    await run()
-  } catch (error) {
-    const e = error as { code?: unknown; signal?: unknown; killed?: unknown; stderr?: unknown }
-    const sync = await import("node:fs")
-    const g = (...args: string[]): string => {
-      try {
-        return execFileSync("git", ["-C", directory, ...args], { encoding: "utf8" })
-      } catch {
-        return "<git-fail>"
-      }
-    }
-    const shown = (b: string) => ({ len: b.length, cr: (b.match(/\r/g) ?? []).length, head: b.slice(0, 46) })
-    const wtRoot = path.join(path.dirname(directory), ".git", "worktrees")
-    console.log(
-      `[DIAG] Error-context ${step} ` +
-        JSON.stringify({
-          platform: process.platform,
-          node: process.version,
-          code: String(e.code),
-          sig: String(e.signal),
-          killed: String(e.killed),
-          stderr: String(e.stderr ?? "").split("\n").slice(0, 4).join(" / ").slice(0, 190),
-          autocrlf: g("config", "--get", "core.autocrlf").trim() || "<unset>",
-          eol: g("config", "--get", "core.eol").trim() || "<unset>",
-          idx: shown(g("show", ":a.ts")),
-          status: g("status", "--porcelain").trim().slice(0, 60),
-          disk: (() => {
-            try {
-              return shown(sync.readFileSync(path.join(directory, "a.ts"), "utf8"))
-            } catch {
-              return "<gone>"
-            }
-          })(),
-          patchHead: patch.slice(0, 64),
-          wtFiles: (() => {
-            try {
-              return sync.readdirSync(path.join(wtRoot, path.basename(directory)))
-            } catch {
-              return "<none>"
-            }
-          })(),
-        }),
-    )
-    throw error
-  }
-}
-
 export async function labReplayChecks(check: Check) {
   // Which candidate reaches the arena is decided here, and length alone picked the wrong one.
   const shape = (worker: number, score: number | undefined, patchSize: number) =>
@@ -98,6 +48,19 @@ export async function labReplayChecks(check: Check) {
   try {
     git(root, "init", "-q", ".")
     git(root, "-c", "user.name=t", "-c", "user.email=t@localhost", "config", "core.hooksPath", "/dev/null")
+    /*
+     * The line-ending contract is pinned into the repository itself, next to the hook pins, because
+     * these setup calls run with the machine's own gitconfig. On a standard Git for Windows machine
+     * `core.autocrlf=true` checks every worktree out in CRLF while the objects stay LF, and the
+     * arena then rejects the very first patch — `git apply --index` answers "a.ts: does not match
+     * index", the Windows battery's exit-1 since before run 44947060324 (probe run 44959225310:
+     * index 72 bytes without CR, disk 75 bytes with three). `applyPatch` fixes autocrlf=false for
+     * its own calls; a checkout made under the ambient rule is the one place the two models can
+     * still meet. Reproducible on Mac with a global gitconfig holding `autocrlf = true`.
+     */
+    git(root, "config", "core.autocrlf", "false")
+    git(root, "config", "core.safecrlf", "false")
+    git(root, "config", "core.eol", "lf")
     await fs.writeFile(path.join(root, "a.ts"), CLEAN)
     git(root, "add", "a.ts")
     git(root, "-c", "user.name=t", "-c", "user.email=t@localhost", "commit", "-q", "-m", "clean")
@@ -118,7 +81,7 @@ export async function labReplayChecks(check: Check) {
     }
 
     const candidate = await open("candidate")
-    await probe("enterBugState(candidate)", candidate, task.regression, () => enterBugState(candidate, scratch, task))
+    await enterBugState(candidate, scratch, task)
     check("the bug is in the candidate's index, not only in its files",
       git(candidate, "diff", "--cached", "--name-only").trim() === "a.ts", git(candidate, "status", "--porcelain"))
 
@@ -129,7 +92,7 @@ export async function labReplayChecks(check: Check) {
     check("the candidate patch is not the whole fix against clean code", !patch.includes("return text.length"), patch)
 
     const arena = await open("arena")
-    await probe("arena applyPatch(regression,index)", arena, task.regression, () => applyPatch(arena, scratch, task.regression, task, true))
+    await applyPatch(arena, scratch, task.regression, task, true)
     let rejected = ""
     try {
       await applyPatch(arena, scratch, patch, task, true)
@@ -168,13 +131,13 @@ export async function labReplayChecks(check: Check) {
       "",
     ].join("\n")
     const second = await open("candidate2")
-    await probe("enterBugState(second)", second, task.regression, () => enterBugState(second, scratch, task))
+    await enterBugState(second, scratch, task)
     await applyPatch(second, scratch, hand, task)
     const recorded = await candidateDiff(second, task)
     check("a hand-written patch is recorded as a diff, not a summary", recorded.startsWith("diff --git"), recorded.slice(0, 120))
     check("the recorded diff still describes the fix", recorded.includes("+  return trimmed.length"), recorded)
     const arena2 = await open("arena2")
-    await probe("arena2 applyPatch(regression,index)", arena2, task.regression, () => applyPatch(arena2, scratch, task.regression, task, true))
+    await applyPatch(arena2, scratch, task.regression, task, true)
     let replay = ""
     try {
       await applyPatch(arena2, scratch, recorded, task, true)
