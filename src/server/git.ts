@@ -329,7 +329,14 @@ export async function diff(directory: string, file: string): Promise<string> {
   // repository and an untracked diff of a tracked file follows it (G10-1,
   // measured on the Windows battery, run 44933235897).
   const [root, project] = await Promise.all([canonicalDirectory(rootSeen), canonicalDirectory(directory)])
-  const absolute = path.resolve(project, file)
+  // A file handed over as an absolute path is placed physically too:
+  // `path.resolve` leaves an absolute string untouched, so a junction or
+  // 8.3-spelled absolute path would read as a walk of `../` out of the
+  // repository just like the folder spelling did (P3-1, same family as
+  // G10-1). Only its folder can be asked - the file itself may be gone.
+  const absolute = path.isAbsolute(file)
+    ? path.join(await canonicalDirectory(path.dirname(file)), path.basename(file))
+    : path.resolve(project, file)
   const inRepo = path.relative(root, absolute).split(path.sep).join("/")
 
   const tracked = await git(root, ["ls-files", "--error-unmatch", "--", inRepo])
