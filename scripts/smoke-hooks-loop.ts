@@ -148,6 +148,15 @@ async function projectHooks(directory: string, hooks: unknown): Promise<void> {
 }
 
 const bash = (command: string): Order => ({ name: "bash", input: { command, description: "Run a word" } })
+
+/*
+ * Hook commands run through cmd.exe on Windows (`/d /s /c`) and /bin/sh everywhere else, so a
+ * battery written in POSIX verbs tests nothing on the Windows release. `echo x > "file"` and `&&`
+ * mean the same thing in both, and a delay is the one verb that has no portable spelling
+ * (`sleep N` versus `ping -n N`), so only that is branched.
+ */
+const markCommand = (file: string): string => `echo m > "${file}"`
+const hangCommand = (seconds: number): string => (process.platform === "win32" ? `ping -n ${seconds + 1} 127.0.0.1` : `sleep ${seconds}`)
 const toolError = (part: ToolPart | undefined): string =>
   JSON.stringify({ status: part?.status, error: (part as { error?: unknown } | undefined)?.error, inputError: (part?.input as { error?: unknown } | undefined)?.error, output: String(part?.output ?? "").slice(0, 200) })
 
@@ -179,7 +188,7 @@ register("a hook that refuses the call keeps the tool from acting and the model 
   try {
     const sideEffect = path.join(r.root, "must-not-exist")
     await projectHooks(r.directory, { PreToolUse: [{ matcher: "*", command: `printf 'no bash on this project\\nsecond line the model never needs' >&2; exit 2` }] })
-    const { parts, seen } = await r.turn("HOOKBLOCK", bash(`touch "${sideEffect}"; echo should-not-run`))
+    const { parts, seen } = await r.turn("HOOKBLOCK", bash(`${markCommand(sideEffect)} && echo should-not-run`))
     expect(!(await fs.stat(sideEffect).then(() => true, () => false)), "the blocked command still ran")
     expect(!String(parts[0]?.output ?? "").includes("should-not-run"), parts[0]?.output)
     const told = toolError(parts[0])
@@ -215,7 +224,7 @@ register("a hook that never returns is put down at its timeout and the task carr
      * not run at all, which is the worst kind of green.
      */
     const begun = path.join(r.root, "hook-begun")
-    await projectHooks(r.directory, { PreToolUse: [{ matcher: "*", command: `touch "${begun}"; sleep 120`, timeoutMs: 400 }] })
+    await projectHooks(r.directory, { PreToolUse: [{ matcher: "*", command: `${markCommand(begun)} && ${hangCommand(120)}`, timeoutMs: 400 }] })
     const started = Date.now()
     const { parts } = await r.turn("HOOKHANG", bash("echo carried-on"))
     const elapsed = Date.now() - started
@@ -235,7 +244,7 @@ register("a turn whose hook was never addressed to it is not counted as a timeou
   const r = await rig()
   try {
     const begun = path.join(r.root, "never-begun")
-    await projectHooks(r.directory, { PreToolUse: [{ matcher: "Write", command: `touch "${begun}"; sleep 120`, timeoutMs: 400 }] })
+    await projectHooks(r.directory, { PreToolUse: [{ matcher: "Write", command: `${markCommand(begun)} && ${hangCommand(120)}`, timeoutMs: 400 }] })
     const started = Date.now()
     await r.turn("HOOKNOTEV", bash("echo quick"))
     const elapsed = Date.now() - started
@@ -256,7 +265,7 @@ register("a hook written for one project does not run in another", async () => {
   const r = await rig()
   try {
     const marker = path.join(r.root, "wrong-project-ran")
-    await projectHooks(r.directory, { PreToolUse: [{ matcher: "*", command: `touch "${marker}"` }] })
+    await projectHooks(r.directory, { PreToolUse: [{ matcher: "*", command: markCommand(marker) }] })
     const elsewhere = path.join(r.root, "other-project")
     await fs.mkdir(elsewhere, { recursive: true })
     const { parts } = await r.turn("HOOKSCOPE", bash("echo scoped"), elsewhere)

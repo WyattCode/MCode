@@ -59,6 +59,20 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Behaviour battery on Windows
+        # Every check in scripts/rounds-check.mjs has so far only ever run on the machine of
+        # whoever committed last. This is the one place the battery meets a Windows shell, which is
+        # where hook commands (`cmd.exe /d /s /c`), path separators and quoting actually live, and
+        # the review of the 1.2.5 delta found three cases that pass vacuously off-Windows because
+        # of exactly that. Non-blocking for now: a first Windows column reports instead of holding
+        # a release hostage. Make it blocking once it has been seen green end to end.
+        continue-on-error: true
+        env:
+          NODE_OPTIONS: --max-old-space-size=5120
+        run: |
+          npm run build
+          node scripts/rounds-check.mjs
+
       - name: Package (runtimes + soundfont are fetched and hash-verified)
         # The check that the bundled runtime names no machine compares against
         # os.homedir(); on GitHub's runners that home (C:\Users\runneradmin) is
