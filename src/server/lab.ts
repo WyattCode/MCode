@@ -60,18 +60,51 @@ function problem(error: unknown): string {
   return (error instanceof Error ? error.message : String(error)).slice(0, 4000)
 }
 
-function labPatch(text: string, task: LabTask): string {
-  const patch = text.replace(/^\s*\n|\n+$/g, "").replace(/^```(?:diff|patch)?\s*\n|\n```$/g, "") + "\n"
+/**
+ * The model is asked for a bare diff and hands back a sentence, a fence, or both. Taking
+ * the diff out of that reply is not a loosening: every rule below still runs on what is
+ * left, so an unscoped, renamed or binary patch is refused exactly as before.
+ */
+function extractDiff(text: string): string {
+  const lines = text.replace(/\r\n/g, "\n").split("\n")
+  const start = lines.findIndex((line) => line.startsWith("diff --git "))
+  if (start < 0) return ""
+  const body = lines.slice(start)
+  /*
+   * A reply wrapped in a fence closes at its last fence line: a hunk that adds a fenced
+   * block to a document carries ``` lines of its own, and cutting at the first one would
+   * hand a half patch to `git apply`.
+   */
+  if (/^```(?:diff|patch)?$/.test((lines[start - 1] ?? "").trim())) {
+    for (let line = body.length - 1; line > 0; line--) {
+      if (body[line].trim() === "```") return body.slice(0, line).join("\n")
+    }
+  }
+  while (body.length && !body[body.length - 1].trim()) body.pop()
+  return body.join("\n")
+}
+
+export function labPatch(text: string, task: LabTask): string {
+  const extracted = extractDiff(text)
+  if (!extracted.startsWith("diff --git ")) {
+    throw Error(`The reply has no git diff (head: ${text.replace(/\s+/g, " ").trim().slice(0, 200)})`)
+  }
+  const patch = `${extracted}\n`
   // Only text changes to the scoped implementation files may enter the worktree.
   const headers = [...patch.matchAll(/^diff --git a\/(\S+) b\/(\S+)$/gm)]
   const changed = (prefix: string) => [...patch.matchAll(new RegExp(`^${prefix} (.*)$`, "gm"))].map((match) => match[1])
-  const allowed = headers.length > 0 && headers.every(([, left, right]) => left === right && task.files.includes(left))
-  if (!allowed || patch.length > 96_000 || !patch.startsWith("diff --git ") ||
-      changed("---").join("\n") !== headers.map((entry) => `a/${entry[1]}`).join("\n") ||
-      changed("\\+\\+\\+").join("\n") !== headers.map((entry) => `b/${entry[2]}`).join("\n") ||
-      /^(?:old mode|new mode|new file mode|deleted file mode|rename |copy |GIT binary patch|Binary files)/m.test(patch) ||
+  if (!headers.length) throw Error("The git diff has no `diff --git` header")
+  const outside = [...new Set(headers.flatMap(([, left, right]) => (left === right ? [left] : [left, right]))
+    .filter((file) => !task.files.includes(file)))]
+  if (outside.length) throw Error(`Patch touches files outside the task scope: ${outside.join(", ")}`)
+  if (patch.length > 96_000) throw Error("Patch is larger than 96KB")
+  if (changed("---").join("\n") !== headers.map((entry) => `a/${entry[1]}`).join("\n") ||
+      changed("\\+\\+\\+").join("\n") !== headers.map((entry) => `b/${entry[2]}`).join("\n")) {
+    throw Error("Patch headers disagree (diff --git, --- and +++ must name the same files in order)")
+  }
+  if (/^(?:old mode|new mode|new file mode|deleted file mode|rename |copy |GIT binary patch|Binary files)/m.test(patch) ||
       /^index [^\n]+ (?!100(?:644|755)$)\d+$/m.test(patch)) {
-    throw Error("The model did not return a scoped text patch")
+    throw Error("Patch contains a binary, rename or file mode change")
   }
   return patch
 }
