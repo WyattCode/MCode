@@ -30,11 +30,17 @@ const hook = (command: string, matcher = "*", timeoutMs?: number) => ({ command,
  * the same thing in both shells, and node is certain to be on PATH (a `node "<file>"`
  * hook has been green on Windows since run cb7efbe), so the exit code still travels
  * through the real cmd.exe spawn shape and every assertion keeps its exact meaning there.
+ * The script sets `process.exitCode` and lets node exit on its own rather than calling
+ * `process.exit`: with stderr on a pipe the write is asynchronous and `process.exit` can
+ * cut it off unflushed, leaving the engine without the first reason line (the old
+ * `printf` fixtures had no such race - introduced by the port). A pending write keeps
+ * the event loop alive, and the engine's spawn always ends the hook's stdin, so the
+ * natural exit happens once everything has drained - same exit code, nothing truncated.
  */
 async function exitHook(dir: string, file: string, stderrLines: string[], code: number): Promise<string> {
   const script = path.join(dir, file)
   const body = stderrLines.length ? `process.stderr.write(${JSON.stringify(stderrLines.join("\n") + "\n")})\n` : ""
-  await fs.writeFile(script, `${body}process.exit(${code})\n`, "utf8")
+  await fs.writeFile(script, `${body}process.exitCode = ${code}\n`, "utf8")
   return `node "${script}"`
 }
 
