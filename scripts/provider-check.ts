@@ -809,6 +809,9 @@ async function checkSelfHostedKeyless(): Promise<void> {
         at("lan", "http://192.168.10.131:8020/v1"),
         at("loopback", "http://127.0.0.1:8020/v1"),
         at("loopback-v6", "http://[::1]:8020/v1"),
+        at("mapped-v4", "http://[::ffff:192.168.0.3]:8000/v1"),
+        at("mapped-loop", "http://[::ffff:127.0.0.1]:8000/v1"),
+        at("fqdn-local", "http://box.local.:8000/v1"),
         at("tailscale", "http://100.127.4.9:8080/v1"),
         at("carrier", "http://172.20.1.5:8000/v1"),
         at("public-ip", "http://8.8.8.8/v1"),
@@ -818,6 +821,9 @@ async function checkSelfHostedKeyless(): Promise<void> {
     note("a hand-entered provider on a LAN address is selectable without a key", config.usable("lan") === true)
     note("loopback is selectable without a key", config.usable("loopback") === true && config.usable("loopback-v6") === true)
     note("a tailnet address is selectable without a key", config.usable("tailscale") === true && config.usable("carrier") === true)
+    note("an IPv4-mapped private literal is selectable without a key", config.usable("mapped-v4") === true)
+    note("an IPv4-mapped loopback literal is selectable without a key", config.usable("mapped-loop") === true)
+    note("a fully qualified local name with its trailing dot is selectable without a key", config.usable("fqdn-local") === true)
     note("a public address still needs a key or a header", config.usable("public-ip") === false && config.usable("public-host") === false)
     /*
      * The IPv6 rules read a prefix, and a prefix is not a literal: `fc.example.com` begins

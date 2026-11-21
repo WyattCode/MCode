@@ -36,7 +36,8 @@ export function normalizeBaseURL(raw: string): string {
 export function selfHostedEndpoint(baseURL: string): boolean {
   let host: string
   try {
-    host = new URL(baseURL.trim()).hostname.toLowerCase().replace(/^\[|\]$/g, "")
+    // A trailing dot is the same name: `box.local.` is how a resolver spells a local FQDN.
+    host = new URL(baseURL.trim()).hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "")
   } catch {
     return false
   }
@@ -51,6 +52,19 @@ export function selfHostedEndpoint(baseURL: string): boolean {
    */
   if (!host.includes(":")) return v4SelfHosted(host)
   if (host === "::1" || host === "0:0:0:0:0:0:0:1") return true
+  /*
+   * An IPv4-mapped literal carries an IPv4 address, and that address is what decides. The URL
+   * parser spells it two ways depending on the input (`::ffff:192.168.0.3` and `::ffff:c0a8:3`),
+   * so both spellings are read — measured: only the dotted form matches the first branch.
+   */
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(host)
+  if (mapped) return v4SelfHosted(mapped[1])
+  const mappedHex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host)
+  if (mappedHex) {
+    const hi = parseInt(mappedHex[1], 16)
+    const lo = parseInt(mappedHex[2], 16)
+    return v4SelfHosted(`${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`)
+  }
   // Link-local fe80::/10 and unique-local fc00::/7: neither is reachable from outside.
   return /^fe[89ab][0-9a-f]:/.test(host) || /^f[cd][0-9a-f]{2}:/.test(host)
 }
