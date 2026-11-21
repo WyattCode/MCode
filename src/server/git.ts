@@ -261,7 +261,11 @@ export async function status(directory: string): Promise<GitStatus> {
   const base: GitStatus = { installed: true, repo: true, ...(branch ? { branch } : {}), changed: [], entries: [] }
 
   try {
-    const root = await toplevel(directory)
+    // git usually answers the root in its physical spelling already, but the
+    // code must not depend on that: make it physical like everything else it
+    // compares (P3-2 - `diff` has canonicalized `rootSeen` since G10-1; the
+    // asymmetry left `status` trusting a rule git does not promise).
+    const root = await canonicalDirectory(await toplevel(directory))
     // git and the project folder have to speak one spelling before any path is compared.
     const project = await canonicalDirectory(directory)
     let found = await changesUnder(root, project, ["status", "--porcelain=v1", "-z"])
