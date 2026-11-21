@@ -170,9 +170,40 @@ register("a project hook runs before the tool and is told which tool is coming",
   try {
     const env = path.join(r.root, "env.txt")
     const payload = path.join(r.root, "payload.json")
-    await projectHooks(r.directory, { PreToolUse: [{ matcher: "*", command: `printf '%s %s' "$MCODE_HOOK_EVENT" "$MCODE_HOOK_TOOL" > "${env}"; cat > "${payload}"` }] })
-    const { parts, seen } = await r.turn("HOOKENV", bash("echo hookside-ok"))
+    /*
+     * "Before" is an ordering claim, so the two actors write into one log and the log is read back:
+     * asserting only that a hook ran and saw the right payload would also pass for a hook that
+     * fired after the tool finished. `echo x >> "file"` appends in cmd.exe and in /bin/sh alike.
+     */
+    const order = path.join(r.root, "order.log")
+    /*
+     * The evidence is written by a small Node script, not by shell verbs: cmd.exe has no printf or
+     * cat, and a hook whose command fails to parse looks identical to a hook that never fired. All
+     * either shell has to understand is `node "file"`, so the same case is meaningful on Windows.
+     */
+    const reporter = path.join(r.root, "hook-reporter.mjs")
+    await fs.writeFile(
+      reporter,
+      [
+        "import { appendFileSync, writeFileSync } from 'node:fs'",
+        `const order = ${JSON.stringify(order)}`,
+        `const envFile = ${JSON.stringify(env)}`,
+        `const payloadFile = ${JSON.stringify(payload)}`,
+        "let data = ''",
+        "process.stdin.on('data', (chunk) => { data += chunk })",
+        "process.stdin.on('end', () => {",
+        "  appendFileSync(order, 'HHOOK' + String.fromCharCode(10))",
+        "  writeFileSync(envFile, String(process.env.MCODE_HOOK_EVENT) + ' ' + String(process.env.MCODE_HOOK_TOOL))",
+        "  writeFileSync(payloadFile, data)",
+        "})",
+        "",
+      ].join("\n"),
+    )
+    await projectHooks(r.directory, { PreToolUse: [{ matcher: "*", command: `node "${reporter}"` }] })
+    const { parts, seen } = await r.turn("HOOKENV", bash(`echo TTOOL >> "${order}" && echo hookside-ok`))
     expect(parts[0]?.output?.includes("hookside-ok"), { status: parts[0]?.status, out: String(parts[0]?.output).slice(0, 200) })
+    const logged = await fs.readFile(order, "utf8").catch(() => "")
+    expect(logged.indexOf("HHOOK") >= 0 && logged.indexOf("TTOOL") > logged.indexOf("HHOOK"), logged.replace(/\r/g, ""))
     expect(await fs.readFile(env, "utf8").catch(() => ""), "the hook never ran: no env file")
     expect(await fs.readFile(env, "utf8") === "PreToolUse bash")
     const sent = await fs.readFile(payload, "utf8")
