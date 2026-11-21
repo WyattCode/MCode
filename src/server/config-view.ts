@@ -63,6 +63,9 @@ export function frameForWindow(frame: ServerFrame): ServerFrame {
   if (frame.kind === "event") {
     if (frame.event.type === "config.updated") return { ...frame, event: { ...frame.event, config: configForWindow(frame.event.config) } }
     if (frame.event.type === "auth.completed") return { ...frame, event: { ...frame.event, providers: providersForWindow(frame.event.providers) } }
+    // Every pushed providers list carries the stored addresses; the pushed ones used to cross unmasked.
+    if (frame.event.type === "providers.updated" || frame.event.type === "auth.expired")
+      return { ...frame, event: { ...frame.event, providers: providersForWindow(frame.event.providers) } }
     return frame
   }
   if (frame.kind === "response" && frame.ok) {
