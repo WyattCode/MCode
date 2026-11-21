@@ -219,14 +219,16 @@ register("a hook that refuses the call keeps the tool from acting and the model 
   try {
     const sideEffect = path.join(r.root, "must-not-exist")
     /*
-     * The refusal is spelled in the one interpreter either shell can run, for the same reason
-     * the first case abandoned printf: on Windows the hook goes through `cmd.exe /d /s /c`,
-     * where printf is not a command, `;` is an argument separator rather than a statement
-     * separator, and `>&2` is not cmd redirection — the old POSIX fixture never reached
-     * `exit 2`, the engine correctly read a non-2 code as "not a refusal", and the command
-     * ran; that is the measured cause of this case's Windows failure in run 44949680691
-     * ("the blocked command still ran"). A node script writing stderr and exiting 2 says the
-     * same thing in both shells, so every assert below keeps its exact meaning on Windows.
+     * The refusal is spelled in the one interpreter either shell can run. The old fixture
+     * (`printf '...' >&2; exit 2`) wrote POSIX grammar while Windows runs hooks through
+     * `cmd.exe /d /s /c`: the runner's PATH has Git's coreutils (printf executes), but cmd's
+     * `;` is an argument separator, so `exit 2` became a printf argument and the child
+     * exited 0 — measured on run 44951082525 for the same grammar in the engine battery
+     * (`printf oops >&2; exit 3` logged no exit code at all). A non-2 exit is "not a
+     * refusal" by contract, so the command ran; that is this case's Windows failure in run
+     * 44949680691 ("the blocked command still ran"). A node script writing stderr and
+     * exiting 2 says the same thing in both shells, so every assert below keeps its exact
+     * meaning on Windows.
      */
     const refuser = path.join(r.root, "hook-refuse.mjs")
     await fs.writeFile(refuser, "process.stderr.write('no bash on this project\\nsecond line the model never needs\\n')\nprocess.exit(2)\n", "utf8")

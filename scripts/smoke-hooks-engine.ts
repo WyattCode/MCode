@@ -17,15 +17,19 @@ const hook = (command: string, matcher = "*", timeoutMs?: number) => ({ command,
 
 /**
  * A hook that speaks on stderr and leaves with a chosen exit code, spelled in the one
- * interpreter both shells understand. The previous fixtures wrote `printf '...' >&2; exit 2`:
- * POSIX-only syntax. On Windows a hook runs through `cmd.exe /d /s /c`, where printf is not
- * a command, `;` is an argument separator rather than a statement separator, and `>&2` is
- * not cmd redirection — the child never reaches `exit 2`, the engine correctly treats the
- * non-2 code as "not a refusal", and the tool runs. That is the measured cause of the
- * Windows battery run 44949680691 failure `exit 2 returns only the first reason... ->
- * 'completed' != 'error'`. Node is on PATH on either runner (a `node "<file>"` hook has
- * been green on Windows since run cb7efbe), so the exit code travels through the real
- * cmd.exe spawn shape while the asserted semantics stay identical on both platforms.
+ * interpreter both shells understand. The previous fixtures wrote POSIX grammar
+ * (`printf '...' >&2; exit 2`). On Windows the hook runs through `cmd.exe /d /s /c`, and
+ * while the runner's PATH carries Git's coreutils (printf/sleep/touch do execute there —
+ * the `sleep 4` timeout case is green twice running), cmd has none of the grammar: `;` is
+ * an argument separator, not a statement separator, so `exit 2`/`exit 3` became printf
+ * arguments and the child exited 0 — measured on run 44951082525, where the fixture
+ * `printf oops >&2; exit 3` produced no hook log line at all (any real non-zero exit logs
+ * its code), and cmd also never expands `$VAR`. A non-2, non-zero-less exit is "not a
+ * refusal" by contract, so the tool ran: that is the measured cause of run 44949680691's
+ * `exit 2 returns only the first reason... -> 'completed' != 'error'`. A node script says
+ * the same thing in both shells, and node is certain to be on PATH (a `node "<file>"`
+ * hook has been green on Windows since run cb7efbe), so the exit code still travels
+ * through the real cmd.exe spawn shape and every assertion keeps its exact meaning there.
  */
 async function exitHook(dir: string, file: string, stderrLines: string[], code: number): Promise<string> {
   const script = path.join(dir, file)
@@ -190,7 +194,12 @@ cases.push(
       await answer(post.permissions, noted, "reject")
       assert.equal(await secondRun, "original")
 
-      const noisy = "printf oops >&2; exit 3"
+      // Spelled through a node script (see exitHook): under cmd.exe the old
+      // `printf oops >&2; exit 3` swallowed `; exit 3` as printf arguments and
+      // exited 0 — run 44951082525 measured no hook log line at all. exit 3 must
+      // be the child's real exit code for "the engine warns but does not block"
+      // to mean what it says on Windows.
+      const noisy = await exitHook(dir, "noisy3.mjs", ["oops"], 3)
       post.config.hooks = { PostToolUse: [hook(noisy)] }
       const loud = post.execute()
       void loud.catch(() => undefined)
@@ -198,8 +207,10 @@ cases.push(
       assert.equal(await loud, "original")
       assert.match(post.logs.join("\n"), /PostToolUse read: exit 3/)
 
-      // A rule added afterwards denies the hook without even asking.
-      post.config.permissionRules = [{ action: "bash", resource: "exit 3", effect: "deny" }]
+      // A rule added afterwards denies the hook without even asking. The resource
+      // names the whole command because that is the only spelling this one-segment
+      // hook can match (the old one matched the `exit 3` segment).
+      post.config.permissionRules = [{ action: "bash", resource: noisy, effect: "deny" }]
       assert.equal(await post.execute(), "original")
       assert.equal(post.permissions.outstanding().length, 0)
     }
@@ -226,7 +237,13 @@ cases.push(
     await assert.rejects(fs.stat(path.join(dir, "ran")), { code: "ENOENT" })
 
     f.config.permissionRules = []
-    f.config.hooks = { PreToolUse: [hook("echo blocked-before-shell >&2; exit 2", "BASH")] }
+    // Node-spelled refusal (see exitHook): under cmd.exe the old
+    // `echo blocked-before-shell >&2; exit 2` exited 0 because `;` is an argument
+    // separator, so the pre hook never refused anything and the Bash tool acted —
+    // run 44951082525 measured allowed.error === undefined here. The BASH matcher
+    // is what this case is about, so the hook stays addressed to the bash tool.
+    const refuseBash = await exitHook(dir, "refuse-bash.mjs", ["blocked-before-shell"], 2)
+    f.config.hooks = { PreToolUse: [hook(refuseBash, "BASH")] }
     const allowed = await f.runTool("bash", { command: "touch tool-ran", description: "Check pre-hook ordering" })
     assert.equal(allowed.error, "blocked-before-shell")
     await assert.rejects(fs.stat(path.join(dir, "tool-ran")), { code: "ENOENT" })
@@ -249,7 +266,25 @@ cases.push(
     assert.equal(await f.engine.after(snapshot, f.call, "original"), "original\nhook: linked")
   }],
   ["stdin and environment identify the call and bound the UTF-8 preview", async (dir) => {
-    const f = fixture(dir, { PostToolUse: [hook('printf "%s %s\\n" "$MCODE_HOOK_EVENT" "$MCODE_HOOK_TOOL"; cat > payload')] })
+    // The old fixture piped through `printf "%s" "$MCODE_HOOK_EVENT"...; cat > payload` —
+    // cmd.exe leaves `$MCODE_HOOK_EVENT` unexpanded, so on run 44951082525 the note was
+    // the literal `$MCODE_HOOK_EVENT` text and `cat`'s target was spelled in shell that
+    // never ran. A node script reads the environment and stdin the same way either shell
+    // would hand them over, so both facts (env identifies the call, stdin carries the
+    // preview-bounded payload) are still being tested on Windows.
+    const probe = path.join(dir, "probe.mjs")
+    await fs.writeFile(
+      probe,
+      "import fs from 'node:fs'\n" +
+        "let data = ''\n" +
+        "process.stdin.on('data', (chunk) => { data += chunk })\n" +
+        "process.stdin.on('end', () => {\n" +
+        "  process.stdout.write(String(process.env.MCODE_HOOK_EVENT) + ' ' + String(process.env.MCODE_HOOK_TOOL))\n" +
+        "  fs.writeFileSync('payload', data)\n" +
+        "})\n",
+      "utf8",
+    )
+    const f = fixture(dir, { PostToolUse: [hook(`node "${probe}"`)] })
     const snapshot = await f.engine.snapshot(dir, f.config.hooks)
     const output = "x" + "汉".repeat(5000)
     assert.equal(await f.engine.after(snapshot, f.call, output), output + "\nhook: PostToolUse read")
