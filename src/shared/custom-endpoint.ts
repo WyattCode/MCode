@@ -42,9 +42,20 @@ export function selfHostedEndpoint(baseURL: string): boolean {
   }
   if (!host) return false
   if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) return true
+  /*
+   * The ranges below are prefixes, and a prefix is not a match: read as a bare
+   * test they also swallow `fc.example.com` and `fe80-login.example.com`, which
+   * are public names anybody can register, and the shipped 1.2.5 predicate let
+   * exactly those through keyless. An IPv6 rule therefore starts by asking
+   * whether the host is an IPv6 literal at all.
+   */
+  if (!host.includes(":")) return v4SelfHosted(host)
   if (host === "::1" || host === "0:0:0:0:0:0:0:1") return true
-  // IPv6 link-local and unique-local: both are only reachable inside the network.
-  if (/^fe[89ab]/.test(host) || /^f[cd]/.test(host)) return true
+  // Link-local fe80::/10 and unique-local fc00::/7: neither is reachable from outside.
+  return /^fe[89ab][0-9a-f]:/.test(host) || /^f[cd][0-9a-f]{2}:/.test(host)
+}
+
+function v4SelfHosted(host: string): boolean {
   const v4 = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(host)
   if (!v4) return false
   const [a, b] = [Number(v4[1]), Number(v4[2])]

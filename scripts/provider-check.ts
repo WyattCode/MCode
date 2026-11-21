@@ -819,6 +819,19 @@ async function checkSelfHostedKeyless(): Promise<void> {
     note("loopback is selectable without a key", config.usable("loopback") === true && config.usable("loopback-v6") === true)
     note("a tailnet address is selectable without a key", config.usable("tailscale") === true && config.usable("carrier") === true)
     note("a public address still needs a key or a header", config.usable("public-ip") === false && config.usable("public-host") === false)
+    /*
+     * The IPv6 rules read a prefix, and a prefix is not a literal: `fc.example.com` begins
+     * like a unique-local address and `fe80-login.example.com` begins like a link-local one,
+     * while both are public names anybody can register. Measured on the shipped 1.2.5
+     * predicate, all four names below came back keyless, which hands a hand-entered public
+     * provider the same pass that only a machine on the person's own network should get.
+     */
+    for (const publicName of ["fc.example.com", "fcd.example.net", "fd-public.io", "fe80-login.example.com"]) {
+      await config.set({
+        customProviders: [...config.get().customProviders, { id: `host-${publicName}`, name: publicName, baseURL: `https://${publicName}/v1`, models: [{ id: "tiny", name: "tiny" }] }],
+      })
+      note(`a public hostname that merely looks like ${publicName.startsWith("fe") ? "link-local" : "unique-local"} still needs a key`, config.usable(`host-${publicName}`) === false, config.usable(`host-${publicName}`))
+    }
     const listed = config.enabled().map((entry) => entry.provider)
     note("the picker offers the LAN provider and not the public one", listed.includes("lan") && !listed.includes("public-host"), listed)
     await config.setApiKey("public-host", "a-key")
