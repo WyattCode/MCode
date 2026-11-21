@@ -1,4 +1,5 @@
 import { sameShortcutBindings } from "@shared/chord"
+import { postConversation } from "./provider/redirect"
 import fs from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
@@ -1045,7 +1046,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         if (request.language) form.append("language", request.language.split("-")[0])
 
         /* Failures leave here as codes the window turns into MiMo's messages, never as raw fetch errors. */
-        const response = await fetch(`${baseURL!.replace(/\/$/, "")}/audio/transcriptions`, {
+        const response = await postConversation(`${baseURL!.replace(/\/$/, "")}/audio/transcriptions`, {
           method: "POST",
           headers,
           body: form,
@@ -1098,7 +1099,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
             { role: "user" as const, content: heard },
           ]
 
-      const answered = await fetch(`${rewriter.baseURL}/chat/completions`, {
+      const answered = await postConversation(`${rewriter.baseURL}/chat/completions`, {
         method: "POST",
         headers: { ...rewriter.headers, "Content-Type": "application/json" },
         body: JSON.stringify({ model: rewriter.model, messages, temperature: 0 }),

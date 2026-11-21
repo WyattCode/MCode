@@ -290,6 +290,12 @@ async function streamResponses(
     throw guard.failure(err)
   })
 
+  if (response.status >= 300 && response.status < 400) {
+    // Refusing has to end this turn's guard too: a guard kept alive past a rejected request holds
+    // its timer and its abort listener, and every refused retry adds another to the live set.
+    guard.dispose()
+    await response.body?.cancel().catch(() => undefined)
+  }
   refuseRedirect(target.url, response)
   if (!response.ok || !response.body) {
     guard.dispose()

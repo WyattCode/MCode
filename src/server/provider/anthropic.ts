@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk"
+import { refuseRedirect } from "./redirect"
 import type { Message, ModelModalities, ModelRef, Usage } from "@shared/protocol"
 import { attachmentParts } from "./attachment-parts"
 import { userText } from "@shared/annotations"
@@ -22,6 +23,16 @@ import { transformTool } from "./transform"
 export function createClient(apiKey: string, maxRetries = 2, baseURL?: string, headers?: Record<string, string>): Anthropic {
   const root = baseURL?.replace(/\/+$/, "").replace(/\/v1$/, "")
   return new Anthropic({
+    /*
+     * The SDK otherwise hands the serialized Messages request to the global fetch, which follows a
+     * 307/308 and replays the entire conversation at whatever host answered. A Messages gateway is
+     * typed in by hand, so that host is whatever a redirect points at.
+     */
+    fetch: async (input, init) => {
+      const response = await fetch(input, init)
+      refuseRedirect(String(input), response)
+      return response
+    },
     apiKey: apiKey || null,
     maxRetries,
     ...(root ? { baseURL: root } : {}),

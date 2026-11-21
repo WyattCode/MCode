@@ -14,6 +14,14 @@
  * should be re-entered as the base URL, which is also the only way the admission rule below can
  * keep judging the address the person actually chose.
  */
+/** A POST to a person-configured endpoint, with the redirect question settled here so no call
+ * site has to remember it: 307/308 resend the body verbatim, 301/302 move it to GET. */
+export async function postConversation(url: string, init: RequestInit): Promise<Response> {
+  const response = await fetch(url, { ...init, redirect: "manual" })
+  refuseRedirect(url, response)
+  return response
+}
+
 export function refuseRedirect(endpoint: string, response: Response): void {
   if (response.status < 300 || response.status >= 400) return
   const location = response.headers.get("location") || "an unknown address"

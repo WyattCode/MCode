@@ -314,6 +314,12 @@ export const OpenAICompatible: ProviderAdapter = {
       throw guard.failure(err)
     })
 
+    if (response.status >= 300 && response.status < 400) {
+      // Refusing means ending this turn's guard too: a guard kept alive past a rejected request
+      // holds its timer and its abort listener, and every refused retry adds another.
+      guard.dispose()
+      await response.body?.cancel().catch(() => undefined)
+    }
     refuseRedirect(`${root}/chat/completions`, response)
     if (!response.ok || !response.body) {
       guard.dispose()
