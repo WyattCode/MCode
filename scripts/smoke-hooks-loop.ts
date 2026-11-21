@@ -209,16 +209,47 @@ register("a hook that speaks after the tool is heard by the model as a note", as
 register("a hook that never returns is put down at its timeout and the task carries on", async () => {
   const r = await rig()
   try {
-    await projectHooks(r.directory, { PreToolUse: [{ matcher: "*", command: "sleep 120", timeoutMs: 400 }] })
+    /*
+     * Speed alone cannot tell a timeout from a hook that never ran, so the hook leaves evidence it
+     * started before hanging. Without the marker file this case passes on any build where hooks do
+     * not run at all, which is the worst kind of green.
+     */
+    const begun = path.join(r.root, "hook-begun")
+    await projectHooks(r.directory, { PreToolUse: [{ matcher: "*", command: `touch "${begun}"; sleep 120`, timeoutMs: 400 }] })
     const started = Date.now()
     const { parts } = await r.turn("HOOKHANG", bash("echo carried-on"))
     const elapsed = Date.now() - started
     expect(parts[0]?.output?.includes("carried-on"), { elapsed, out: String(parts[0]?.output).slice(0, 200) })
+    const began = await fs.stat(begun).then(() => true, () => false)
+    expect(began, "the hook never started, so a quick turn proves nothing about timeouts")
     // The hook sleeps for two minutes; only the timeout can explain a quick turn.
     expect(elapsed < 20_000, { elapsed })
   } finally {
     await r.close()
   }
+})
+
+register("a turn whose hook was never addressed to it is not counted as a timeout", async () => {
+  // The control group for the case above: same shape, same speed, but the hook is written for a
+  // tool this turn never calls. It must show no start marker - the evidence the timeout case needs.
+  const r = await rig()
+  try {
+    const begun = path.join(r.root, "never-begun")
+    await projectHooks(r.directory, { PreToolUse: [{ matcher: "Write", command: `touch "${begun}"; sleep 120`, timeoutMs: 400 }] })
+    const started = Date.now()
+    await r.turn("HOOKNOTEV", bash("echo quick"))
+    const elapsed = Date.now() - started
+    const began = await fs.stat(begun).then(() => true, () => false)
+    expect(!began, { elapsed, began })
+  } finally {
+    await r.close()
+  }
+})
+
+register("the standalone guard fires for real file names on either path style", async () => {
+  expect(runsAsStandalone("C:\\Users\\Wyatt\\MCode\\scripts\\smoke-hooks-loop.mjs"), "a native Windows path ran no battery and exited 0")
+  expect(runsAsStandalone("/Users/wyatt/MCode/scripts/smoke-hooks-loop.mjs"), "a POSIX path should run the battery")
+  expect(!runsAsStandalone("/Users/wyatt/MCode/out/rounds-smoke-hooks-loop.mjs"), "the battery's own bundle must not run this file twice")
 })
 
 register("a hook written for one project does not run in another", async () => {
@@ -263,8 +294,14 @@ export async function hooksLoopChecks(check: Check): Promise<void> {
 
 /* Standalone entry: the battery drives `hooksLoopChecks` instead, so the count is never left to an argv match.
  * The basename is compared exactly because the battery builds this file as `rounds-smoke-hooks-loop.mjs`. */
-const entry = process.argv[1]?.split("/").pop()
-if (entry === "smoke-hooks-loop.ts" || entry === "smoke-hooks-loop.mjs") {
+export function runsAsStandalone(argvPath: string | undefined): boolean {
+  // Both separators: a native Windows path splits into nothing on "/" alone, which left the file
+  // running no battery and exiting 0 - a pass that tested nothing.
+  const entry = argvPath?.split(/[\\/]/).pop()
+  return entry === "smoke-hooks-loop.ts" || entry === "smoke-hooks-loop.mjs"
+}
+
+if (runsAsStandalone(process.argv[1])) {
   void (async () => {
     let failed = 0
     await hooksLoopChecks((label, ok, detail) => {
