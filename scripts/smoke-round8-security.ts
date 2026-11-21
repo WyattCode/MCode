@@ -603,38 +603,6 @@ async function maskingChecks(check: Check, section: Section, root: string): Prom
     check("round 9: ...while a newly typed address replaces it", backend.runtime.config.get().customProviders[0]?.baseURL === "https://gw3.example/v1")
 
     await new Promise((resolve) => setTimeout(resolve, 100))
-    if (process.platform === "win32") {
-      /*
-       * TEMP DIAGNOSTIC (removed before merge): the census of every frame the
-       * window got, grouped by kind/event type with the count of frames holding
-       * a made-up fake and which fake it was, as index counts only — the prints
-       * start with FAIL so the rounds-check filter forwards them, and they
-       * never name a value.
-       */
-      const groups = new Map<string, { n: number; leak: number; hits: number[] }>()
-      const order: string[] = []
-      for (const line of seen) {
-        let key = "unparsed"
-        try {
-          const frame = JSON.parse(line) as { kind?: string; event?: { type?: string } }
-          key = frame.kind === "event" ? frame.event?.type ?? "event?" : frame.kind ?? "?"
-        } catch {
-          /* counted as unparsed */
-        }
-        const g = groups.get(key) ?? { n: 0, leak: 0, hits: [0, 0, 0, 0, 0, 0] }
-        g.n++
-        const hit = secrets.map((value) => line.includes(value))
-        if (hit.some(Boolean)) {
-          g.leak++
-          hit.forEach((h, i) => {
-            if (h) g.hits[i]++
-          })
-        }
-        order.push(key === "config.updated" ? "C" : key === "providers.updated" ? "P" : key === "response" ? "R" : key.slice(0, 3))
-      }
-      console.log("FAIL R8DIGEST " + [...groups].map(([k, g]) => `${k}:${g.n}${g.leak ? `/LEAKED=${g.leak}#fakeHits=[${g.hits.join(",")}]` : ""}`).join(" "))
-      console.log("FAIL R8ORDER " + order.join(","))
-    }
     const events = seen.filter((line) => line.includes('"config.updated"'))
     check("every settings event sent to the window is masked", events.length > 0 && events.every((line) => leaks(line) === 0), events.length)
     check("nothing the window was sent holds a secret", seen.every((line) => leaks(line) === 0), seen.length)
