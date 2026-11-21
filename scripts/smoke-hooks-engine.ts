@@ -281,7 +281,19 @@ export async function hooksEngineChecks(check: Check) {
     } catch (e) {
       check(name, false, (e as Error).message)
     } finally {
-      await fs.rm(directory, { recursive: true, force: true })
+      // Windows runners can hold a handle on the case directory a beat past the last
+      // hook's `close` — run 44949680691 measured an `EBUSY ... rmdir tmp-local/
+      // hooks-case-*` that left this module "not clean" on top of its FAILs. Retry
+      // briefly, then report whatever fs still says; nothing is swallowed.
+      for (let attempt = 0; ; attempt++) {
+        try {
+          await fs.rm(directory, { recursive: true, force: true })
+          break
+        } catch (error) {
+          if (attempt >= 8 || (error as NodeJS.ErrnoException).code !== "EBUSY") throw error
+          await new Promise((resolve) => setTimeout(resolve, 250))
+        }
+      }
     }
   }
 }
