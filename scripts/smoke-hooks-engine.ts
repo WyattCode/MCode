@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { spawn } from "node:child_process"
 import fs from "node:fs/promises"
 import path from "node:path"
 import { Bus } from "../src/server/bus"
@@ -13,6 +14,25 @@ import { DEFAULT_PERMISSIONS } from "../src/shared/protocol"
 type Check = (name: string, ok: boolean, detail?: string) => void
 const cases: [string, (directory: string) => Promise<void>][] = []
 const hook = (command: string, matcher = "*", timeoutMs?: number) => ({ command, matcher, timeoutMs })
+
+/**
+ * A hook that speaks on stderr and leaves with a chosen exit code, spelled in the one
+ * interpreter both shells understand. The previous fixtures wrote `printf '...' >&2; exit 2`:
+ * POSIX-only syntax. On Windows a hook runs through `cmd.exe /d /s /c`, where printf is not
+ * a command, `;` is an argument separator rather than a statement separator, and `>&2` is
+ * not cmd redirection — the child never reaches `exit 2`, the engine correctly treats the
+ * non-2 code as "not a refusal", and the tool runs. That is the measured cause of the
+ * Windows battery run 44949680691 failure `exit 2 returns only the first reason... ->
+ * 'completed' != 'error'`. Node is on PATH on either runner (a `node "<file>"` hook has
+ * been green on Windows since run cb7efbe), so the exit code travels through the real
+ * cmd.exe spawn shape while the asserted semantics stay identical on both platforms.
+ */
+async function exitHook(dir: string, file: string, stderrLines: string[], code: number): Promise<string> {
+  const script = path.join(dir, file)
+  const body = stderrLines.length ? `process.stderr.write(${JSON.stringify(stderrLines.join("\n") + "\n")})\n` : ""
+  await fs.writeFile(script, `${body}process.exit(${code})\n`, "utf8")
+  return `node "${script}"`
+}
 
 function fixture(directory: string, hooks: unknown, accessLevel = "full") {
   const config = {
@@ -63,12 +83,49 @@ function fixture(directory: string, hooks: unknown, accessLevel = "full") {
 
 cases.push(
   ["exit 2 returns only the first reason and prevents tool and later hooks", async (dir) => {
-    const f = fixture(dir, { PreToolUse: [hook("printf 'blocked\\nignored\\n' >&2; exit 2"), hook("touch ran")] })
+    const refusal = await exitHook(dir, "refuse.mjs", ["blocked", "ignored"], 2)
+    // The second hook marks the file with `echo ... > "ran"`, which creates it in cmd.exe
+    // and /bin/sh alike. The old `touch ran` did not exist in cmd, so "later hooks were
+    // prevented" passed vacuously on Windows once the refusal itself missed the exit code.
+    const f = fixture(dir, { PreToolUse: [hook(refusal), hook('echo ran > "ran"')] })
     const part = await f.runTool()
     assert.equal(part.status, "error")
     assert.equal(part.error, "blocked")
     assert.equal(f.executions(), 0)
     await assert.rejects(fs.stat(path.join(dir, "ran")), { code: "ENOENT" })
+  }],
+  ["the refusal verb reaches the engine's own spawn shape as exit code 2 on either shell", async (dir) => {
+    const command = await exitHook(dir, "exit-two.mjs", ["blocked", "ignored"], 2)
+    // Spawns exactly the way src/server/hooks/index.ts does — cmd.exe /d /s /c with
+    // verbatim arguments on Windows, /bin/sh -c elsewhere — and demands the raw exit
+    // code. This case keeps the two Windows failure modes distinguishable: if it goes
+    // red there, a red refusal case is a spawn/exit-code plumbing problem, not hook
+    // command vocabulary; if it is green while a refusal case is red, the engine's
+    // exit-2 handling is the defect.
+    const windows = process.platform === "win32"
+    const executable = windows ? path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "cmd.exe") : "/bin/sh"
+    const code = await new Promise<number | null>((resolve) => {
+      const child = spawn(executable, windows ? ["/d", "/s", "/c", `"${command}"`] : ["-c", command], {
+        cwd: dir, windowsHide: true, windowsVerbatimArguments: windows, stdio: ["ignore", "pipe", "pipe"],
+      })
+      child.stdout.resume()
+      child.stderr.resume()
+      child.once("error", () => resolve(null))
+      child.once("close", resolve)
+    })
+    assert.equal(code, 2)
+  }],
+  ["a failing hook whose exit code is not 2 warns but never blocks the tool", async (dir) => {
+    // The rule that made the Windows reds possible, now pinned portably: only exit code 2
+    // is a refusal. A POSIX verb cmd.exe cannot run lands in exactly this bucket — its
+    // code is not 2 — which is why the old fixtures let the tool run instead of erroring.
+    const noisy = await exitHook(dir, "noisy.mjs", ["hook-noisy"], 1)
+    const f = fixture(dir, { PreToolUse: [hook(noisy)] })
+    const part = await f.runTool()
+    assert.equal(part.status, "completed")
+    assert.equal(part.output, "original")
+    assert.equal(f.executions(), 1)
+    assert.match(f.logs.join("\n"), /PreToolUse hooks_probe: exit 1/)
   }],
   ["exit 0 and a timed-out hook allow execution and timeout is logged", async (dir) => {
     const f = fixture(dir, { PreToolUse: [hook("exit 0"), hook("sleep 4", "*", 35)] })
