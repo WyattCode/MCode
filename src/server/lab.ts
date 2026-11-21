@@ -95,6 +95,27 @@ export function labFiles(text: string, task: LabTask): { file: string; content: 
 }
 
 /**
+ * Control characters cannot survive a trip through a model: they are invisible in the prompt
+ * and they vanish from the reply, and a file that keeps its stashed HTML behind ` … `
+ * sentinels then comes back with its protections removed. They travel as visible tokens and
+ * are restored when the file is written. A file that already spells the tokens is left alone,
+ * because inventing them there would corrupt a file that was fine.
+ */
+export function controlTokens(text: string): { text: string; escaped: boolean } {
+  if (/[⟦⟧]/.test(text)) return { text, escaped: false }
+  let escaped = false
+  const mapped = text.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, (character) => {
+    escaped = true
+    return `⟦${character.charCodeAt(0).toString(16).padStart(4, "0")}⟧`
+  })
+  return { text: mapped, escaped }
+}
+
+export function tokensToControl(text: string): string {
+  return text.replace(/⟦([0-9a-f]{4})⟧/g, (_match, hex: string) => String.fromCharCode(parseInt(hex, 16)))
+}
+
+/**
  * The model is asked for a bare diff and hands back a sentence, a fence, or both. Taking
  * the diff out of that reply is not a loosening: every rule below still runs on what is
  * left, so an unscoped, renamed or binary patch is refused exactly as before.
@@ -344,18 +365,14 @@ export class Lab {
         }))
         // A model that was given whole files may hand whole files back; one that saw excerpts may only send a diff.
         const whole = sources.every((text) => !text.includes(" (excerpts):"))
+        const given = sources.map((text) => controlTokens(text))
+        const escaping = given.some((entry) => entry.escaped)
         for (const candidate of candidates) candidate.card.stage = "patching"
         const outcomes = await fanout.generate(candidates.map(({ card }) => ({
           name: `${task.id}-${card.worker}`,
-          prompt: `Fix this regression: ${task.title}\n\n${sources.join("\n\n")}\n\n${whole ? "Write the complete fixed file(s). Begin your reply with the `=== FILE <path> ===` line; put nothing before it." : "Return the git unified diff. Begin your reply with the `diff --git` line; put nothing before it."}`,
+          prompt: `Fix this regression: ${task.title}\n\n${given.map((entry) => entry.text).join("\n\n")}\n\n${whole ? "Write the complete fixed file(s). Begin your reply with the `=== FILE <path> ===` line; put nothing before it." : "Return the git unified diff. Begin your reply with the `diff --git` line; put nothing before it."}`,
         })), {
           concurrency: options.concurrency,
-          /*
-           * No ceiling of our own: a whole file has to fit in one reply. The run that asked
-           * for 8192 got a `markdown.ts` that stopped mid-regex, and the acceptance test then
-           * reported a syntax error rather than the truncation it was. The runner already
-           * holds a call to the model's own limit and to its context window.
-           */
           /*
            * A thinking model handed this budget spends nearly all of it planning and
            * returns no diff at all, which is what the Lab measured on its own model
@@ -396,14 +413,16 @@ export class Lab {
             let patch = ""
             const files = whole ? labFiles(outcome.text, task) : null
             if (files) {
-              for (const entry of files) await fs.writeFile(path.join(directory, entry.file), entry.content)
+              for (const entry of files) {
+                await fs.writeFile(path.join(directory, entry.file), escaping ? tokensToControl(entry.content) : entry.content)
+              }
               card.diff = await labGit(directory, ["diff", "--no-color", "--", ...task.files])
               if (!card.diff.trim()) throw Error("The reply rewrote the files without changing them")
               // What the arena replays is this patch, so a candidate's own checkout and the arena end up identical.
               patch = card.diff
             } else {
               try {
-                patch = labPatch(outcome.text, task)
+                patch = labPatch(escaping ? tokensToControl(outcome.text) : outcome.text, task)
               } catch (error) {
                 throw Error(`${problem(error)}${outcome.note ? ` — ${outcome.note}` : ""}`)
               }
