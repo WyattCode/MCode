@@ -89,7 +89,30 @@ export async function roundThirtyNineChecks(check: Check, section: (name: string
       const started = Date.now()
       const pressed = await run({ action: "do", steps: [{ action: "click", ref: button }] })
       const took = Date.now() - started
-      check("a page animating from script does not keep a step waiting its full cap", /shows: clicked 1|clicked 1/.test(pressed.output) && took < 1_500, { took, output: pressed.output })
+      check("a click on the animating page lands and reports its effect", /shows: clicked 1|clicked 1/.test(pressed.output), pressed.output)
+      /*
+       * What the bug was, read from the page rather than timed: if the change
+       * recorder inside the page counted the style the animation rewrites every
+       * frame, settle would sit at its cap on every step. The step's wall time
+       * cannot tell the two apart on GitHub's Windows runner: run alone it
+       * took 137-143 ms with settle waits of 124-135 ms there (probe in run
+       * 44944764891), while the battery's five concurrent modules pushed the
+       * same step's wall time to 2,075 / 2,326 / 4,365 ms across three runs.
+       * What separates them on any machine: while the spinner's transform
+       * keeps moving between two reads 1.2 s apart (one animation period of
+       * Chromium's 1 s background clamp, so a throttled page still ticks), the
+       * recorder's own "last counted change" stamp must not move at all - a
+       * style-only frame is never a counted change. Mutating page-scripts to
+       * watch style again moves the stamp and puts the step at its 2,500 ms
+       * cap (measured on the Mac: took 2,536 ms, stamp 5113 -> 5513).
+       */
+      const recorder = '({ spin: document.getElementById("spin").style.transform, changedAt: Math.round(window.__mcodeApp.changed) })'
+      const readRecorder = async () => JSON.parse(String((await run({ action: "eval", expression: recorder })).output))
+      const first = await readRecorder()
+      await new Promise((resolve) => setTimeout(resolve, 1_200))
+      const second = await readRecorder()
+      check("the page is still animating from script between the two reads", Boolean(first.spin) && first.spin !== second.spin, { first, second })
+      check("and style changes the animation writes every frame never count as a page change", first.changedAt === second.changedAt, { took, first, second })
 
       const reloaded = await run({ action: "do", steps: [{ action: "reload" }, { action: "click", ref: button }] })
       check("after a reload, the old number is refused rather than landing on a new element", /1\. reload -> [^\n]*the page reloaded/.test(reloaded.output) && /2\. click \[\d+\] failed: \[\d+\] is not in the last snapshot/.test(reloaded.output), reloaded.output)
