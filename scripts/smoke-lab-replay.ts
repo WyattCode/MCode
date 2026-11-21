@@ -24,6 +24,34 @@ const FIXED = "export const width = (text: string): number => {\n  const trimmed
 const git = (directory: string, ...args: string[]): string =>
   execFileSync("git", ["-C", directory, ...args], { encoding: "utf8" })
 
+/* TEMPORARY DIAGNOSTIC (probe): which git apply fails on Windows, with everything the error carries. */
+const probe = async <T>(step: string, directory: string, run: () => Promise<T>): Promise<T> => {
+  try {
+    return await run()
+  } catch (error) {
+    const e = error as { code?: unknown; signal?: unknown; killed?: unknown; stderr?: unknown; stdout?: unknown; message?: string; stack?: string }
+    const sync = await import("node:fs")
+    console.log(`[DIAG] step=${step} platform=${process.platform} node=${process.version} tmpdir=${os.tmpdir()}`)
+    try {
+      console.log(`[DIAG] gitversion=${execFileSync("git", ["--version"], { encoding: "utf8" }).trim()}`)
+      console.log(`[DIAG] autocrlf=${execFileSync("git", ["config", "--get", "core.autocrlf"], { encoding: "utf8" }).trim() || "<unset>"}`)
+    } catch {
+      console.log("[DIAG] gitversion/autocrlf=<unreadable>")
+    }
+    try {
+      console.log(`[DIAG] directory=${directory} realpath=${sync.realpathSync(directory)}`)
+    } catch {
+      console.log(`[DIAG] directory=${directory} realpath=<gone>`)
+    }
+    console.log(`[DIAG] code=${String(e.code)} signal=${String(e.signal)} killed=${String(e.killed)}`)
+    console.log(`[DIAG] message=${String(e.message).split("\n").slice(0, 12).join(" | ")}`)
+    console.log(`[DIAG] stderr=${JSON.stringify(String(e.stderr ?? "")).slice(0, 2000)}`)
+    console.log(`[DIAG] stdout=${JSON.stringify(String(e.stdout ?? "")).slice(0, 600)}`)
+    console.log(`[DIAG] stack=${String(e.stack).split("\n").slice(0, 10).join(" | ")}`)
+    throw error
+  }
+}
+
 export async function labReplayChecks(check: Check) {
   // Which candidate reaches the arena is decided here, and length alone picked the wrong one.
   const shape = (worker: number, score: number | undefined, patchSize: number) =>
@@ -68,7 +96,7 @@ export async function labReplayChecks(check: Check) {
     }
 
     const candidate = await open("candidate")
-    await enterBugState(candidate, scratch, task)
+    await probe("enterBugState(candidate)", candidate, () => enterBugState(candidate, scratch, task))
     check("the bug is in the candidate's index, not only in its files",
       git(candidate, "diff", "--cached", "--name-only").trim() === "a.ts", git(candidate, "status", "--porcelain"))
 
@@ -79,7 +107,7 @@ export async function labReplayChecks(check: Check) {
     check("the candidate patch is not the whole fix against clean code", !patch.includes("return text.length"), patch)
 
     const arena = await open("arena")
-    await applyPatch(arena, scratch, task.regression, task, true)
+    await probe("arena applyPatch(regression,index)", arena, () => applyPatch(arena, scratch, task.regression, task, true))
     let rejected = ""
     try {
       await applyPatch(arena, scratch, patch, task, true)
@@ -118,13 +146,13 @@ export async function labReplayChecks(check: Check) {
       "",
     ].join("\n")
     const second = await open("candidate2")
-    await enterBugState(second, scratch, task)
+    await probe("enterBugState(second)", second, () => enterBugState(second, scratch, task))
     await applyPatch(second, scratch, hand, task)
     const recorded = await candidateDiff(second, task)
     check("a hand-written patch is recorded as a diff, not a summary", recorded.startsWith("diff --git"), recorded.slice(0, 120))
     check("the recorded diff still describes the fix", recorded.includes("+  return trimmed.length"), recorded)
     const arena2 = await open("arena2")
-    await applyPatch(arena2, scratch, task.regression, task, true)
+    await probe("arena2 applyPatch(regression,index)", arena2, () => applyPatch(arena2, scratch, task.regression, task, true))
     let replay = ""
     try {
       await applyPatch(arena2, scratch, recorded, task, true)
