@@ -87,6 +87,24 @@ export async function roundTenGitChecks(check: Check, section: (name: string) =>
     const patch = await gitOps.diff(dir, "说明.txt")
     check("a diff of one has an unquoted header", patch.includes("+two") && patch.includes("b/说明.txt") && !patch.includes('"b/'), patch.slice(0, 200))
 
+    // The folder under review can reach git in another spelling than git answers with -
+    // a junction or link on Windows and macOS, an 8.3 short name on Windows CI. The files
+    // are the same files; the review must not read the two spellings as two places.
+    const link = path.join(temp, "link-to-names")
+    await fs.symlink(dir, link, "junction")
+    const viaLink = await gitOps.status(link)
+    check(
+      "a project reached through a link to its folder lists the same files",
+      JSON.stringify(viaLink.entries.map((entry) => entry.path).sort()) === JSON.stringify(paths),
+      viaLink.entries,
+    )
+    const linkPatch = await gitOps.diff(link, "说明.txt")
+    check(
+      "and its diff still names the file under its own name, not a walk out of the repository",
+      linkPatch.includes("+two") && linkPatch.includes("b/说明.txt") && !linkPatch.includes('"b/') && !linkPatch.includes("a/.."),
+      linkPatch.slice(0, 200),
+    )
+
     const parsed = parsePorcelain("R  new name\0old name\0 M  spaced \0?? 说明/\0")
     check(
       "NUL-separated status keeps spaces, skips a rename's source and keeps an untracked folder's slash",
@@ -134,6 +152,14 @@ export async function roundTenGitChecks(check: Check, section: (name: string) =>
     const inside = path.join(dir, "deps")
     const nested = await gitOps.status(inside)
     check("a project inside an untracked folder lists its files", nested.entries.map((entry) => entry.path).sort().join() === "sub/f1.js,sub/f2.js,sub/f3.js", nested.entries)
+    const depsLink = path.join(temp, "link-to-deps")
+    await fs.symlink(inside, depsLink, "junction")
+    const nestedLinked = await gitOps.status(depsLink)
+    check(
+      "an untracked project reached through a link still lists its files",
+      nestedLinked.entries.map((entry) => entry.path).sort().join() === "sub/f1.js,sub/f2.js,sub/f3.js",
+      nestedLinked.entries,
+    )
   }
 
   section("Round 10 (G10-3): a status git cannot produce is not a clean tree")

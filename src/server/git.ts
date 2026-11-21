@@ -142,6 +142,23 @@ async function toplevel(directory: string): Promise<string> {
   return out.trim()
 }
 
+/**
+ * The folder as the file system itself spells it.
+ *
+ * git answers every question about paths in the physical spelling of a folder,
+ * but callers hand over whatever string they were given - a Windows 8.3 short
+ * name (`C:\Users\RUNNER~1\...`), a link or a junction, a folder opened under
+ * `/var` while git says `/private/var`. Comparing git's answer against such a
+ * string by text reads one folder as two places: the review listed nothing,
+ * and diffs walked out of the repository as a chain of `../`. Measured on the
+ * Windows battery, run 44933235897: the same temp folder arrived as
+ * `RUNNER~1` from the environment and as `runneradmin` from git.
+ */
+async function canonicalDirectory(directory: string): Promise<string> {
+  const resolved = path.resolve(directory)
+  return fs.realpath(resolved).catch(() => resolved)
+}
+
 function lines(out: string): string[] {
   return out
     .split(/\r?\n/)
@@ -245,9 +262,11 @@ export async function status(directory: string): Promise<GitStatus> {
 
   try {
     const root = await toplevel(directory)
-    let found = await changesUnder(root, directory, ["status", "--porcelain=v1", "-z"])
+    // git and the project folder have to speak one spelling before any path is compared.
+    const project = await canonicalDirectory(directory)
+    let found = await changesUnder(root, project, ["status", "--porcelain=v1", "-z"])
     if (found.swallowed) {
-      found = await changesUnder(root, directory, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", "."])
+      found = await changesUnder(root, project, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", "."])
     }
     return { ...base, changed: found.entries.map((entry) => entry.path), entries: found.entries }
   } catch (err) {
@@ -301,8 +320,12 @@ export function classify(entry: Pick<PorcelainEntry, "staged" | "work" | "untrac
  * case someone reviewing a turn cares about most.
  */
 export async function diff(directory: string, file: string): Promise<string> {
-  const absolute = path.resolve(directory, file)
-  const root = await toplevel(directory).catch(() => directory)
+  const rootSeen = await toplevel(directory).catch(() => directory)
+  // Both spellings made physical, or `inRepo` is a walk of `../` out of the
+  // repository and an untracked diff of a tracked file follows it (G10-1,
+  // measured on the Windows battery, run 44933235897).
+  const [root, project] = await Promise.all([canonicalDirectory(rootSeen), canonicalDirectory(directory)])
+  const absolute = path.resolve(project, file)
   const inRepo = path.relative(root, absolute).split(path.sep).join("/")
 
   const tracked = await git(root, ["ls-files", "--error-unmatch", "--", inRepo])
