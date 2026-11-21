@@ -8,7 +8,10 @@
  * walk-up work, and the acceptance tests and gates depend on it.
  */
 import assert from "node:assert/strict"
-import { sandboxCommand } from "../src/server/lab-sandbox"
+import * as os from "node:os"
+import * as path from "node:path"
+import { promises as fs } from "node:fs"
+import { runSandboxed, sandboxCommand } from "../src/server/lab-sandbox"
 
 type Check = (label: string, ok: boolean, detail?: unknown) => void
 
@@ -44,4 +47,39 @@ export async function labSandboxChecks(check: Check) {
   }
   assert.ok(/Linux/i.test(refused), "a Mac run must refuse: " + refused)
   check("a non-Linux platform is refused", /bubblewrap|Linux/i.test(refused), refused)
+
+  /*
+   * Everything above reads argv, and a perfectly spelled mount plan can still fail to behave. This
+   * runs the production sandbox and observes what the dependency mount actually is. Where
+   * bubblewrap is missing the case reports the gap instead of passing quietly — but only on Linux,
+   * where it ought to have run.
+   */
+  const { spawnSync } = await import("node:child_process")
+  const bwrap = spawnSync("bwrap", ["--version"], { encoding: "utf8" })
+  if (bwrap.status !== 0) {
+    check("the runtime mount probe ran or the platform cannot host it", process.platform !== "linux", `bubblewrap missing on Linux: ${(bwrap.stderr ?? bwrap.error?.message ?? "not installed").slice(0, 120)}`)
+    return
+  }
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "lab-sandbox-"))
+  const worktree = path.join(root, "work-tree")
+  const dependencies = path.join(root, "project", "node_modules")
+  await fs.mkdir(path.join(worktree, "node_modules"), { recursive: true })
+  await fs.mkdir(dependencies, { recursive: true })
+  await fs.writeFile(path.join(worktree, ".git"), "gitdir: /nonexistent\n")
+  await fs.writeFile(path.join(dependencies, "marker.txt"), "dep-marker")
+  try {
+    const script = [
+      "test -L /work/node_modules && echo KIND_SYMLINK || echo KIND_NOT_SYMLINK",
+      "(echo hacked > /work/node_modules/pwned) 2>/dev/null; echo WRITE_RC=$?",
+      "cat /work/node_modules/marker.txt",
+    ].join("\n")
+    const run = await runSandboxed(worktree, dependencies, "/bin/sh", ["-c", script], new AbortController().signal)
+    check("inside the sandbox the dependency mount is a real directory", run.output.includes("KIND_NOT_SYMLINK"), run.output.slice(0, 200))
+    check("inside the sandbox the dependency mount refuses writes", /WRITE_RC=[1-9]/.test(run.output), run.output.slice(0, 200))
+    check("the dependency mount can be read from the project", run.output.includes("dep-marker"), run.output.slice(0, 200))
+    const escaped = await fs.readFile(path.join(dependencies, "pwned"), "utf8").then(() => true, () => false)
+    check("nothing escapes the mount onto the host's dependencies", !escaped, "a file written inside the sandbox appeared in the project's node_modules")
+  } finally {
+    await fs.rm(root, { recursive: true, force: true })
+  }
 }
