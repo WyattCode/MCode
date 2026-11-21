@@ -16,6 +16,10 @@ on:
         description: "Create the GitHub Release (untick for a build-only dry run)"
         type: boolean
         default: true
+      allow_windows_red:
+        description: "Publish even if the Windows behaviour battery is red (leave unticked)"
+        type: boolean
+        default: false
 
 concurrency:
   group: release-windows
@@ -102,6 +106,7 @@ jobs:
         # only exist once package:win has fetched them — measured on the first run, where running
         # before packaging produced exactly those two failures.
         continue-on-error: true
+        id: battery
         env:
           NODE_OPTIONS: --max-old-space-size=5120
         run: |
@@ -118,7 +123,11 @@ jobs:
             dist/latest.yml
 
       - name: Publish the release
-        if: inputs.publish
+        # A red Windows column must not ship silently. The battery stays non-blocking for the job
+        # (the installer still gets uploaded for diagnosis), but publishing needs either a green
+        # battery or this explicit override — measured on the first two runs, which published with
+        # 25 and then 22 Windows failures recorded.
+        if: inputs.publish && (steps.battery.outcome == 'success' || inputs.allow_windows_red == true)
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.ver.outputs.version }}
