@@ -76,11 +76,12 @@ export async function roundThirtyNineChecks(check: Check, section: (name: string
   } else {
     const work = fs.mkdtempSync(path.join(os.tmpdir(), "mcode-r39-page-"))
     const page = path.join(work, "index.html")
-    // A button that counts, and a box animated from script: its style is rewritten every frame, for ever,
-    // and the same interval bumps a monotonic counter the recorder reads - never the time modulo 360.
+    // A button that counts, and a box animated from script: its style is rewritten every frame from a
+    // monotonic counter - the tick moves first and the style is computed from it, so the style read
+    // back witnesses that the write really happened, and neither is the time modulo 360.
     fs.writeFileSync(
       page,
-      "<!doctype html><title>R39</title><button id=b onclick=\"this.textContent='clicked '+(++window.n||(window.n=1))\">press</button><a href=\"#\">link</a><div id=spin style=\"width:10px;height:10px;background:red\"></div><script>window.__tick=0;setInterval(function(){window.__tick++;document.getElementById('spin').style.transform='rotate('+Date.now()%360+'deg)'},16)</script>",
+      "<!doctype html><title>R39</title><button id=b onclick=\"this.textContent='clicked '+(++window.n||(window.n=1))\">press</button><a href=\"#\">link</a><div id=spin style=\"width:10px;height:10px;background:red\"></div><script>window.__tick=0;setInterval(function(){window.__tick++;document.getElementById('spin').style.transform='rotate('+(window.__tick*7%360)+'deg)'},16)</script>",
     )
     const context = { sessionID: "r39-web", messageID: "m", callID: "c", directory: work, permissions: { ask: async () => undefined, waive: () => undefined }, questions: {}, signal: new AbortController().signal, progress: () => undefined, snapshot: async () => undefined } as unknown as ToolContext
     const run = (input: Record<string, unknown>) => AppTool.execute(input, context)
@@ -105,19 +106,29 @@ export async function roundThirtyNineChecks(check: Check, section: (name: string
        * style-only frame is never a counted change. Mutating page-scripts to
        * watch style again moves the stamp and puts the step at its 2,500 ms
        * cap (measured on the Mac: took 2,536 ms, stamp 5113 -> 5513).
-       * The tick counter is read directly, not as the transform string: two
-       * reads of `Date.now() % 360` collide whenever the gap between them lands
-       * on a multiple of 360 ms - the 1.2 s read plus the battery's jitter does
-       * that near +224~240 and +584~616 ms, and a false red followed. A counter
-       * has no modulo to collide on, and one tick inside the window is all the
-       * strict `>` needs.
+       *
+       * The tick is not read through the transform string alone, where two
+       * reads of `Date.now() % 360` collide whenever the gap between them
+       * lands on a multiple of 360 ms. The transform is now computed from the
+       * tick and read back with it in one synchronous expression, and both
+       * reads must agree exactly: a deleted style write leaves the transform
+       * at nothing while the counter still runs (the second review's mutation
+       * kept `__tick++` alone and this read turned green), and a stopped
+       * counter leaves the transform frozen with it. The counter still has to
+       * strictly increase - one tick inside the window is all `>` needs - so
+       * neither half can stand in for the other.
        */
       const recorder = '({ spin: document.getElementById("spin").style.transform, tick: window.__tick, changedAt: Math.round(window.__mcodeApp.changed) })'
       const readRecorder = async () => JSON.parse(String((await run({ action: "eval", expression: recorder })).output))
+      const follows = (sample: { spin: string; tick: number }) => sample.spin === `rotate(${(sample.tick * 7) % 360}deg)`
       const first = await readRecorder()
       await new Promise((resolve) => setTimeout(resolve, 1_200))
       const second = await readRecorder()
-      check("the page is still animating from script between the two reads", Number.isFinite(first.tick) && Number.isFinite(second.tick) && second.tick > first.tick, { first, second })
+      check(
+        "the page is still animating from script between the two reads - the style is written from the tick",
+        Number.isFinite(first.tick) && Number.isFinite(second.tick) && second.tick > first.tick && follows(first) && follows(second),
+        { first, second },
+      )
       check("and style changes the animation writes every frame never count as a page change", first.changedAt === second.changedAt, { took, first, second })
 
       const reloaded = await run({ action: "do", steps: [{ action: "reload" }, { action: "click", ref: button }] })
