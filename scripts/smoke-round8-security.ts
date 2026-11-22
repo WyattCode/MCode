@@ -581,9 +581,12 @@ async function maskingChecks(check: Check, section: Section, root: string): Prom
      * whenever a machine pause outruns it - a false red under the battery, not
      * a masked hole. Poll for arrival with a generous cap and judge on the
      * facts: the checks below still demand every kind arrived and still count
-     * leaks over everything that did (P2-3).
+     * leaks over everything that did (P2-3). The cap is 5 s, the order of the
+     * settle window the battery's loaded runner is measured against (P3-6):
+     * 2 s under five concurrent modules turned a delivered frame into a false
+     * red, and every polling wait in this section shares the cap.
      */
-    const waitFrames = async (arrived: (lines: string[]) => boolean, capMs = 2_000) => {
+    const waitFrames = async (arrived: (lines: string[]) => boolean, capMs = 5_000) => {
       const until = Date.now() + capMs
       while (!arrived(seen) && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 10))
     }
