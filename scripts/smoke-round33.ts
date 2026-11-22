@@ -13,6 +13,7 @@ import path from "node:path"
 import sharp from "sharp"
 import type { Check } from "./smoke-round5"
 import { APP_ICONS, DEFAULT_APP_ICON } from "../src/shared/app-icons"
+import { macIdentityArgs } from "./mac-identity.mjs"
 
 const root = process.cwd()
 const at = (...parts: string[]) => path.join(root, ...parts)
@@ -92,6 +93,36 @@ export async function roundThirtyThreeChecks(check: Check, section: (name: strin
     check("whose mark is light, so it does not sink into the dark ground", darkMark[0]! > 200, darkMark)
     check("the painting stays opaque under the glass", groups[0]!.translucency?.enabled === false)
     check("it is a square icon for every platform", JSON.stringify(manifest["supported-platforms"]) === '{"squares":"shared"}')
+  }
+
+  section("Round 33: the Mac signing identity, so the keychain can remember it")
+  {
+    /* Ad-hoc signing (what a Mac with no certificate falls back to) gives the login keychain
+     * nothing to recognise across builds, so `MCode Safe Storage` asks for the login password
+     * again after every install - and an upgrade that nobody is standing at the machine to
+     * authorise is stuck at the splash. The package command therefore names a stable local
+     * identity when the keychain has one, and says out loud when it has to go ad-hoc. */
+    const listed = (name: string) => `  1) 0123456789ABCDEF0123456789ABCDEF01234567 "${name}"\n     1 valid identities found\n`
+    const chosen = macIdentityArgs({ findIdentityOutput: listed("MCode Local") })
+    check("a Mac package names the signing identity the keychain has", chosen.args.join(" ") === "--config.mac.identity=MCode Local", chosen)
+    check("Certificate Assistant's doubled spelling counts as that identity",
+      macIdentityArgs({ findIdentityOutput: listed("MCode Local (MCode Local)") }).identity === "MCode Local")
+    check("a certificate that merely contains the name is not it",
+      macIdentityArgs({ findIdentityOutput: listed("MCode Local Backup") }).identity === null)
+    check("a name that only appears outside an identity line is not usable either",
+      macIdentityArgs({ findIdentityOutput: 'note "MCode Local"\n' }).identity === null)
+    const adhoc = macIdentityArgs({ findIdentityOutput: "     0 valid identities found\n" })
+    check("with no such identity nothing extra is passed, so a bare Mac still packages", adhoc.args.length === 0 && adhoc.identity === null, adhoc)
+    check("and the build says what going ad-hoc costs", /ad-hoc/i.test(adhoc.notice) && /keychain/i.test(adhoc.notice), adhoc.notice)
+    check("another machine can name its own certificate instead",
+      macIdentityArgs({ findIdentityOutput: listed("Wyatt Dev"), env: { MCODE_MAC_IDENTITY: "Wyatt Dev" } }).identity === "Wyatt Dev")
+    const script = await fs.readFile(at("scripts", "package.mjs"), "utf8")
+    check("the Mac path is the one that asks, and every other system is handed an empty argument list",
+      /import \{ macIdentityArgs \} from "\.\/mac-identity\.mjs"/.test(script)
+        && /target === "darwin" \? macIdentityArgs[\s\S]*?: \{ args: \[\], notice: "" \}/.test(script))
+    check("the identity reaches electron-builder ahead of the caller's own flags",
+      /run\("npx", \["electron-builder", "--publish", "never", \.\.\.signing\.args, \.\.\.flags\]\)/.test(script))
+    check("nothing here turns on publishing", script.includes('"--publish", "never"') && !/--config\.mac\.notarize/.test(script))
   }
 
   section("Round 33: every colourway, on both platforms")

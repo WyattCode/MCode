@@ -13,6 +13,7 @@
  */
 import fs from "node:fs"
 import { spawnSync } from "node:child_process"
+import { macIdentityArgs } from "./mac-identity.mjs"
 import { packageTarget } from "./package-target.mjs"
 
 const flags = process.argv.slice(2)
@@ -34,8 +35,24 @@ if (status === 0 && target === "win32") status = run("node", ["scripts/runtimes.
 if (status === 0 && target === "darwin") status = run("node", ["scripts/macctl-shim.mjs"])
 if (status === 0) status = run("node", ["scripts/bump-version.mjs"])
 if (status === 0) status = run("npx", ["electron-vite", "build"])
+// The keychain's usable signing identities, for the note below and for nothing else: a
+// machine that cannot ask simply has none, and the build goes on ad-hoc as it always did.
+const securityIdentities = () => {
+  try {
+    const found = spawnSync("security", ["find-identity", "-v", "-p", "codesigning"], { encoding: "utf8" })
+    return found.stdout ?? ""
+  } catch {
+    return ""
+  }
+}
+
+// Ad-hoc signing leaves macOS no identity to remember, so every install re-asks for the
+// keychain password and no upgrade can run unattended (see mac-identity.mjs).
+const signing = target === "darwin" ? macIdentityArgs({ findIdentityOutput: securityIdentities(), env: process.env }) : { args: [], notice: "" }
+
 // Nothing is uploaded from here: a release is published by hand (see electron-builder.yml).
-if (status === 0) status = run("npx", ["electron-builder", "--publish", "never", ...flags])
+if (status === 0 && signing.notice) console.log(`[package] ${signing.notice}`)
+if (status === 0) status = run("npx", ["electron-builder", "--publish", "never", ...signing.args, ...flags])
 
 if (status !== 0) {
   for (const [p, bytes] of before) fs.writeFileSync(p, bytes)
