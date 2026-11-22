@@ -146,6 +146,47 @@ export async function roundTenGitChecks(check: Check, section: (name: string) =>
     )
   }
 
+  section("Round 10 (audit P2-2): a junction inside the repository keeps its own spelling in a diff")
+  {
+    /*
+     * diff() physicalizes an absolute file's folder, but Git for Windows can
+     * record an in-repository junction's files under the junction's own
+     * spelling (the forensics run of this branch, a battery pass with this
+     * fixture against the un-patched diff(), asked git directly whether the
+     * patch header comes back as `a/sub2/f.txt` or `--- /dev/null`).
+     * Resolving the folder to its target before asking `ls-files` would then
+     * hunt the index for a name it never held and draw a tracked change as a
+     * brand-new file.
+     * macOS git refuses to track a path through a link at all ("beyond a
+     * symbolic link"), so the junction-spelled index entry only exists where
+     * the risk does; the assert below is the same question on both platforms:
+     * whichever spelling the repository holds, the patch must name the file
+     * under a/sub and never under /dev/null.
+     */
+    const dir = await repo("junction-repo")
+    const sub1 = path.join(dir, "sub1")
+    await fs.mkdir(sub1)
+    await fs.writeFile(path.join(sub1, "keep.txt"), "keep\n")
+    await g(dir, "add", "-A")
+    await g(dir, "commit", "-qm", "base")
+    const sub2 = path.join(dir, "sub2")
+    await fs.symlink(sub1, sub2, "junction")
+    await fs.writeFile(path.join(sub2, "f.txt"), "one\n")
+    const trackedViaJunction = await g(dir, "add", "sub2/f.txt").then(() => true, () => false)
+    if (!trackedViaJunction) {
+      await g(dir, "add", "sub1/f.txt")
+    }
+    await g(dir, "commit", "-qm", "f through the " + (trackedViaJunction ? "junction" : "link target"))
+    await fs.writeFile(path.join(sub1, "f.txt"), "one\ntwo\n")
+    const indexNames = (await g(dir, "ls-files", "--", "sub1", "sub2")).trim().split("\n").sort().join()
+    const junctionPatch = await gitOps.diff(dir, path.join(sub2, "f.txt"))
+    check(
+      "a tracked change under an in-repo junction diffs as the file, not as new, from the junction-spelled path",
+      junctionPatch.startsWith("diff --git a/sub") && junctionPatch.includes("+two") && !junctionPatch.includes("/dev/null"),
+      { trackedViaJunction, indexNames, patch: junctionPatch.slice(0, 200) },
+    )
+  }
+
   section("Round 10 (G10-11, G10-12): untracked folders and the review's letters")
   {
     const dir = await repo("letters")
