@@ -598,6 +598,24 @@ export async function roundElevenChecks(check: Check, section: (name: string) =>
     letGoAgain()
     await heldByLink
     check("and that commit goes through once it is done", (await committingAgain).ok === true)
+
+    /*
+     * The key may ask the file system only in its native voice. The pure-JS
+     * `realpathSync` neither expands an 8.3 short name nor follows a junction
+     * on Windows, so behind the native call it is a third spelling of one
+     * folder - a second queue, which is the defect the key exists to prevent
+     * (run 44957873618 measured both FAILs unchanged with the JS version, the
+     * CI's proof that the fallback is not a fallback there). The difference is
+     * invisible on a POSIX machine, so the shape of the key itself is pinned
+     * (P3-2); git.ts keeps the same rule for its own canonical spelling.
+     */
+    const queueSource = await fs.readFile(path.join(process.cwd(), "src/server/git-queue.ts"), "utf8")
+    const keyBody = queueSource.slice(queueSource.indexOf("function keyOf("), queueSource.indexOf("export function serialisedWrite"))
+    check(
+      "the queue key asks the file system in its native voice, with no pure-JS realpath fallback",
+      /realpathSync\.native\(/.test(keyBody) && !/realpathSync\(/.test(keyBody.replace(/realpathSync\.native\(/g, "")),
+      keyBody.slice(0, 500),
+    )
     await fs.rm(temp, { recursive: true, force: true }).catch(() => undefined)
   }
 

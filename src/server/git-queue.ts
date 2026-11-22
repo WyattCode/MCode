@@ -43,17 +43,19 @@ export function onGitWaiting(next: Listener | undefined): void {
  */
 function keyOf(root: string): string {
   const resolved = path.resolve(root)
-  // The native call asks the file system for the folder's final spelling; the
-  // pure-JS realpathSync only follows links and would keep an 8.3 short name.
+  // The native call asks the file system for the folder's final spelling.
+  // There is deliberately no pure-JS `realpathSync` behind it: on Windows that
+  // call neither expands an 8.3 short name nor follows a junction, so it would
+  // hand the queue a third spelling of one folder and split the repository
+  // into two queues again - the exact defect this key exists to prevent
+  // (measured on the Windows battery, run 44957873618: both FAILs unchanged
+  // with the JS version). A folder git has not made yet keeps its resolved
+  // spelling, the way `canonicalDirectory` in git.ts does.
   let key = resolved
   try {
     key = realpathSync.native(resolved)
   } catch {
-    try {
-      key = realpathSync(resolved)
-    } catch {
-      // A folder git has not made yet keeps its resolved spelling until it exists.
-    }
+    // A folder git has not made yet keeps its resolved spelling until it exists.
   }
   return process.platform === "win32" ? key.toLowerCase() : key
 }
