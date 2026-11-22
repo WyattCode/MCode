@@ -329,19 +329,32 @@ export async function diff(directory: string, file: string): Promise<string> {
   // repository and an untracked diff of a tracked file follows it (G10-1,
   // measured on the Windows battery, run 44933235897).
   const [root, project] = await Promise.all([canonicalDirectory(rootSeen), canonicalDirectory(directory)])
-  // A file handed over as an absolute path is placed physically too:
-  // `path.resolve` leaves an absolute string untouched, so a junction or
-  // 8.3-spelled absolute path would read as a walk of `../` out of the
-  // repository just like the folder spelling did (P3-1, same family as
-  // G10-1). Only its folder can be asked - the file itself may be gone.
-  const absolute = path.isAbsolute(file)
+  /*
+   * A file handed over as an absolute path is placed physically only as the
+   * second candidate (P2-2, second review): Git for Windows may record an
+   * in-repository junction's file under the junction spelling, and resolving
+   * the folder to its target before the index is asked would then look up a
+   * name the index never held - a tracked change drawn as `--- /dev/null`.
+   * The caller's own spelling gets the first look; the physical spelling
+   * stands behind it for the spellings git files differently (a `/var`
+   * folder, an 8.3 short name), and it is what an untracked diff reads from
+   * disk. Only the folder can be asked - the file itself may be gone.
+   */
+  const caller = path.isAbsolute(file) ? file : path.resolve(project, file)
+  const physical = path.isAbsolute(file)
     ? path.join(await canonicalDirectory(path.dirname(file)), path.basename(file))
-    : path.resolve(project, file)
-  const inRepo = path.relative(root, absolute).split(path.sep).join("/")
-
-  const tracked = await git(root, ["ls-files", "--error-unmatch", "--", inRepo])
-    .then(() => true)
-    .catch(() => false)
+    : caller
+  const toRepo = (at: string) => path.relative(root, at).split(path.sep).join("/")
+  const onDisk = toRepo(physical)
+  let inRepo = onDisk
+  let tracked = false
+  for (const candidate of caller === physical ? [onDisk] : [toRepo(caller), onDisk]) {
+    if (await git(root, ["ls-files", "--error-unmatch", "--", candidate]).then(() => true).catch(() => false)) {
+      inRepo = candidate
+      tracked = true
+      break
+    }
+  }
 
   const untracked = () =>
     git(root, ["diff", "--no-index", "--", "/dev/null", inRepo]).catch(
