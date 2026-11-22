@@ -38,8 +38,12 @@ export function onGitWaiting(next: Listener | undefined): void {
  * the FAIL "a commit waits while another write on the repository is under
  * way" on the Windows battery (runs 44949680691 through 44956037950), and
  * reproducible on Mac by queueing a write under a link's name to the folder.
- * A folder that does not exist yet (a checkout about to be created) keeps
- * its resolved spelling, the way `canonicalDirectory` in git.ts does.
+ *
+ * A folder git has not created yet is refused, not queued (P3-1): keyed by
+ * its resolved spelling now, the same folder is a different key the moment it
+ * appears, so one repository would wait on two queues - one of them taken
+ * before the write that is supposed to hold the lock. Every caller asks git
+ * for the top level first, which names a folder that exists.
  */
 function keyOf(root: string): string {
   const resolved = path.resolve(root)
@@ -49,13 +53,16 @@ function keyOf(root: string): string {
   // hand the queue a third spelling of one folder and split the repository
   // into two queues again - the exact defect this key exists to prevent
   // (measured on the Windows battery, run 44957873618: both FAILs unchanged
-  // with the JS version). A folder git has not made yet keeps its resolved
-  // spelling, the way `canonicalDirectory` in git.ts does.
-  let key = resolved
+  // with the JS version).
+  let key: string
   try {
     key = realpathSync.native(resolved)
-  } catch {
-    // A folder git has not made yet keeps its resolved spelling until it exists.
+  } catch (error) {
+    throw new Error(
+      `git-queue: "${resolved}" cannot be keyed because the folder does not exist or cannot be read (${(error as Error).message}). ` +
+        "A folder queued before it exists would be one queue under its resolved spelling and a second one under its physical spelling once it appears, " +
+        "letting a write slip past the wait N11-14 exists to impose (P3-1). Callers queue by git's own top-level answer, which names a folder that exists.",
+    )
   }
   return process.platform === "win32" ? key.toLowerCase() : key
 }

@@ -509,7 +509,10 @@ export async function roundElevenChecks(check: Check, section: (name: string) =>
     const second = serialisedWrite(temp, path.join(temp, "b"), async () => {
       order.push("second")
     })
-    const elsewhere = serialisedWrite(path.join(temp, "other"), path.join(temp, "c"), async () => {
+    // A repository folder that exists: a folder that does not is refused outright (P3-1, below).
+    const elsewhereDir = path.join(temp, "other")
+    await fs.mkdir(elsewhereDir)
+    const elsewhere = serialisedWrite(elsewhereDir, path.join(temp, "c"), async () => {
       order.push("elsewhere")
     })
     await elsewhere
@@ -598,6 +601,31 @@ export async function roundElevenChecks(check: Check, section: (name: string) =>
     letGoAgain()
     await heldByLink
     check("and that commit goes through once it is done", (await committingAgain).ok === true)
+
+    /*
+     * A folder that does not exist yet has no queue of its own (P3-1). Keyed
+     * by its resolved spelling it would be one queue now and a different key -
+     * the physical spelling - the moment the folder appears, so the write
+     * admitted under the old key runs beside the one that took the new lock
+     * instead of behind it. The review reproduced exactly that with a link on
+     * macOS: enqueue before a folder alias exists, mkdir, enqueue again, and
+     * the second write no longer waits. Refusing the first enqueue removes the
+     * state rather than tending it, and every real caller queues by git's own
+     * top-level answer, which names a folder that exists.
+     */
+    const notYet = path.join(temp, "not-yet-a-checkout")
+    let refusal = ""
+    let ran = false
+    try {
+      await serialisedWrite(notYet, notYet, async () => void (ran = true))
+    } catch (error) {
+      refusal = (error as Error).message
+    }
+    check(
+      "a write queued for a folder that does not exist is refused, not keyed by its resolved spelling",
+      !ran && refusal.startsWith("git-queue:") && refusal.includes(notYet) && refusal.includes("one queue under its resolved spelling"),
+      refusal,
+    )
 
     /*
      * The key may ask the file system only in its native voice. The pure-JS
