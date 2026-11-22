@@ -330,16 +330,21 @@ export async function diff(directory: string, file: string): Promise<string> {
   // measured on the Windows battery, run 44933235897).
   const [root, project] = await Promise.all([canonicalDirectory(rootSeen), canonicalDirectory(directory)])
   /*
-   * A file handed over as an absolute path is placed physically only as the
-   * second candidate (P2-2, second review): Git for Windows records an
-   * in-repository junction's file under the junction spelling (battery run
-   * 45008690264: index `sub2/f.txt`, old path drew it as a new file), and
-   * resolving the folder to its target before the index is asked would then
-   * look up a name the index never held - a tracked change drawn as new.
-   * The caller's own spelling gets the first look; the physical spelling
-   * stands behind it for the spellings git files differently (a `/var`
-   * folder, an 8.3 short name), and it is what an untracked diff reads from
-   * disk. Only the folder can be asked - the file itself may be gone.
+   * A file handed over as an absolute path can carry two different things at
+   * once: a prefix spelled the caller's way (the Windows battery's TMPDIR is
+   * an 8.3 short name, run 45008690264) and an in-repository junction git
+   * recorded under its own spelling (same run: index `sub2/f.txt`). Physical
+   * placement of the folder loses the junction spelling, and the caller's raw
+   * string loses the path to its prefix; so three candidates are asked, in
+   * this order:
+   *  - the caller's path anchored textually inside the project folder and
+   *    re-rooted at the physical root - keeps sub2/f.txt while discarding
+   *    whatever prefix spelling the caller's folder had;
+   *  - the caller's string as it stands (an absolute path already rooted);
+   *  - the folder made physical (a `/var` folder, an 8.3 short name) - which
+   *    is also what the untracked diff reads from disk, so that fallback
+   *    keeps naming a path that exists.
+   * Only the folder can be asked - the file itself may be gone.
    */
   const caller = path.isAbsolute(file) ? file : path.resolve(project, file)
   const physical = path.isAbsolute(file)
@@ -347,9 +352,11 @@ export async function diff(directory: string, file: string): Promise<string> {
     : caller
   const toRepo = (at: string) => path.relative(root, at).split(path.sep).join("/")
   const onDisk = toRepo(physical)
+  const inside = path.relative(directory, caller)
+  const anchored = inside && !inside.startsWith("..") && !path.isAbsolute(inside) ? toRepo(path.join(project, inside)) : ""
   let inRepo = onDisk
   let tracked = false
-  for (const candidate of caller === physical ? [onDisk] : [toRepo(caller), onDisk]) {
+  for (const candidate of [anchored, toRepo(caller), onDisk].filter((at, index, all) => at && all.indexOf(at) === index)) {
     if (await git(root, ["ls-files", "--error-unmatch", "--", candidate]).then(() => true).catch(() => false)) {
       inRepo = candidate
       tracked = true
