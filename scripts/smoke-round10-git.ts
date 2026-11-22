@@ -187,6 +187,31 @@ export async function roundTenGitChecks(check: Check, section: (name: string) =>
     )
   }
 
+  section("Round 10 (audit P3-4): status makes git's top-level answer physical before comparing paths")
+  {
+    /*
+     * git answers `rev-parse --show-toplevel` in whatever spelling it pleases;
+     * a physical root is not a promise it makes. `diff` has canonicalized its
+     * root since G10-1, `status` trusted the raw answer - and compared it by
+     * text against the physical project folder, so the day git answers a
+     * logical spelling (the `/var` form of a `/private/var` folder, an 8.3
+     * short name) every status row is a walk out of the project and the
+     * review shows an empty change list. Reverting the fix left all 82 checks
+     * of this module green (second review): the observable difference needs a
+     * git that answers non-physically, so the shape of the call is what is
+     * pinned here - next to the check that a project reached through a
+     * junction still lists its files (which is the symptom a lost root has).
+     */
+    const source = await fs.readFile(path.join(process.cwd(), "src/server/git.ts"), "utf8")
+    const body = source.slice(source.indexOf("export async function status("), source.indexOf("async function changesUnder"))
+    check(
+      "status() passes git's top-level answer through canonicalDirectory before any path is compared",
+      /const root = await canonicalDirectory\(await toplevel\(directory\)\)/.test(body) &&
+        /const project = await canonicalDirectory\(directory\)/.test(body),
+      body.slice(0, 400),
+    )
+  }
+
   section("Round 10 (G10-11, G10-12): untracked folders and the review's letters")
   {
     const dir = await repo("letters")
