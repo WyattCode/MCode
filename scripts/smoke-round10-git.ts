@@ -105,6 +105,39 @@ export async function roundTenGitChecks(check: Check, section: (name: string) =>
       linkPatch.slice(0, 200),
     )
 
+    /*
+     * The review card also hands the file over as an absolute path (handlers.ts
+     * git.diff, turn-diff.ts), and that string carries the folder's spelling:
+     * the `/var` spelling of a `/private/var` folder on macOS, a junction or an
+     * 8.3 short name on Windows - where the battery's own TMPDIR is the short
+     * spelling, so the folder's own spelling is the second one there. Without
+     * the physical placement of the file's folder, `path.resolve` leaves the
+     * absolute string untouched and the path walks out of the repository as a
+     * chain of `../`; a tracked file then diffs against /dev/null as a new one
+     * (audit P2-1; the review restored `path.resolve(project, file)` on macOS
+     * and this very shape turned red).
+     */
+    const absOwn = await gitOps.diff(dir, path.join(dir, "说明.txt"))
+    check(
+      "an absolute path in the folder's own spelling diffs the repository's file, not a new one",
+      absOwn.startsWith("diff --git a/说明.txt") && absOwn.includes("+two") && !absOwn.includes("/dev/null"),
+      absOwn.slice(0, 160),
+    )
+    const absLink = await gitOps.diff(dir, path.join(link, "说明.txt"))
+    check(
+      "and one spelled through a junction to the folder too",
+      absLink.startsWith("diff --git a/说明.txt") && absLink.includes("+two") && !absLink.includes("/dev/null"),
+      absLink.slice(0, 160),
+    )
+    if (dir.startsWith("/private/var/")) {
+      const absVar = await gitOps.diff(dir, path.join("/var", dir.slice("/private/var".length), "说明.txt"))
+      check(
+        "and one spelled through /var instead of /private/var",
+        absVar.startsWith("diff --git a/说明.txt") && absVar.includes("+two") && !absVar.includes("/dev/null"),
+        absVar.slice(0, 160),
+      )
+    }
+
     const parsed = parsePorcelain("R  new name\0old name\0 M  spaced \0?? 说明/\0")
     check(
       "NUL-separated status keeps spaces, skips a rename's source and keeps an untracked folder's slash",
