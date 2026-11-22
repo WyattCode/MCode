@@ -331,10 +331,11 @@ export async function diff(directory: string, file: string): Promise<string> {
   const [root, project] = await Promise.all([canonicalDirectory(rootSeen), canonicalDirectory(directory)])
   /*
    * A file handed over as an absolute path is placed physically only as the
-   * second candidate (P2-2, second review): Git for Windows may record an
-   * in-repository junction's file under the junction spelling, and resolving
-   * the folder to its target before the index is asked would then look up a
-   * name the index never held - a tracked change drawn as `--- /dev/null`.
+   * second candidate (P2-2, second review): Git for Windows records an
+   * in-repository junction's file under the junction spelling (battery run
+   * 45008690264: index `sub2/f.txt`, old path drew it as a new file), and
+   * resolving the folder to its target before the index is asked would then
+   * look up a name the index never held - a tracked change drawn as new.
    * The caller's own spelling gets the first look; the physical spelling
    * stands behind it for the spellings git files differently (a `/var`
    * folder, an 8.3 short name), and it is what an untracked diff reads from

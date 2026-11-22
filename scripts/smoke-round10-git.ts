@@ -151,9 +151,10 @@ export async function roundTenGitChecks(check: Check, section: (name: string) =>
     /*
      * diff() physicalizes an absolute file's folder, but Git for Windows can
      * record an in-repository junction's files under the junction's own
-     * spelling (the forensics run of this branch, a battery pass with this
-     * fixture against the un-patched diff(), asked git directly whether the
-     * patch header comes back as `a/sub2/f.txt` or `--- /dev/null`).
+     * spelling, measured: battery run 45008690264 committed sub2/f.txt through
+     * the junction, ls-files answered `sub2/f.txt`, and the old physical-first
+     * diff() drew the tracked modification as `new file mode 100644` with
+     * `--- /dev/null` under a/sub1/f.txt.
      * Resolving the folder to its target before asking `ls-files` would then
      * hunt the index for a name it never held and draw a tracked change as a
      * brand-new file.
