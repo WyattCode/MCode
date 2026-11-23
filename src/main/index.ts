@@ -395,6 +395,27 @@ let backend: Backend | undefined
 let startingBackend: Promise<Backend> | undefined
 
 const windows = new Set<BrowserWindow>()
+const loadedWindows = new WeakSet<BrowserWindow>()
+let credentialUnlockFallback: ReturnType<typeof setTimeout> | undefined
+let credentialUnlockStarted = false
+
+function unlockStartupCredentials() {
+  if (!backend || credentialUnlockStarted || leaving()) return
+  credentialUnlockStarted = true
+  clearTimeout(credentialUnlockFallback)
+  void backend.credentials.unlock().catch(() => console.error("[boot] credential initialization failed"))
+}
+
+function unlockAfterWindowShow() {
+  if (!backend || credentialUnlockStarted) return
+  const visible = () => [...windows].some((window) => !window.isDestroyed() && window.isVisible() && loadedWindows.has(window))
+  if (!visible()) return
+  // Give the compositor a turn after show and let did-finish-load clear
+  // the startup watchdog before a synchronous system prompt can block us.
+  setTimeout(() => {
+    if (visible()) unlockStartupCredentials()
+  }, 50)
+}
 
 /* MiMo's update transaction record (update-transaction.ts), in the profile's updates folder. */
 const transactionFile = path.join(app.getPath("userData"), "updates", TRANSACTION_FILE)
@@ -909,7 +930,12 @@ function createWindow(show = true): BrowserWindow {
     if (show && !window.isDestroyed()) window.show()
   }
   window.once("ready-to-show", showWindowOnce)
-  window.webContents.once("did-finish-load", showWindowOnce)
+  window.on("show", unlockAfterWindowShow)
+  window.webContents.once("did-finish-load", () => {
+    loadedWindows.add(window)
+    showWindowOnce()
+    unlockAfterWindowShow()
+  })
   window.on("closed", () => {
     clearTimeout(showFallback)
     windows.delete(window)
@@ -1079,8 +1105,13 @@ app.whenReady().then(async () => {
    * inside the window rather than the window itself.
    */
   // Only this app's own page may open the socket from a browser context.
-  const starting = startBackend(app.getPath("userData"), { origins: rendererOrigins(process.env.ELECTRON_RENDERER_URL), secrets: safeStorageBox, installationDirectory: app.isPackaged ? path.dirname(process.execPath) : undefined }).then((started) => {
+  const starting = startBackend(app.getPath("userData"), { origins: rendererOrigins(process.env.ELECTRON_RENDERER_URL), secrets: safeStorageBox, installationDirectory: app.isPackaged ? path.dirname(process.execPath) : undefined, deferCredentialUnseal: true }).then((started) => {
     backend = started
+    // Hidden launches still unlock. Give the startup watchdog time to show
+    // a replacement first if the original window failed to load.
+    credentialUnlockFallback = setTimeout(unlockStartupCredentials, 35_000)
+    credentialUnlockFallback.unref()
+    unlockAfterWindowShow()
     /*
      * MiMo keeps the machine from suspending while a turn runs. The runner's busy
      * set is the truth; every backend event is a moment it may have changed, and

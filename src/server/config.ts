@@ -31,7 +31,7 @@ import { defaultAccess, restoreAccessMap, type Access } from "@shared/access"
 import type { Storage } from "./storage"
 import { quarantine, writeAtomic } from "./storage"
 import fs from "node:fs/promises"
-import { parseCredentials, readCredentialFile, renderCredentials, sameCredentials, type SecretBox } from "./credential-file"
+import { openCredentials, parseCredentials, readCredentialFile, renderCredentials, sameCredentials, type CredentialRead, type SecretBox } from "./credential-file"
 import type { Bus } from "./bus"
 import {
   BUILT_IN,
@@ -848,7 +848,44 @@ export class Config {
     this.current.autoApprove = allowed(this.current.permissions)
     if ((migrated || retired || thresholdMigrated || (stored !== undefined && epoch !== (stored.accessEpoch ?? 0))) && !this.fromNewerVersion) await this.persist()
     this.discovered = await this.readDiscovered()
-    await this.loadCredentials()
+    if (!this.secrets || !this.deferCredentialUnseal) {
+      await this.loadCredentials()
+      return
+    }
+    const credentialRead = await readCredentialFile(this.credentialFile, this.secrets, { deferUnseal: true })
+    // Even a plain or absent file can touch secure storage on the first write.
+    this.pendingUnseal = new Promise<void>((resolve) => {
+      this.startCredentialUnseal = resolve
+    }).then(async () => {
+      await this.finishCredentialRead(credentialRead.state === "sealed" ? openCredentials(credentialRead, this.secrets) : credentialRead)
+      this.startCredentialUnseal = undefined
+    })
+    // An unexpected failure must still reject waiters without becoming unhandled.
+    void this.pendingUnseal.catch(() => {})
+  }
+
+  /**
+   * Set by a host that triggers `finishCredentialUnseal()` itself (see
+   * BackendOptions.deferCredentialUnseal). Left unset, credentials load during
+   * `load()` as they always have, so no host can deadlock waiting for a trigger
+   * that never comes.
+   */
+  deferCredentialUnseal = false
+
+  private pendingUnseal: Promise<void> = Promise.resolve()
+  private startCredentialUnseal?: () => void
+
+  credentialsReady(): Promise<void> {
+    return this.pendingUnseal
+  }
+
+  finishCredentialUnseal(): Promise<void> {
+    this.startCredentialUnseal?.()
+    return this.pendingUnseal
+  }
+
+  private async loadCredentials(): Promise<void> {
+    await this.finishCredentialRead(await readCredentialFile(this.credentialFile, this.secrets))
   }
 
   /**
@@ -860,8 +897,7 @@ export class Config {
    * config is, and the app starts without it; if it cannot even be moved,
    * saving credentials is refused rather than writing over it.
    */
-  private async loadCredentials(): Promise<void> {
-    const read = await readCredentialFile(this.credentialFile, this.secrets)
+  private async finishCredentialRead(read: CredentialRead): Promise<void> {
     if (read.state === "read") {
       this.credentials = read.credentials.keys
       this.oauth = read.credentials.oauth
@@ -903,7 +939,8 @@ export class Config {
     credentialsUnreadable?: { problem: string; evidence?: string }
     credentialsPlaintext?: boolean
   }> {
-    await this.loadCredentials()
+    await this.credentialsReady()
+    await this.queueCredentialOperation(() => this.loadCredentials())
     if (!this.credentialsUnreadable) await this.migrateCredentials()
     return {
       ...(this.credentialsUnreadable ? { credentialsUnreadable: this.credentialsUnreadable } : {}),
@@ -930,7 +967,7 @@ export class Config {
    * exposed yet.
    */
   get credentialsPlaintext(): boolean {
-    if (!this.secrets || this.secrets.available()) return false
+    if (this.startCredentialUnseal || !this.secrets || this.secrets.available()) return false
     return Object.keys(this.credentials).length > 0 || Object.keys(this.oauth).length > 0
   }
 
@@ -1058,8 +1095,14 @@ export class Config {
     return out as unknown as AppConfig
   }
 
-  /** The last credential write, so two of them cannot interleave. */
+  /** The last credential operation, so a disk recheck cannot race a write. */
   private persisting: Promise<void> = Promise.resolve()
+
+  private queueCredentialOperation(operation: () => Promise<void>): Promise<void> {
+    const next = this.persisting.catch(() => {}).then(operation)
+    this.persisting = next
+    return next
+  }
 
   /**
    * Replaces the credential file rather than writing over it.
@@ -1069,14 +1112,12 @@ export class Config {
    * rename treatment as the document store.
    */
   private async persistCredentials(): Promise<void> {
-    const next = this.persisting.catch(() => {}).then(async () => {
-      // Sealed whenever the system can; see migrateCredentials for the first time.
-      const sealed = Boolean(this.secrets?.available())
-      await writeAtomic(this.credentialFile, renderCredentials({ keys: this.credentials, oauth: this.oauth }, this.secrets), 0o600)
-      this.credentialsInPlainText = !sealed
-    })
-    this.persisting = next
-    await next
+    await this.credentialsReady()
+    this.writableCredentials()
+    // Sealed whenever the system can; see migrateCredentials for the first time.
+    const sealed = Boolean(this.secrets?.available())
+    await writeAtomic(this.credentialFile, renderCredentials({ keys: this.credentials, oauth: this.oauth }, this.secrets), 0o600)
+    this.credentialsInPlainText = !sealed
   }
 
   /**
@@ -1090,26 +1131,29 @@ export class Config {
    * the next launch; never recorded either while the system cannot seal.
    */
   async migrateCredentials(): Promise<void> {
-    if (this.fromNewerVersion) return
-    if ((this.current.migrations ?? []).includes(CREDENTIALS_SEALED_MIGRATION)) return
+    await this.credentialsReady()
     const box = this.secrets
-    if (!box?.available() || this.credentialsBlocked) return
+    if (!box || this.fromNewerVersion || (this.current.migrations ?? []).includes(CREDENTIALS_SEALED_MIGRATION)) return
     try {
-      if (this.credentialsInPlainText) {
+      let canSeal = false
+      await this.queueCredentialOperation(async () => {
+        if (this.credentialsBlocked || !box.available()) return
+        canSeal = true
+        if (!this.credentialsInPlainText) return
         const credentials = { keys: this.credentials, oauth: this.oauth }
-        const next = this.persisting.catch(() => {}).then(() =>
-          writeAtomic(this.credentialFile, renderCredentials(credentials, box), 0o600, true, async (written) => {
-            const back = parseCredentials(await fs.readFile(written, "utf8"), box)
-            if (back.state !== "read" || !back.sealed || !sameCredentials(back.credentials, credentials)) {
-              throw new Error("the encrypted copy did not read back the same")
-            }
-          }),
-        )
-        this.persisting = next
-        await next
+        await writeAtomic(this.credentialFile, renderCredentials(credentials, box), 0o600, true, async (written) => {
+          const back = parseCredentials(await fs.readFile(written, "utf8"), box)
+          if (back.state !== "read" || !back.sealed || !sameCredentials(back.credentials, credentials)) {
+            throw new Error("the encrypted copy did not read back the same")
+          }
+        })
         this.credentialsInPlainText = false
-      }
-      await this.set({ migrations: [...(this.current.migrations ?? []), CREDENTIALS_SEALED_MIGRATION] })
+      })
+      if (!canSeal) return
+      await this.update((current) => {
+        const migrations = current.migrations ?? []
+        return migrations.includes(CREDENTIALS_SEALED_MIGRATION) ? {} : { migrations: [...migrations, CREDENTIALS_SEALED_MIGRATION] }
+      })
     } catch (err) {
       console.warn(`[config] the saved keys were not encrypted this time (${err instanceof Error ? err.message : String(err)}); the plain file is kept and this is tried again at the next launch`)
     }
@@ -1121,10 +1165,13 @@ export class Config {
   }
 
   async setTokens(provider: string, tokens: OAuthTokens | undefined): Promise<void> {
-    this.writableCredentials()
-    if (tokens) this.oauth[provider] = tokens
-    else delete this.oauth[provider]
-    await this.persistCredentials()
+    await this.credentialsReady()
+    await this.queueCredentialOperation(async () => {
+      this.writableCredentials()
+      if (tokens) this.oauth[provider] = tokens
+      else delete this.oauth[provider]
+      await this.persistCredentials()
+    })
   }
 
   get(): AppConfig {
@@ -1488,26 +1535,29 @@ export class Config {
   }
 
   async setApiKey(provider: string, apiKey: string): Promise<void> {
-    this.writableCredentials()
-    if (apiKey) this.credentials[provider] = apiKey
-    else {
-      delete this.credentials[provider]
-      /*
-       * The discovered catalog describes what a key can drive, so it goes when
-       * the key goes - but an environment variable can be supplying one too,
-       * and that survives anything done here. Dropping the catalog in that case
-       * left the provider still connected, still reachable, and reporting that
-       * it had no models, because the fallback catalog only covers the handful
-       * of providers with a curated list.
-       */
-      if (!this.environmentKey(provider)) {
-        if (!this.modelsBlocked) {
-          delete this.discovered[provider]
-          await this.storage.write("models", this.discovered)
+    await this.credentialsReady()
+    await this.queueCredentialOperation(async () => {
+      this.writableCredentials()
+      if (apiKey) this.credentials[provider] = apiKey
+      else {
+        delete this.credentials[provider]
+        /*
+         * The discovered catalog describes what a key can drive, so it goes when
+         * the key goes - but an environment variable can be supplying one too,
+         * and that survives anything done here. Dropping the catalog in that case
+         * left the provider still connected, still reachable, and reporting that
+         * it had no models, because the fallback catalog only covers the handful
+         * of providers with a curated list.
+         */
+        if (!this.environmentKey(provider)) {
+          if (!this.modelsBlocked) {
+            delete this.discovered[provider]
+            await this.storage.write("models", this.discovered)
+          }
         }
       }
-    }
-    await this.persistCredentials()
+      await this.persistCredentials()
+    })
   }
 
   async setDiscovered(provider: string, models: ModelEntry[]): Promise<void> {

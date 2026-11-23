@@ -61,6 +61,7 @@ export interface Runtime {
 export interface Backend {
   runtime: Runtime
   port: number
+  credentials: { unlock(): Promise<void> }
   /** This launch's socket secret; handed only to the app's own window, never logged. */
   secret: string
   close(): Promise<void>
@@ -76,6 +77,15 @@ export interface BackendOptions {
   secrets?: SecretBox
   /** The installed application directory; omitted for development builds. */
   installationDirectory?: string
+  /**
+   * Hold the saved keys closed until `credentials.unlock()` is called, so the first
+   * keychain access cannot sit in front of the window's first frame. A host that
+   * sets this owns a trigger for the unlock (the desktop main process unlocks once
+   * a window is visible); the backend also opens them on a bounded timer, so
+   * deferring can never leave the keys closed. Hosts that leave this unset load
+   * credentials eagerly, exactly as before.
+   */
+  deferCredentialUnseal?: boolean
 }
 
 /** How many ports the system is asked for before the backend gives up on one a browser accepts. */
@@ -123,6 +133,7 @@ export async function startBackend(dataDirectory: string, options: BackendOption
   const storage = new Storage(path.join(dataDirectory, "storage"))
   const bus = new Bus()
   const config = new Config(storage, bus, path.join(dataDirectory, "credentials.json"), options.secrets, options.installationDirectory)
+  config.deferCredentialUnseal = options.deferCredentialUnseal === true
   const auth = new AuthManager(config, bus)
   await config.load()
   // The model's file tools never write here: config.json there decides what starts at launch.
@@ -153,8 +164,28 @@ export async function startBackend(dataDirectory: string, options: BackendOption
   // Before the socket opens, so the first window already reads a filled project list.
   await config.migrateProjects(projectDirectoriesOf(await sessions.list()))
   await config.migrateRepositoryProjects()
+  let unlocking: Promise<void> | undefined
+  const credentials = {
+    unlock: () => (unlocking ??= config.finishCredentialUnseal().then(() => config.migrateCredentials())),
+  }
+  /*
+   * A host that defers must not be able to leave the saved keys closed forever, so
+   * the backend opens them itself in the end. Deliberately later than the desktop
+   * host's own fallback (35 s, src/main/index.ts) and than the renderer watchdog
+   * (30 s): an earlier timer would run the blocking decrypt while the first frame
+   * is still coming up, which is the very freeze this deferral exists to remove.
+   */
+  const credentialFallback = options.deferCredentialUnseal
+    ? setTimeout(() => {
+        void credentials.unlock().catch(() => console.warn("[boot] the saved keys did not open on the backend's own fallback timer"))
+      }, 60_000)
+    : undefined
+  credentialFallback?.unref?.()
   // Plain-text keys are encrypted once the system can (L12-3); a failure is kept plain and tried next launch.
-  await config.migrateCredentials()
+  // A host that defers the first keychain access cannot wait for it here (that is the
+  // prompt the window must not sit behind), so for it the migration belongs to
+  // Backend.credentials.unlock() and runs the moment the keys open.
+  if (!options.deferCredentialUnseal) await config.migrateCredentials()
   const devices = new Devices(storage)
   const ssh = new SshPool(devices)
   const runner = new SessionRunner(sessions, bus, config, permissions, auth, storage, ssh)
@@ -208,6 +239,7 @@ export async function startBackend(dataDirectory: string, options: BackendOption
        * carry on, as OpenCode v2's server does at boot. After the checkpoint
        * migration, which the carried-on turn's undo records rely on.
        */
+      await config.credentialsReady()
       const carried = await runner.resumeClaimed()
       if (carried.length) console.info(`[restart] carried on ${carried.length} turn(s) the app was cut off in`)
       /*
@@ -447,6 +479,10 @@ export async function startBackend(dataDirectory: string, options: BackendOption
           reply({ kind: "response", id: frame.id, ok: true, data: {} })
           return
         }
+        // The renderer can paint while these wait, then receive the real
+        // credential status and provider list on its first settings requests.
+        const type = frame.request.type
+        if (type === "config.get" || type.startsWith("provider.") || type.startsWith("auth.")) await config.credentialsReady()
         const data = await handle(runtime, frame.request, socket, (event) => reply({ kind: "event", event }))
         reply({ kind: "response", id: frame.id, ok: true, data })
       } catch (err) {
@@ -472,6 +508,7 @@ export async function startBackend(dataDirectory: string, options: BackendOption
   return {
     runtime,
     port,
+    credentials,
     secret,
     async close() {
       // First: a turn the quit cuts off keeps its claim, so the next start carries it on.
@@ -484,6 +521,7 @@ export async function startBackend(dataDirectory: string, options: BackendOption
       catalog.stop()
       clearTimeout(packFirst)
       if (packEvery) clearInterval(packEvery)
+      if (credentialFallback) clearTimeout(credentialFallback)
       await Promise.all([shells.closeAll(), ssh.close(), labClosed])
       // The browsers the app tool opened close with the app; apps it attached to are only let go.
       await closeAllApps()

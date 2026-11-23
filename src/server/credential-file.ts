@@ -38,6 +38,8 @@ export type CredentialRead =
    */
   | { state: "unreadable"; problem: string; keep?: boolean }
 
+type SealedCredentials = { state: "sealed"; raw: Record<string, unknown> }
+
 /**
  * The credential file as stored.
  *
@@ -48,7 +50,13 @@ export type CredentialRead =
  * keyring that is gone) - is unreadable, never empty: an empty answer is what
  * let the next saved key write over every other one.
  */
-export async function readCredentialFile(file: string, box: SecretBox | undefined): Promise<CredentialRead> {
+export function readCredentialFile(file: string, box: SecretBox | undefined): Promise<CredentialRead>
+export function readCredentialFile(file: string, box: SecretBox | undefined, options: { deferUnseal: true }): Promise<CredentialRead | SealedCredentials>
+export async function readCredentialFile(
+  file: string,
+  box: SecretBox | undefined,
+  options?: { deferUnseal: true },
+): Promise<CredentialRead | SealedCredentials> {
   let text: string
   try {
     text = await fs.readFile(file, "utf8")
@@ -57,10 +65,15 @@ export async function readCredentialFile(file: string, box: SecretBox | undefine
     if (code === "ENOENT") return { state: "absent" }
     return { state: "unreadable", problem: `credentials.json could not be opened (${code ?? "unknown error"})` }
   }
-  return parseCredentials(text, box)
+  return options?.deferUnseal ? parseCredentialDocument(text) : parseCredentials(text, box)
 }
 
 export function parseCredentials(text: string, box: SecretBox | undefined): CredentialRead {
+  const read = parseCredentialDocument(text)
+  return read.state === "sealed" ? openCredentials(read, box) : read
+}
+
+function parseCredentialDocument(text: string): CredentialRead | SealedCredentials {
   let raw: unknown
   try {
     raw = JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text)
@@ -68,7 +81,7 @@ export function parseCredentials(text: string, box: SecretBox | undefined): Cred
     return { state: "unreadable", problem: "credentials.json is not valid JSON" }
   }
   if (!isRecord(raw)) return { state: "unreadable", problem: "credentials.json does not hold an object" }
-  if ("sealed" in raw) return opened(raw, box)
+  if ("sealed" in raw) return { state: "sealed", raw }
   // The file used to be a bare provider -> key map; keep those working.
   const versioned = "keys" in raw || "oauth" in raw
   const keys = versioned ? (raw.keys ?? {}) : raw
@@ -77,7 +90,7 @@ export function parseCredentials(text: string, box: SecretBox | undefined): Cred
   return { state: "read", sealed: false, credentials: { keys: keys as Record<string, string>, oauth: oauth as Record<string, OAuthTokens> } }
 }
 
-function opened(raw: Record<string, unknown>, box: SecretBox | undefined): CredentialRead {
+export function openCredentials({ raw }: SealedCredentials, box: SecretBox | undefined): CredentialRead {
   if (raw.sealed !== SEALING) return { state: "unreadable", problem: "credentials.json is sealed in a form this build does not know" }
   if (!box?.available()) return { state: "unreadable", problem: "credentials.json is encrypted and this system's secure storage cannot open it", keep: true }
   const keys = raw.keys ?? {}
