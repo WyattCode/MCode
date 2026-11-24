@@ -46485,6 +46485,8 @@ const MENU_KEYS = [
   "menu.resetZoom", "menu.zoomIn", "menu.zoomOut",
   "menu.window", "menu.minimize",
   "menu.newTask", "menu.openFolder", "menu.fileClose", "menu.unhide", "menu.quitApp",
+  // The macOS quit row while a first Cmd+Q waits for the second.
+  "quit.hint",
   "menu.forceReload", "menu.developerTools", "menu.enterFullscreen", "menu.zoomWindow",
   // The tray's menu is built out here too, and rebuilt when these change.
   "tray.open", "tray.newConversation", "tray.quit",

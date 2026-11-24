@@ -148,11 +148,19 @@ export async function roundNineWindowsChecks(check: Check, section: (name: strin
     const state = await fs.readFile(path.join(root, "src/main/window-state.ts"), "utf8")
     const restoreBody = /export function restore\(\)[\s\S]*?\n\}/.exec(state)?.[0] ?? "fullScreen"
     check("the window is never put back into full screen at launch", !/setFullScreen\(true\)/.test(main) && !/fullScreen/i.test(restoreBody) && !/saved\.fullScreen/.test(main))
+    /*
+     * The teardown handler is the one that takes the event, so its own body is what
+     * to read. This used to be "the save loop within 400 characters of the words
+     * before-quit", which went red when an unrelated line was added inside that
+     * handler - a distance was standing in for a location.
+     */
+    const quitBody = /app\.on\("before-quit", \(event\)[\s\S]*?\n\}\)/.exec(main)?.[0] ?? ""
     check(
       "saving happens on close (for the last window) and for every window at quit, not on each move or resize",
       !/\.on\("(resize|move|maximize|unmaximize|enter-full-screen|leave-full-screen)"/.test(state) &&
         /if \(isLast\(\)\) saveWindowState\(window\)/.test(state) &&
-        /before-quit[\s\S]{0,400}for \(const window of windows\) saveWindowState\(window\)/.test(main),
+        /for \(const window of windows\) saveWindowState\(window\)/.test(quitBody),
+      quitBody.length,
     )
   }
 

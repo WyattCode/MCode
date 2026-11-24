@@ -31,7 +31,7 @@ import { sweepWriterTemps, writeAtomicSync } from "./atomic-write"
 import { LOGIN_ITEM_FILE, loginItemSupported, parseLoginItem, readLaunchAtLogin, startsHidden, writeLaunchAtLogin, type LoginItemStore } from "./login-item"
 import { USER_VERIFY_FILE, UserVerifySession, checkUserVerifyAvailable, parseUserVerifyPref, renderUserVerifyPref, userVerifySupported, type UserVerifyAvailability, type UserVerifyRunner } from "./user-verify"
 import { BROWSER_ACTS, EDIT_ACTIONS, VIEW_ACTIONS, WINDOW_ACTIONS, actionOf, clipboardText, directoryAsk, panelBounds, titlebarMode } from "./ipc-input"
-import { buildMenu, requestAppQuit } from "./menu"
+import { buildMenu, forgetQuitArm, requestAppQuit } from "./menu"
 import { readMenuKeys, type MenuKeys } from "./menu-keys"
 import { cancelPendingHide, claimDialog, dialogParent, hideWindow, micDecision, releaseDialog } from "./native-dialogs"
 import { SHOW_FALLBACK_MS } from "./renderer-health"
@@ -2148,6 +2148,8 @@ function noteOsQuit(): void {
  * added to close(). Hold the quit, close, then quit for real.
  */
 app.on("before-quit", (event) => {
+  /* A quit asked for elsewhere (the tray, the system, a session ending) ends a Cmd+Q that is still waiting for its second press. */
+  forgetQuitArm()
   if (closing) return
   // Nothing has been started at all: an install asked for goes ahead at once.
   if (!startingBackend) return runPendingInstall()

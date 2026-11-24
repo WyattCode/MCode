@@ -2,25 +2,64 @@ import { app, dialog, Menu, BrowserWindow, type MenuItemConstructorOptions } fro
 import { label } from "./labels"
 import { applyZoom } from "./zoom"
 import { toggleMaximize } from "./window-state"
-import { APP_NAME, quitPress } from "./desktop-rules"
+import { APP_NAME, QUIT_ARM_MS, quitPress } from "./desktop-rules"
 import { beginIntentionalQuit } from "./recovery"
 import pkg from "../../package.json"
 import { menuAccelerator, type MenuCommand, type MenuKeys } from "./menu-keys"
 
 /* When the first Cmd+Q was pressed, while it is still waiting for a second. */
 let quitArmedAt: number | undefined
+/* Forgets the arm when the window closed on it, and with it the menu row's wording. */
+let quitArmTimer: NodeJS.Timeout | undefined
 
 export function requestAppQuit(fromShortcut = false): void {
   if (fromShortcut && process.platform === "darwin") {
     const press = quitPress(quitArmedAt, Date.now())
     quitArmedAt = press.armedAt
     if (!press.quit) {
-      BrowserWindow.getFocusedWindow()?.webContents.send("mcode:quit-hint")
+      sayQuitArmed()
       return
     }
   }
+  forgetQuitArm()
   beginIntentionalQuit()
   app.quit()
+}
+
+/** Puts the arm away - the waiting timer with the state - so no quit path can leave the row wrongly worded. */
+export function forgetQuitArm(): void {
+  clearTimeout(quitArmTimer)
+  quitArmTimer = undefined
+  quitArmedAt = undefined
+}
+
+/**
+ * Says "a second press is wanted" on every surface that can hold it.
+ *
+ * The window's toast is the quiet half: a window hidden in the tray can receive it
+ * and show nothing, which is how a Cmd+Q that had been armed looked dead to a
+ * person with no window on screen. The menu bar's own quit row is the surface that
+ * stays visible then, so the arm also rebuilds the menu (this app relabels by
+ * rebuilding, never in place) and the row carries the hint until the arm expires.
+ */
+function sayQuitArmed(): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send("mcode:quit-hint")
+  }
+  /*
+   * Scheduled before the rebuild: should building the menu throw, the arm still
+   * expires by itself instead of leaving the row reading "press again" indefinitely.
+   */
+  clearTimeout(quitArmTimer)
+  quitArmTimer = setTimeout(expireQuitArm, QUIT_ARM_MS)
+  quitArmTimer.unref()
+  buildMenu()
+}
+
+/** The arm's own ending: the state goes and the row gets its normal words back. */
+function expireQuitArm(): void {
+  forgetQuitArm()
+  buildMenu()
 }
 
 /**
@@ -139,7 +178,8 @@ export function buildMenu(next?: MenuKeys): void {
           : []),
         separator,
         {
-          label: L("menu.quitApp", "Quit MCode"),
+          /* While an arm waits, the row is the notice: it is on screen even with every window hidden. */
+          label: quitArmedAt === undefined ? L("menu.quitApp", "Quit MCode") : L("quit.hint", "Press ⌘Q again to Quit"),
           ...command("quit"),
           click: (_item, _window, event) => requestAppQuit(event.triggeredByAccelerator),
         },

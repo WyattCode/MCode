@@ -3678,6 +3678,13 @@ onMounted(async () => {
     .catch(() => undefined)
   // macOS: a first Cmd+Q only arms the quit, and says so.
   offQuitHint = window.mcode.onQuitHint(() => {
+    /*
+     * A page that is not on screen cannot show this, and a hidden one freezes every
+     * notice's clock rather than letting it run out (lib/toast.ts), so banking it
+     * here would pay it back as a stale "press again" the next time the window
+     * appears. With no window showing, the menu bar's own quit row is the notice.
+     */
+    if (document.hidden) return
     const chord = formatChord(appMenuHints.value.quit, platformName())
     notify(t("quit.hint").replace("⌘Q", chord), { id: "quit-shortcut", duration: 2000 })
   })
