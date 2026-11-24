@@ -136,41 +136,14 @@ export function isBindable(chord: string): boolean {
   return Boolean(key) && parts.length >= 2 && parts.slice(0, -1).every((part) => ORDER.includes(part))
 }
 
-const DISPLAY_KEYS: Record<string, string> = {
-  Tab: "⇥",
-  Space: "␣",
-  Enter: "↵",
-  Escape: "Esc",
-}
-
 /*
- * The chord as MiMo writes it on a key cap. Windows and Linux spell the
- * modifiers out with plus signs (Win+ or Super+ for Meta); macOS uses the
- * glyphs with no separators, where this app's Ctrl is the command key and
- * Meta the Control key. Tab, Space, Enter and Escape get their symbols. The
- * stored form is unchanged.
+ * The chord as a key cap spells it now lives in @shared/chord: the menu bar says
+ * "press this key again" out of the same mouth the window's notice does, so the
+ * two cannot disagree about what a binding looks like.
  */
-export function formatChord(chord: string, platform: string): string {
-  if (!chord) return ""
-  const parts = chord.split("+")
-  // A chord ending in "+" (Ctrl++) splits into an empty last part.
-  const key = parts[parts.length - 1] || "+"
-  const mods = parts.slice(0, -1).filter((part) => ORDER.includes(part))
-  const shown = DISPLAY_KEYS[key] ?? (key.length === 1 ? key.toUpperCase() : key)
-  if (platform === "darwin") {
-    const glyph: Record<string, string> = { Alt: "⌥", Shift: "⇧", Meta: "⌃", Ctrl: "⌘" }
-    const order = ["Meta", "Alt", "Shift", "Ctrl"]
-    return mods.sort((a, b) => order.indexOf(a) - order.indexOf(b)).map((part) => glyph[part]).join("") + shown
-  }
-  const order = ["Ctrl", "Alt", "Shift", "Meta"]
-  const name: Record<string, string> = {
-    Ctrl: "Ctrl+",
-    Alt: "Alt+",
-    Shift: "Shift+",
-    Meta: platform === "linux" ? "Super+" : "Win+",
-  }
-  return mods.sort((a, b) => order.indexOf(a) - order.indexOf(b)).map((part) => name[part]).join("") + shown
-}
+import { formatChord } from "@shared/chord"
+
+export { formatChord }
 
 /**
  * Prose that names both modifiers keeps the command glyph on macOS

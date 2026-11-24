@@ -1,4 +1,5 @@
 import { LINK_SCHEME } from "../shared/session-link"
+import { formatChord } from "../shared/chord"
 
 /**
  * The desktop rules MiMo's main process applies, as plain functions.
@@ -224,6 +225,20 @@ export const QUIT_ARM_MS = 2000
 export function quitPress(armedAt: number | undefined, now: number): { quit: boolean; armedAt?: number } {
   if (armedAt !== undefined && now - armedAt <= QUIT_ARM_MS) return { quit: true }
   return { quit: false, armedAt: now }
+}
+
+/**
+ * The notice a waiting arm shows, spelled with the key that would quit.
+ *
+ * The copy names ⌘Q because that is the default binding, but the binding is the
+ * person's own — and the menu bar draws the real accelerator on the very row that
+ * carries the notice, so a row that reads "⌘Q" while its right column reads
+ * "⌃⇧Q" tells two stories at once. The key cap comes off the binding, and a
+ * binding too odd to spell leaves the sentence as written.
+ */
+export function armQuitLabel(notice: string, bound: string, platform: string): string {
+  const shown = formatChord(bound, platform)
+  return shown ? notice.replace("⌘Q", shown) : notice
 }
 
 /** A badge count as a whole number, zero for anything unusable. */

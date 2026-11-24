@@ -2,10 +2,10 @@ import { app, dialog, Menu, BrowserWindow, type MenuItemConstructorOptions } fro
 import { label } from "./labels"
 import { applyZoom } from "./zoom"
 import { toggleMaximize } from "./window-state"
-import { APP_NAME, QUIT_ARM_MS, quitPress } from "./desktop-rules"
+import { APP_NAME, QUIT_ARM_MS, armQuitLabel, quitPress } from "./desktop-rules"
 import { beginIntentionalQuit } from "./recovery"
 import pkg from "../../package.json"
-import { menuAccelerator, type MenuCommand, type MenuKeys } from "./menu-keys"
+import { menuAccelerator, menuCommandChord, type MenuCommand, type MenuKeys } from "./menu-keys"
 
 /* When the first Cmd+Q was pressed, while it is still waiting for a second. */
 let quitArmedAt: number | undefined
@@ -54,6 +54,11 @@ function sayQuitArmed(): void {
   quitArmTimer = setTimeout(expireQuitArm, QUIT_ARM_MS)
   quitArmTimer.unref()
   buildMenu()
+}
+
+/** The notice a waiting arm shows, named for the key that would actually quit. */
+function quitArmedNotice(): string {
+  return armQuitLabel(label("quit.hint", "Press ⌘Q again to Quit"), menuCommandChord("quit", keys), process.platform)
 }
 
 /** The arm's own ending: the state goes and the row gets its normal words back. */
@@ -178,8 +183,9 @@ export function buildMenu(next?: MenuKeys): void {
           : []),
         separator,
         {
-          /* While an arm waits, the row is the notice: it is on screen even with every window hidden. */
-          label: quitArmedAt === undefined ? L("menu.quitApp", "Quit MCode") : L("quit.hint", "Press ⌘Q again to Quit"),
+          /* While an arm waits, the row is the notice: it is rebuilt even with every window hidden,
+             and it names the key this row's own accelerator answers to, not the sentence's default. */
+          label: quitArmedAt === undefined ? L("menu.quitApp", "Quit MCode") : quitArmedNotice(),
           ...command("quit"),
           click: (_item, _window, event) => requestAppQuit(event.triggeredByAccelerator),
         },

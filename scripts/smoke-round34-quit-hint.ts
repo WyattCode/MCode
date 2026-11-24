@@ -79,13 +79,16 @@ export async function quitHintChecks(check: Check): Promise<void> {
   check("expiry clears the arm and rewords the row", /forgetQuitArm\(\)/.test(expires) && /buildMenu\(\)/.test(expires), expires.slice(0, 120))
 
   /*
-   * The row's hint words have to be chosen by the arm. Read around the label rather
-   * than over a fixed span: a ternary moved into a helper of its own stays green, a
-   * label that stopped answering to the arm goes red.
+   * The row's hint words have to be chosen by the arm, and the key they name has to
+   * come from the binding rather than from the sentence: a row reading "⌘Q" over an
+   * accelerator reading "⌃⇧Q" tells two stories at once. Read the label expression
+   * itself — a label that stopped answering to the arm, or a notice that stopped
+   * asking what is bound, goes red.
    */
-  const hintUse = menu.indexOf('L("quit.hint"')
-  const aroundHint = hintUse < 0 ? "" : menu.slice(Math.max(0, hintUse - 200), hintUse + 200)
-  check("the row's hint words answer to the armed state", hintUse >= 0 && /quitArmedAt/.test(aroundHint), aroundHint.trim().slice(0, 120))
+  const rowLabel = /label:\s*(quitArmedAt[^\n]*)/.exec(menu)?.[1] ?? ""
+  check("the row's words answer to the armed state", /quitArmedNotice\(\)/.test(rowLabel) && /L\("menu\.quitApp"/.test(rowLabel), rowLabel.slice(0, 160))
+  const notice = fnBody(menu, "quitArmedNotice")
+  check("the arm's notice spells the key off the binding", /armQuitLabel\(/.test(notice) && /menuCommandChord\(/.test(notice), notice.slice(0, 200))
   check("no hint is sent through a focused window alone", !/getFocusedWindow\(\)\s*\??\.\s*webContents\.send\("mcode:quit-hint"\)/.test(menu))
 
   const index = await read("src/main/index.ts")
@@ -122,7 +125,9 @@ export async function quitHintChecks(check: Check): Promise<void> {
   check("the hint's words are sent to the main process", /["']quit\.hint["']/.test(published))
 }
 
-if (process.argv[1]?.split("/").pop() === "smoke-round34-quit-hint.ts") {
+/* Run me on my own: path.basename, because a Windows separator would otherwise
+   make this entry never fire and the file would report nothing at all. */
+if (path.basename(process.argv[1] ?? "") === "smoke-round34-quit-hint.ts") {
   let failed = 0
   await quitHintChecks((label, ok, detail) => {
     if (!ok) failed++

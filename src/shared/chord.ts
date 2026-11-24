@@ -160,3 +160,45 @@ export const MENU_SHORTCUT_DEFAULTS = {
   "zoom.reset": "Ctrl+0",
   "app.quit": "Ctrl+Q",
 } as const
+
+/* The four names a stored chord may put in front of a key, in the order the
+   settings screen lists them. Lives here because both the window that records a
+   chord and the menu bar that shows one spell a chord the same way. */
+const MODIFIERS = ["Ctrl", "Alt", "Shift", "Meta"]
+
+/* Keys whose cap shows a symbol rather than a letter. */
+const KEY_CAPS: Record<string, string> = {
+  Tab: "⇥",
+  Space: "␣",
+  Enter: "↵",
+  Escape: "Esc",
+}
+
+/**
+ * The chord as MiMo writes it on a key cap. Windows and Linux spell the
+ * modifiers out with plus signs (Win+ or Super+ for Meta); macOS uses the
+ * glyphs with no separators, where this app's Ctrl is the command key and
+ * Meta the Control key. Tab, Space, Enter and Escape get their symbols. The
+ * stored form is unchanged.
+ */
+export function formatChord(chord: string, platform: string): string {
+  if (!chord) return ""
+  const parts = chord.split("+")
+  // A chord ending in "+" (Ctrl++) splits into an empty last part.
+  const key = parts[parts.length - 1] || "+"
+  const mods = parts.slice(0, -1).filter((part) => MODIFIERS.includes(part))
+  const shown = KEY_CAPS[key] ?? (key.length === 1 ? key.toUpperCase() : key)
+  if (platform === "darwin") {
+    const glyph: Record<string, string> = { Alt: "⌥", Shift: "⇧", Meta: "⌃", Ctrl: "⌘" }
+    const order = ["Meta", "Alt", "Shift", "Ctrl"]
+    return mods.sort((a, b) => order.indexOf(a) - order.indexOf(b)).map((part) => glyph[part]).join("") + shown
+  }
+  const order = ["Ctrl", "Alt", "Shift", "Meta"]
+  const name: Record<string, string> = {
+    Ctrl: "Ctrl+",
+    Alt: "Alt+",
+    Shift: "Shift+",
+    Meta: platform === "linux" ? "Super+" : "Win+",
+  }
+  return mods.sort((a, b) => order.indexOf(a) - order.indexOf(b)).map((part) => name[part]).join("") + shown
+}

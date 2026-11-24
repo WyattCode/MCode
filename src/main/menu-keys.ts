@@ -69,6 +69,18 @@ export function menuAccelerator(command: MenuCommand, keys: MenuKeys, platform: 
   return acceleratorOf(bound, platform)
 }
 
+/**
+ * The chord a command answers to now, spelled the way it is stored — the same
+ * string that becomes the accelerator above, before any platform renames it. The
+ * arm's notice takes its key cap from here, so the row cannot name a key other
+ * than the one that quits; unlike the accelerator, it survives a recording, which
+ * is when the binding is unchanged and only its claim is withdrawn.
+ */
+export function menuCommandChord(command: MenuCommand, keys: MenuKeys): string {
+  const { id, chord } = MENU_COMMANDS[command]
+  return boundShortcut({ id, hint: chord }, keys.binds)
+}
+
 /** The renderer's message, checked: only string bindings and a boolean pass. */
 export function readMenuKeys(raw: unknown): MenuKeys | undefined {
   if (!raw || typeof raw !== "object") return undefined
