@@ -68,7 +68,29 @@ watch(() => props.directory, () => {
 </template>
 
 <style scoped>
-h2 { margin: 0 0 6px; color: var(--text-strong); }
+/*
+ * The dialog's own page-title rule is `scoped` and cannot reach in here, so this page
+ * carries the type itself — 24/400 on the shared line box, and 26 below it, which is
+ * what every other page's title leaves before its subtitle.
+ */
+h2 {
+  margin: 0 0 26px;
+  color: var(--text-strong);
+  font-size: calc(24px * var(--ui-font-scale, 1));
+  font-weight: 400;
+  line-height: calc(38.4px * var(--ui-font-scale, 1));
+}
+
+/* A page title takes MiMo's softer ink in dark, as every other page's does. */
+:root[data-theme="dark"] h2 {
+  color: #f4f4f5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) h2 {
+    color: #f4f4f5;
+  }
+}
 .page-sub, .line-sub { color: var(--text-base); font-size: calc(13px * var(--ui-font-scale, 1)); }
 .page-sub { margin: 0 0 14px; line-height: 1.5; }
 .line-sub { margin: 4px 0 0; }

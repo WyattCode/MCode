@@ -1330,6 +1330,7 @@ function requestHooks(type: "hooks.list" | "hooks.reload", directory?: string) {
 type CliRow = ResponseMap["cliPlugin.list"]["plugins"][number]
 const cliRows = ref<CliRow[]>([])
 const cliListError = ref(false)
+const cliListLoaded = ref(false)
 const cliBusy = ref(new Set<string>())
 const cliMenu = ref<{ row: CliRow; x: number; y: number; end: boolean; anchor?: HTMLElement }>()
 const cliDialog = ref<HTMLDialogElement>()
@@ -1349,7 +1350,10 @@ async function refreshCliPlugins() {
     const result = await app.client?.request({ type: "cliPlugin.list" })
     if (version !== cliListVersion) return
     cliListError.value = !result
-    if (result) cliRows.value = result.plugins
+    if (result) {
+      cliRows.value = result.plugins
+      cliListLoaded.value = true
+    }
   } catch {
     if (version === cliListVersion) cliListError.value = true
   }
@@ -3084,6 +3088,9 @@ onBeforeUnmount(() => {
             {{ t("set.plugins.listFailed") }}
             <button type="button" class="ctl-btn" @click="refreshCliPlugins">{{ t("common.retry") }}</button>
           </div>
+          <!-- The empty card claims nothing is installed. Until the list has answered,
+               that is not yet known, so this line speaks instead. -->
+          <p v-if="!cliListLoaded && !cliListError" class="line-sub">{{ t("set.loading") }}</p>
           <div v-if="cliRows.length" class="card">
             <div v-for="row in cliRows" :key="row.id" class="line" @contextmenu.prevent="openCliMenu(row, $event)">
               <div class="line-text">
@@ -3101,6 +3108,10 @@ onBeforeUnmount(() => {
                   @click="openCliMenu(row, $event, $event.currentTarget as HTMLElement)">⋯</button>
               </div>
             </div>
+          </div>
+          <div v-else-if="cliListLoaded" class="card cli-empty" data-cli-empty>
+            <div class="cli-empty-title">{{ t("set.plugins.emptyTitle") }}</div>
+            <div class="cli-empty-desc">{{ t("set.plugins.emptySub") }}</div>
           </div>
           <ContextMenu v-if="cliMenu" :x="cliMenu.x" :y="cliMenu.y" :end="cliMenu.end"
             :items="[{ key: 'delete', label: t('set.plugins.remove'), danger: true }]"
@@ -6806,6 +6817,23 @@ h3 {
 }
 
 .cli-add { margin-bottom: 14px; }
+
+/* Nothing installed is a card of its own here, the way no worktree is: MiMo's empty
+   card takes the row's 16, a 14/500 line, and the body ink one under it. */
+.card.cli-empty { padding: 16px; }
+
+.cli-empty-title {
+  color: var(--text-strong);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 500;
+}
+
+.cli-empty-desc {
+  margin-top: 4px;
+  color: var(--text-base);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
 .cli-badge {
   display: inline-block;
   margin-top: 4px;
