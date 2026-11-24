@@ -1,8 +1,9 @@
 import { app, dialog, Menu, BrowserWindow, type MenuItemConstructorOptions } from "electron"
+import { fillQuitNotice } from "@shared/chord"
 import { label } from "./labels"
 import { applyZoom } from "./zoom"
 import { toggleMaximize } from "./window-state"
-import { APP_NAME, QUIT_ARM_MS, armQuitLabel, quitPress } from "./desktop-rules"
+import { APP_NAME, QUIT_ARM_MS, quitPress } from "./desktop-rules"
 import { beginIntentionalQuit } from "./recovery"
 import pkg from "../../package.json"
 import { menuAccelerator, menuCommandChord, type MenuCommand, type MenuKeys } from "./menu-keys"
@@ -13,7 +14,11 @@ let quitArmedAt: number | undefined
 let quitArmTimer: NodeJS.Timeout | undefined
 
 export function requestAppQuit(fromShortcut = false): void {
-  if (fromShortcut && process.platform === "darwin") {
+  /* A press may only promise "one more like this" when the row can name the key it
+     is promising. With the quit unbound (or bound to something that cannot be
+     spelled) there is no second press to wait for, so nothing arms and this leaves. */
+  const notice = fromShortcut && process.platform === "darwin" ? quitArmedNotice() : ""
+  if (notice) {
     const press = quitPress(quitArmedAt, Date.now())
     quitArmedAt = press.armedAt
     if (!press.quit) {
@@ -56,9 +61,21 @@ function sayQuitArmed(): void {
   buildMenu()
 }
 
-/** The notice a waiting arm shows, named for the key that would actually quit. */
+/** The notice a waiting arm shows, named for the key that would actually quit; "" when none can be named. */
 function quitArmedNotice(): string {
-  return armQuitLabel(label("quit.hint", "Press ⌘Q again to Quit"), menuCommandChord("quit", keys), process.platform)
+  /* The words and the accelerator column sit on the same row, so they answer to one
+     rule: a key the menu cannot name — one whose chord holds a modifier Electron's
+     menus have no spelling for — is a key this row must not ask for either. Without
+     this, the right column goes blank while the notice still says "⌘+", and the two
+     halves of one row disagree about whether a shortcut exists. */
+  if (menuAccelerator("quit", keys, process.platform) === undefined) return ""
+  return fillQuitNotice(label("quit.hint", "Press {key} again to Quit"), menuCommandChord("quit", keys), process.platform)
+}
+
+/** The quit row's words: the arm's notice while one waits, its own name otherwise — and never a notice that names no key. */
+function quitRowLabel(L: typeof label): string {
+  const notice = quitArmedAt === undefined ? "" : quitArmedNotice()
+  return notice || L("menu.quitApp", "Quit MCode")
 }
 
 /** The arm's own ending: the state goes and the row gets its normal words back. */
@@ -150,7 +167,11 @@ function toggleFocusedMaximize(): void {
 /** Rebuilds the menu; new bindings (and whether one is being recorded) replace the last ones. */
 export function buildMenu(next?: MenuKeys): void {
   if (next) {
-    if (next.binds["app.quit"] !== keys.binds["app.quit"]) quitArmedAt = undefined
+    /* A row that promised a key the app no longer answers to is a lie, and the old
+       promise is not owed to the new binding either: rebinding the quit, or starting
+       to record a chord (which withdraws the running one), puts the arm — and the
+       timer that would rebuild the row behind it — away entirely. */
+    if (next.binds["app.quit"] !== keys.binds["app.quit"] || next.recording) forgetQuitArm()
     keys = next
   }
   /** The translated label, or the English written here as the fallback. */
@@ -185,7 +206,8 @@ export function buildMenu(next?: MenuKeys): void {
         {
           /* While an arm waits, the row is the notice: it is rebuilt even with every window hidden,
              and it names the key this row's own accelerator answers to, not the sentence's default. */
-          label: quitArmedAt === undefined ? L("menu.quitApp", "Quit MCode") : quitArmedNotice(),
+          label: quitRowLabel(L),
+          id: "app-quit",
           ...command("quit"),
           click: (_item, _window, event) => requestAppQuit(event.triggeredByAccelerator),
         },

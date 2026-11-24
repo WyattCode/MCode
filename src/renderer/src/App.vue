@@ -71,8 +71,8 @@ import { sessionLink, type SessionLinkTarget } from "@shared/session-link"
 import { folderName, projectName } from "./lib/project"
 import { addDraftSkill, bindDraftSources, drafts, flushDrafts, homeFilled, loadDrafts, scheduleDraftSave } from "./lib/composer-drafts"
 import { renderMarkdown } from "./lib/markdown"
-import { chordOf, controlChord, formatChord, recordingChord } from "./lib/keys"
-import { boundShortcut, FIND_SHORTCUT_DEFAULT, MENU_SHORTCUT_DEFAULTS, shortcutDispatch } from "@shared/chord"
+import { chordOf, controlChord, recordingChord } from "./lib/keys"
+import { boundShortcut, fillQuitNotice, FIND_SHORTCUT_DEFAULT, MENU_SHORTCUT_DEFAULTS, shortcutDispatch } from "@shared/chord"
 import { projectOf } from "./lib/session-project"
 import FindBar from "./components/FindBar.vue"
 import AnnotationComposer from "./components/AnnotationComposer.vue"
@@ -3685,8 +3685,10 @@ onMounted(async () => {
      * appears. With no window showing, the menu bar's own quit row is the notice.
      */
     if (document.hidden) return
-    const chord = formatChord(appMenuHints.value.quit, platformName())
-    notify(t("quit.hint").replace("⌘Q", chord), { id: "quit-shortcut", duration: 2000 })
+    /* Same fill the menu bar's row uses, so the two surfaces cannot name different
+       keys; nothing is said at all when no key can be named for the notice. */
+    const notice = fillQuitNotice(t("quit.hint"), appMenuHints.value.quit, platformName())
+    if (notice) notify(notice, { id: "quit-shortcut", duration: 2000 })
   })
   await boot()
 })

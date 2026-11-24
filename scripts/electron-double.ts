@@ -22,9 +22,11 @@ interface FakeWindow {
   focused?: boolean
 }
 
+/** The id `src/main/menu.ts` gives its quit row, so a check can find it without reading English words. */
+export const QUIT_ROW_ID = "app-quit"
+
 const calls: Call[] = []
 let windows: FakeWindow[] = []
-let templates: unknown[][] = []
 let menus: unknown[] = []
 
 const sendCalls = (): Call[] => calls.filter((call) => call.kind === "send")
@@ -33,7 +35,6 @@ const sendCalls = (): Call[] => calls.filter((call) => call.kind === "send")
 export const double = {
   reset(): void {
     calls.length = 0
-    templates = []
     menus = []
     windows = []
   },
@@ -46,15 +47,21 @@ export const double = {
   sent(): string[] {
     return sendCalls().map((call) => String(call.channel))
   },
-  /** The last template the menu bar was rebuilt from. */
-  template(): Record<string, unknown>[] {
-    return (templates[templates.length - 1] ?? []) as Record<string, unknown>[]
+  /**
+   * The template behind the menu the app *installed* last.
+   *
+   * Built is not installed: a module may rebuild a menu and never hand it over, and
+   * a check that read the last build would then be reading words nobody sees.
+   */
+  installedTemplate(): Record<string, unknown>[] {
+    const last = menus[menus.length - 1] as { template?: unknown[] } | undefined
+    return (last?.template ?? []) as Record<string, unknown>[]
   },
-  /** The row that quits a macOS app, wherever the template hides it. */
+  /** The row that quits the app, found by the id the menu gives it, in the installed menu. */
   quitRow(): Record<string, unknown> | undefined {
-    for (const item of double.template()) {
+    for (const item of double.installedTemplate()) {
       const nested = Array.isArray(item.submenu) ? (item.submenu as Record<string, unknown>[]) : []
-      const found = nested.find((row) => typeof row.click === "function" && String(row.label).includes("Quit"))
+      const found = nested.find((row) => row.id === QUIT_ROW_ID)
       if (found) return found
     }
     return undefined
@@ -70,7 +77,6 @@ export const double = {
 
 export const Menu = {
   buildFromTemplate(template: unknown[]): { template: unknown[]; popup(): void } {
-    templates.push(template)
     return {
       template,
       popup(): void {

@@ -36,9 +36,22 @@ const KEYS: Record<string, string> = {
   "←": "Left",
   "→": "Right",
   Enter: "Return",
-  NumpadAdd: "numadd",
-  NumpadSubtract: "numsub",
 }
+
+/*
+ * Recordable keys an application menu has no trustworthy name for: the keypad's
+ * arithmetic keys. Spelled with the input matcher's names ("numadd"), the menu row
+ * promised a shortcut whose right-hand column came out bare or wrong, while the arm's
+ * notice spelled the same key off the recorder's token ("⌘NumpadAdd") and the settings
+ * list a third way — one binding, three stories, and no way to tell which key quits.
+ *
+ * Refusing is what keeps one row telling one thing: a chord built on these keys gets no
+ * accelerator and no notice, so the row keeps its plain name and never asks for a press
+ * the bar cannot show. Nothing is taken away from the key itself — a focused window
+ * still answers it, the zoom commands keep their keypad alternates, and the settings
+ * list reads the legend off the key (+, -, *, /).
+ */
+const NOT_FOR_MENUS = new Set(["NumpadAdd", "NumpadSubtract", "NumpadMultiply", "NumpadDivide", "NumpadEnter", "NumpadDecimal", "NumpadEqual"])
 
 /**
  * A stored chord as an Electron accelerator, or undefined when it cannot be
@@ -50,7 +63,7 @@ export function acceleratorOf(chord: string, platform: string): string | undefin
   const plus = chord.endsWith("++")
   const parts = plus ? [...chord.slice(0, -2).split("+").filter(Boolean), "+"] : chord.split("+")
   const key = parts.pop()
-  if (!key) return undefined
+  if (!key || NOT_FOR_MENUS.has(key)) return undefined
   const mods: string[] = []
   for (const part of parts) {
     if (part === "Ctrl") mods.push("CmdOrCtrl")

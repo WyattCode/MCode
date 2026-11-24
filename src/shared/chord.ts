@@ -166,12 +166,19 @@ export const MENU_SHORTCUT_DEFAULTS = {
    chord and the menu bar that shows one spell a chord the same way. */
 const MODIFIERS = ["Ctrl", "Alt", "Shift", "Meta"]
 
-/* Keys whose cap shows a symbol rather than a letter. */
+/* Keys whose cap shows a symbol rather than a letter, the numeric keypad's operators
+   included: their legends are the symbols on the keys themselves, which is also what
+   the menu bar draws for the documented accelerator names ("Plus", "Subtract"), so the
+   row in the bar and the window's own words name one key rather than two. */
 const KEY_CAPS: Record<string, string> = {
   Tab: "⇥",
   Space: "␣",
   Enter: "↵",
   Escape: "Esc",
+  NumpadAdd: "+",
+  NumpadSubtract: "-",
+  NumpadMultiply: "*",
+  NumpadDivide: "/",
 }
 
 /**
@@ -201,4 +208,28 @@ export function formatChord(chord: string, platform: string): string {
     Meta: platform === "linux" ? "Super+" : "Win+",
   }
   return mods.sort((a, b) => order.indexOf(a) - order.indexOf(b)).map((part) => name[part]).join("") + shown
+}
+
+/** The hole the armed-quit notice leaves for the key cap, the same one every language's copy carries. */
+export const QUIT_NOTICE_KEY = "{key}"
+
+/**
+ * The armed-quit notice spelled with the key that would actually quit, or nothing
+ * when no key can be named for it.
+ *
+ * The copy holds {key} rather than a key cap of its own: the binding is the
+ * person's, and both the menu bar's quit row and the window's toast must name the
+ * key that row's own accelerator answers to. Naming a hole inside the sentence —
+ * instead of hunting for a "⌘Q" a translator might have spelled differently — is
+ * what keeps the words and the accelerator column saying one thing in all
+ * eighteen languages.
+ *
+ * Nothing comes back when the binding cannot be spelled, or when a translation
+ * lost the hole it was written with. Saying nothing beats naming a key that does
+ * not quit: the caller keeps its plain quit row and shows no notice at all.
+ */
+export function fillQuitNotice(notice: string, bound: string, platform: string): string {
+  const shown = formatChord(bound, platform)
+  if (!shown || !notice.includes(QUIT_NOTICE_KEY)) return ""
+  return notice.split(QUIT_NOTICE_KEY).join(shown)
 }
