@@ -9,9 +9,10 @@
  *   ASCII only); an empty field's hint no longer reads as its value. Checked
  *   against scripts/fixtures/android-demo, built on the spot with
  *   scripts/android-demo.mjs, when adb sees one device and a JDK is there.
- * - The lean coding experiment (MCODE_LEAN=1, off by default): measured with
- *   scripts/bench as no more accurate and not reliably faster, so it stays a
- *   switch; checked to change nothing when off, and to keep what coding needs.
+ * - The lean coding prompt (round 40): measured with scripts/bench as no more
+ *   accurate and not reliably faster at the time, so it stayed a switch; a
+ *   local model's turn now runs it by default and MCODE_LEAN forces it either
+ *   way. Checked here to change nothing when off, and to keep what coding needs.
  *
  * smoke.ts calls `roundFortyChecks` with its own check and section.
  */

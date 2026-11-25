@@ -127,6 +127,8 @@ export async function discoverSkills(input: {
   builtinRoot?: string | null
   /** The settings that decide what else is read: the compatibility folders and the lab's session chat. */
   settings?: Pick<AppConfig, "skillPaths" | "sessionChat">
+  /** A lean turn: the tools a built-in skill teaches are not in its request, so the skill is not either. */
+  lean?: boolean
   /** Where `~` is; the checks point it at a folder of their own. */
   home?: string
 }): Promise<SkillScan> {
@@ -144,8 +146,8 @@ export async function discoverSkills(input: {
       if (existsSync(file)) await add(byName, problems, file, true)
     }
   }
-  // Switched off in the lab, session chat's skill goes with its tools.
-  if (input.settings?.sessionChat === false && byName.get(SESSION_CHAT_SKILL)?.builtin) byName.delete(SESSION_CHAT_SKILL)
+  // Switched off in the lab, or a lean turn that was given none of its six tools: session chat's skill goes with its tools.
+  if ((input.settings?.sessionChat === false || input.lean) && byName.get(SESSION_CHAT_SKILL)?.builtin) byName.delete(SESSION_CHAT_SKILL)
 
   const home = input.home ?? os.homedir()
   const homeRoots = external.flatMap((folder) =>

@@ -311,9 +311,9 @@ Left / risks: <one line, or (none)>`
 }
 
 /**
- * Whether this process runs the lean coding prompt and tool list - an
- * experiment (round 40), switched on by MCODE_LEAN=1 and measured with
- * scripts/bench against the full one before anything is decided. It leaves
+ * Whether this process runs the lean coding prompt and tool list: a local
+ * model's turn is lean by default, and MCODE_LEAN forces it either way
+ * ("1" on, "0" off; round 40 measured it with scripts/bench). It leaves
  * out what a coding turn does not use: how to draw diagrams and widgets, make
  * slide decks and web page designs, and hand over pictures and office files -
  * all of which the matching skills carry anyway.

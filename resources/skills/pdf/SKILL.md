@@ -32,7 +32,8 @@ installing.
 
 When your answer rests on a specific passage, call `pdf_locate` with the file, a
 short fragment copied exactly as it appears in the PDF, and its page number. The
-side panel opens the PDF at that place so the user can see the source.
+side panel opens the PDF at that place so the user can see the source. Skip this
+when your tools do not include `pdf_locate`: name the page in your answer instead.
 
 ## Changing pages
 

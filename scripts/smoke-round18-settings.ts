@@ -170,7 +170,7 @@ export async function roundEighteenSettingsChecks(check: Check, section: (name: 
     check("R18-M3: a call to one while off is not run", withheldByLab("talk_to_session", { sessionChat: false }) && !withheldByLab("talk_to_session", {}) && !withheldByLab("read", { sessionChat: false }))
     const runner = await read("src/server/session/runner.ts")
     check("R18-M3: the runner offers the turn's tools by the setting", /sessionChat: settings\.sessionChat/.test(runner))
-    check("R18-M3: and refuses a withheld one at dispatch", /labOff\(name\) \? undefined : findTool\(name\)/.test(runner))
+    check("R18-M3: and refuses a withheld one at dispatch", /\(labOff\(name\) \|\| withheldByLean\(name, leanLocal\) \? undefined : findTool\(name\)\)/.test(runner))
 
     const doc = { sessionChat: "no" } as unknown as AppConfig
     sanitizeConfig(doc, {} as AppConfig)

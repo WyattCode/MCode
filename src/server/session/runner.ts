@@ -40,7 +40,7 @@ import { PermissionDenied, REVIEW_TIMEOUT_MS, VERDICT_TOOL_NAME, looksSecret, ve
 import { processAlive, type Storage } from "../storage"
 import { globalAgentsPath } from "../global-agents"
 import { discoverSkills, enabledSkills, skillReminders, withSkillReminders, type SkillInfo } from "../skill"
-import { findTool, forModel, hasOwnToolsOnly, reachOf, repairableNames, toolsForTurn, withheldByLab } from "../tool/registry"
+import { findTool, forModel, hasOwnToolsOnly, reachOf, repairableNames, toolsForTurn, withheldByLab, withheldByLean } from "../tool/registry"
 import { normalizeToolInput, resolveToolName } from "../tool/repair"
 import { inputForTool } from "../provider/tool-schema"
 import { Questions } from "../tool/question"
@@ -651,7 +651,7 @@ export class SessionRunner {
   }
 
   /** Whether the session's model comes from a user-added (custom) provider. */
-  private isLocal(session: TurnSession): boolean {
+  private isLocal(session: Pick<TurnSession, "model">): boolean {
     const custom = this.config.get().customProviders
     if (!custom?.length) return false
     const provider = session.model.provider
@@ -1487,7 +1487,7 @@ export class SessionRunner {
    */
   private async systemFor(session: TurnSession): Promise<{ system: string; systemTail?: string }> {
     const config = this.config.get()
-    const skills = session.sshDeviceId ? undefined : await this.skillsFor(session.directory)
+    const skills = session.sshDeviceId ? undefined : await this.skillsFor(session.directory, this.isLocal(session))
     /*
      * OpenCode v2's instruction deltas. What the instructions say now is read
      * on every turn - an AGENTS.md edited mid-conversation used to go unseen
@@ -1510,15 +1510,18 @@ export class SessionRunner {
         })
     const initial = await this.syncInstructions(session.id, values)
     const local = this.isLocal(session)
+    // The tools this turn is offered, once: the same list keys the cache, builds the
+    // prompt, and says which tools the memory section may name.
+    const names = this.offeredTools(session).map((tool) => tool.name)
     const key = JSON.stringify([
       session.agent,
       initial,
       local,
       promptFamily(session.model.model),
-      this.offeredTools(session).map((tool) => tool.name),
+      names,
     ])
     const frozen = this.prefixes.get(session.id)
-    const base = frozen?.key === key ? frozen.system : systemPromptFrom(session.agent, initial, undefined, { local, modelID: session.model.model, toolNames: this.offeredTools(session).map(tool => tool.name) })
+    const base = frozen?.key === key ? frozen.system : systemPromptFrom(session.agent, initial, undefined, { local, modelID: session.model.model, toolNames: names })
     const system = [base, session.sshDeviceId
       ? "This session is bound to an SSH device. File and shell tools run there. Relative paths start in the remote login home. Local project and memory paths are separate from this filesystem."
       : pluginPrompt(this.config.get())].filter(Boolean).join("\n\n")
@@ -1538,7 +1541,7 @@ export class SessionRunner {
      * and show a plan, which is the one thing this line forbids.
      */
     const pursuing = session.goal && !session.goal.done && session.agent !== "plan" ? [GOAL_GUARD] : []
-    const tail = [...(memory ? [memorySection(memory)] : []), ...pursuing]
+    const tail = [...(memory ? [memorySection(memory, names.includes("history"))] : []), ...pursuing]
     return tail.length ? { system, systemTail: tail.join("\n\n") } : { system }
   }
 
@@ -2002,10 +2005,10 @@ export class SessionRunner {
     return written.then(() => user.id)
   }
 
-  /** skills: every switched-on skill a conversation in this directory can reach, with the user's global ones from the app's data folder. */
-  private async skillsFor(directory: string): Promise<SkillInfo[]> {
+  /** skills: every switched-on skill a conversation in this directory can reach, with the user's global ones from the app's data folder. A lean turn loses the one skill whose tools it was not given. */
+  private async skillsFor(directory: string, lean = false): Promise<SkillInfo[]> {
     const settings = this.config.get()
-    return enabledSkills((await discoverSkills({ directory, storageDirectory: path.dirname(this.globalAgents), settings })).skills, settings.disabledSkills)
+    return enabledSkills((await discoverSkills({ directory, storageDirectory: path.dirname(this.globalAgents), settings, lean })).skills, settings.disabledSkills)
   }
 
   /** skills: what a user message carries for the model beyond its words - skills it names, and the hint its office documents bring. */
@@ -4253,8 +4256,13 @@ export class SessionRunner {
     const schema = part.name === STRUCTURED_OUTPUT ? (await this.store.get(input.session.id))?.subagent?.outputSchema : undefined
     // A tool the lab has switched off is not there to be called, as it is not there in MiMo.
     const labOff = (name: string) => withheldByLab(name, this.config.get())
+    // Nor is a tool the lean turn left out of its request. The shorter list is only
+    // half of withholding: the memory section and the pdf skill name two of these ten,
+    // and a name the model has read is a name it calls. Without this it ran anyway, so
+    // the trim saved bytes and changed nothing - and nothing would ever have noticed.
+    const leanLocal = this.isLocal(input.session)
     const lookup = (name: string) =>
-      (labOff(name) ? undefined : findTool(name)) ??
+      (labOff(name) || withheldByLean(name, leanLocal) ? undefined : findTool(name)) ??
       (schema && name === STRUCTURED_OUTPUT ? structuredOutputTool(schema) : undefined) ??
       this.mcp?.tools(input.session.directory).find((entry) => entry.name === name)
     let tool = lookup(part.name)

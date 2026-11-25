@@ -5,8 +5,13 @@
  * Or bundled: esbuild scripts/smoke-p0-lean-prompt.ts --bundle --platform=node --alias:@shared=./src/shared | node
  */
 
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
+import { memorySection, systemPromptFrom, type InstructionValues } from "../src/server/session/prompt"
 import { agentPrompt } from "../src/server/session/prompts"
-import { toolsForTurn } from "../src/server/tool/registry"
+import { discoverSkills } from "../src/server/skill"
+import { LEAN_LEAVES_OUT, toolsForTurn, withheldByLean } from "../src/server/tool/registry"
 
 let failures = 0
 
@@ -102,10 +107,60 @@ withEnv("MCODE_LEAN", "1", () => {
   ok("MCODE_LEAN=1 removes history", !tools.includes("history"))
 })
 
-console.log("")
-if (failures > 0) {
-  console.log(`${failures} failure(s)`)
-  process.exit(1)
-} else {
+/*
+ * 8-11: what the trim must also take away, not just stop printing. Before this,
+ * a lean turn's shorter list was the whole of the withholding: the memory
+ * section and the pdf skill name two of these ten, the session-chat skill
+ * teaches six more, and a name the model has read is a name it calls - which
+ * ran, because dispatch only knew about the lab's switch.
+ */
+void (async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "lean-prompt-"))
+  try {
+    withEnv("MCODE_LEAN", undefined, () => {
+      const local = toolNames("build", { voiceFeedback: true, local: true })
+      const cloud = toolNames("build", { voiceFeedback: true })
+      // 8a. The ten are gone from a local turn's request, and back on a cloud one.
+      for (const name of LEAN_LEAVES_OUT) {
+        if (cloud.includes(name)) ok(`cloud turn offers ${name}`, !local.includes(name))
+      }
+      // 8b. Dispatch, the same predicate runner.ts consults: refused on a local turn, whatever the turn was offered.
+      for (const name of LEAN_LEAVES_OUT) ok(`a local turn refuses ${name}`, withheldByLean(name, true))
+      ok("a cloud turn refuses none of the ten", ![...LEAN_LEAVES_OUT].some((name) => withheldByLean(name, false)))
+      ok("a local turn still runs read", !withheldByLean("read", true))
+
+      // 9. The memory section stops naming the history tool a lean turn does not have.
+      const files = { project: "/p/PROJECT.md", global: "/g/GLOBAL.md", notes: "/n/NOTES.md" }
+      ok("memory section names the history tool when the turn has it", memorySection(files).includes("history tool"))
+      ok("memory section names no history tool when the turn has none", !memorySection(files, false).includes("history"))
+      ok("read-only memory section names none either", !memorySection({ ...files, readOnly: true }, false).includes("history"))
+
+      // 10. And the assembled prompt, given a lean turn's names, really does leave it out.
+      const values = {} as InstructionValues
+      ok("a lean turn's system prompt does not name the history tool", !systemPromptFrom("build", values, files, { local: true, toolNames: local }).includes("history tool"))
+      ok("a cloud turn's system prompt does", systemPromptFrom("build", values, files, { toolNames: cloud }).includes("history tool"))
+    })
+
+    // 11. A skill whose tools a lean turn was not given is not offered either.
+    const skills = (await discoverSkills({ directory: tmp, storageDirectory: tmp, builtinRoot: path.resolve("resources/skills"), home: tmp, lean: true })).skills
+    const full = (await discoverSkills({ directory: tmp, storageDirectory: tmp, builtinRoot: path.resolve("resources/skills"), home: tmp })).skills
+    ok("a cloud turn is offered the session-chat skill", full.some((skill) => skill.name === "session-chat"))
+    ok("a lean turn is not offered the session-chat skill", !skills.some((skill) => skill.name === "session-chat"))
+    ok("a lean turn keeps the pdf skill, which still has read and bash", skills.some((skill) => skill.name === "pdf"))
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+
+  // MCODE_LEAN=0 goes back to the full list on a local model, tools and gate alike.
+  withEnv("MCODE_LEAN", "0", () => {
+    ok("MCODE_LEAN=0 + local turn refuses none of the ten", ![...LEAN_LEAVES_OUT].some((name) => withheldByLean(name, true)))
+    ok("MCODE_LEAN=0 + local turn offers history", toolNames("build", { voiceFeedback: true, local: true }).includes("history"))
+  })
+
+  console.log("")
+  if (failures > 0) {
+    console.log(`${failures} failure(s)`)
+    process.exit(1)
+  }
   console.log("All checks passed.")
-}
+})()

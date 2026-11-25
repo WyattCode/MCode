@@ -37,6 +37,14 @@ import type { QuestionRequest } from "../src/shared/protocol"
 import { HistoryTool } from "../src/server/tool/history"
 import { bindHistory, type HistoryService } from "../src/server/history/service"
 
+/*
+ * A lean turn is the default for a custom provider, and this file's fake provider is one: the
+ * turn would be offered neither the session chat six nor history, and the checks below exercise
+ * exactly those. MCODE_LEAN=0 is the switch that puts them back. The default's refusal - and
+ * that the withheld names cannot be run - is asserted in smoke-p0-lean-prompt.
+ */
+process.env.MCODE_LEAN = "0"
+
 type Section = (name: string) => void
 
 /** One call the fake model makes. */

@@ -37,8 +37,9 @@ export interface PromptContext {
 /*
  * memory: what the model is told about memory, in this app's words; MiMo's desktop build describes the same three files.
  * It names this conversation's own notes file, so a request carries it after the cached system prompt (runner systemFor).
+ * history: the tool's own sentence is left out when the turn was not offered the tool (a lean turn, see registry).
  */
-export function memorySection(files: { project: string; global: string; notes: string; readOnly?: boolean }): string {
+export function memorySection(files: { project: string; global: string; notes: string; readOnly?: boolean }, history = true): string {
   // memory: config's memory.disableWrite leaves the files to be read and searched, and says so.
   if (files.readOnly) {
     return `## Memory
@@ -49,7 +50,7 @@ Some notes outlast this conversation, as markdown files. Writing them is switche
 - Global memory: \`${files.global}\` - the user's preferences that hold in every project.
 - This conversation's notes: \`${files.notes}\`.
 
-Nothing from them is loaded for you: search or read them when you need what they may hold, and use the history tool for exact past wording.`
+Nothing from them is loaded for you: search or read them when you need what they may hold${history ? ", and use the history tool for exact past wording" : ""}.`
   }
   return `## Memory
 
@@ -59,7 +60,7 @@ Some notes outlast this conversation. They are markdown files you read and write
 - Global memory: \`${files.global}\` - the user's preferences that hold in every project.
 - This conversation's notes: \`${files.notes}\` - your one scratchpad. Add entries headed \`## [turn N · YYYY-MM-DDTHH:MM:SSZ]\` for open questions, quotes worth keeping or context that will matter later. Do not create other memory files.
 
-Before asking the user something they may already have told you, search with the memory tool; use the history tool for exact past wording.`
+Before asking the user something they may already have told you, search with the memory tool${history ? "; use the history tool for exact past wording" : ", and read the conversation itself when exact wording matters"}.`
 }
 
 /**
@@ -127,7 +128,8 @@ export function systemPromptFrom(agent: string, values: InstructionValues, memor
   if (values.skills) sections.push(values.skills)
 
   // memory: names this conversation's own notes file, so last - where a request carries it, outside the cached prefix.
-  if (memory) sections.push(memorySection(memory))
+  // The section names the history tool; a turn that was not offered it (a lean one) is not told to reach for it.
+  if (memory) sections.push(memorySection(memory, !options?.toolNames || options.toolNames.includes("history")))
   return sections.join("\n\n")
 }
 

@@ -163,7 +163,9 @@ const EXPLORE = new Set(["read", "glob", "grep", "bash", "webfetch"])
  * permission rules, which put its commands to the user exactly as they would
  * in build mode. Taking the tools away instead made planning weaker than MiMo
  * at the same promise: it could not run `git log`, and it could not write the
- * plan down anywhere the user could keep.
+ * plan down anywhere the user could keep. One exception rides over from the
+ * turn itself: a lean turn (see `toolsForTurn`) drops its ten names here too,
+ * and none of them is a planning tool.
  *
  * An explore subagent still only looks.
  */
@@ -218,11 +220,24 @@ export function toolsForTurn(agent: string, options: { voiceFeedback: boolean; s
 export const SESSION_CHAT_TOOLS = new Set(["contacts", "talk_to_session", "create_session", "update_session", "list_external_sessions", "read_external_session"])
 
 /** What a lean turn leaves out of its tools: the session chat six, the desktop's settings pair, and the two lookups - a PDF's page, an older conversation. */
-const LEAN_LEAVES_OUT = new Set([...SESSION_CHAT_TOOLS, "get_desktop_settings", "set_desktop_setting", "pdf_locate", "history"])
+export const LEAN_LEAVES_OUT = new Set([...SESSION_CHAT_TOOLS, "get_desktop_settings", "set_desktop_setting", "pdf_locate", "history"])
 
 /** Whether a switch in the lab keeps this tool from the model: neither offered nor run. */
 export function withheldByLab(name: string, settings: { sessionChat?: boolean }): boolean {
   return settings.sessionChat === false && SESSION_CHAT_TOOLS.has(name)
+}
+
+/**
+ * Whether this turn's lean switch keeps the tool out: neither offered nor run.
+ *
+ * The refusing half matters as much as the shorter request. Text outlives the
+ * tool list - the memory section names `history`, the pdf skill names
+ * `pdf_locate` - and a name the model reads somewhere is a name it will call.
+ * A tool that ran anyway made the trim a billing trick with no behaviour
+ * behind it, and no way to notice it had stopped meaning anything.
+ */
+export function withheldByLean(name: string, local: boolean): boolean {
+  return leanMode(local) && LEAN_LEAVES_OUT.has(name)
 }
 
 /**
