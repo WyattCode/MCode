@@ -627,12 +627,13 @@ export class SessionRunner {
    * reachable, and a plan written without the project's own tools is a worse
    * plan. An explore subagent is still offered only its own few.
    */
-  private tools(agent: string, directory: string): ToolDefinition[] {
+  private tools(agent: string, directory: string, local = false): ToolDefinition[] {
     // speak rides on the voice feedback setting; the rule itself lives with the registry.
     // bash's description is written for the shell the settings name (R16-C2).
     // session chat: the lab's switch takes its tools away from the next turn.
+    // lean: a local model's turn is offered the coding set, the same switch that picks its prompt.
     const settings = this.config.get()
-    const own = toolsForTurn(agent, { voiceFeedback: settings.voiceFeedback !== false, shell: settings.shell, sessionChat: settings.sessionChat, webSearch: settings.websearch !== false })
+    const own = toolsForTurn(agent, { voiceFeedback: settings.voiceFeedback !== false, shell: settings.shell, sessionChat: settings.sessionChat, webSearch: settings.websearch !== false, local })
     if (hasOwnToolsOnly(agent)) return own
     return [...own, ...(this.mcp?.tools(directory) ?? [])]
   }
@@ -640,11 +641,11 @@ export class SessionRunner {
   /** The tools a conversation's request carries: its agent's, less what a subagent never gets. */
   private offeredTools(session: TurnSession): ToolDefinition[] {
     if (session.sshDeviceId) {
-      const tools = this.tools(session.agent, session.directory).filter((tool) => sshAllowsTool(tool.name, session.agent))
+      const tools = this.tools(session.agent, session.directory, this.isLocal(session)).filter((tool) => sshAllowsTool(tool.name, session.agent))
       return tools.map((tool) => ({ ...tool, description: remoteToolDescriptions[tool.name] }))
     }
     // OpenCode v2: a GPT model edits with patch, every other with edit and write (registry `usesPatch`).
-    return codingSchemas(forModel(this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.directory), session.model.model).filter(
+    return codingSchemas(forModel(this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.directory, this.isLocal(session)), session.model.model).filter(
       (tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name),
     ), leanMode(this.isLocal(session)))
   }

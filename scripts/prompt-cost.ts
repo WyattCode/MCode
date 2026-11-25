@@ -51,9 +51,18 @@ assert(base.length < 15000, 'B1 lean base excludes desktop narration')
 console.log('| Component | Characters | Rough tokens (chars/4) |\n|---|---:|---:|')
 for (const [name, size] of Object.entries(rows)) console.log(`| ${name} | ${size} | ${Math.ceil(size / 4)} |`)
 const schemas = Object.entries(rows).filter(([k]) => k.startsWith('tool:')).reduce((n, [,v]) => n + v, 0)
+// A local model's turn is lean without being switched on (session/lean.ts): what it never reaches for is not on the wire at all.
+const leanTurn = codingSchemas(forModel(toolsForTurn('build', { voiceFeedback: false, sessionChat: false, local: true }), modelID), true)
+assert.deepEqual(
+  leanTurn.map((tool) => tool.name),
+  ['question', 'read', 'write', 'edit', 'glob', 'grep', 'bash', 'task', 'webfetch', 'actor', 'present_files', 'notebook_edit', 'skill_search', 'skill', 'memory', 'plan_exit', 'websearch', 'app', 'lsp', 'fanout', 'verify_page', 'models', 'worktree_create', 'worktree_list', 'worktree_remove'],
+  'a local turn is offered the coding set, in order',
+)
+const leanSchemas = leanTurn.reduce((n, tool) => n + JSON.stringify({ name: tool.name, description: tool.description, parameters: tool.parameters }).length, 0)
+assert(leanSchemas < schemas, `lean tool block ${leanSchemas} is lighter than the full one ${schemas}`)
 assert(base.length + schemas <= 75239 * 0.6, 'B2 static reduction must reach 40%')
 assert(system.length + schemas + rows['transcript fixture'] <= 76880 * 0.6, 'complete fixture reduction must also reach 40%')
-console.log(JSON.stringify({ tools: tools.length, base: base.length, schemas, static: base.length + schemas, system: system.length }))
+console.log(JSON.stringify({ tools: tools.length, base: base.length, schemas, static: base.length + schemas, system: system.length, localTools: leanTurn.length, localSchemas: leanSchemas }))
 console.log('promptcostcheck: characterization GREEN')
 
 await checkPromptOutputs()
