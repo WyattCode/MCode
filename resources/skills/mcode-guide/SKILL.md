@@ -13,11 +13,13 @@ guessing.
 
 ## Settings you can change directly
 
-`get_desktop_settings` reads, and `set_desktop_setting` changes, these keys:
-`theme`, `ui_font_size`, `code_font_size`, `diff_style` and `language`. Read
-first to see the allowed values, change what was asked, and say what changed.
-Everything else - models and providers, MCP servers, permissions, shortcuts,
-voice, sounds - is changed by the user in Settings; tell them which page.
+`get_desktop_settings` reads, and `set_desktop_setting` changes, these keys when
+your tools include them: `theme`, `ui_font_size`, `code_font_size`, `diff_style`
+and `language`. Read first to see the allowed values, change what was asked, and
+say what changed. When this turn has no such tool, the setting is the user's to
+change: name the page in Settings that holds it. Everything else - models and
+providers, MCP servers, permissions, shortcuts, voice, sounds - is changed by the
+user in Settings; tell them which page.
 
 ## Instructions
 

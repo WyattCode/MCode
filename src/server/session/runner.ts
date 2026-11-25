@@ -85,7 +85,7 @@ import { historyService, memoryFilesFor, memoryWritable } from "../history/servi
 import { withAutomationNotes } from "../automation/framing"
 import { TITLE_SYSTEM, UNTITLED, cleanTitle, fallbackTitle, titleModelRef, titlePrompt, withoutSkillPrefix } from "./title"
 import { interfaceLocale } from "./locale"
-import { providerExtras, samplingFor, smallRequest, thinkingOffExtra } from "../provider/sampling"
+import { isLocalEndpoint, providerExtras, samplingFor, smallRequest, thinkingOffExtra } from "../provider/sampling"
 import { attachmentNote, runtimeContext, sessionNote } from "./context"
 import { settleAttachments, withAttachmentData, type AttachmentCache } from "./attachments"
 import type { ModelEntry } from "../provider/catalog"
@@ -650,12 +650,16 @@ export class SessionRunner {
     ), leanMode(this.isLocal(session)))
   }
 
-  /** Whether the session's model comes from a user-added (custom) provider. */
+  /**
+   * Whether the session's model sits on this machine or the LAN, which is what makes a turn a
+   * local one. Read off the endpoint the provider resolves to: the shipped Ollama, vLLM and LM
+   * Studio presets serve `127.0.0.1` and a hand-added provider can be anything from a home
+   * vLLM box to a frontier cloud API, so the entry's origin says nothing on its own.
+   */
   private isLocal(session: Pick<TurnSession, "model">): boolean {
-    const custom = this.config.get().customProviders
-    if (!custom?.length) return false
     const provider = session.model.provider
-    return !!provider && custom.some((p) => p.id === provider)
+    if (!provider) return false
+    return isLocalEndpoint(provider, this.config.definition(provider)?.baseURL)
   }
 
   private checkpointKey(sessionID: string, history: Message[]): string {
@@ -2011,12 +2015,22 @@ export class SessionRunner {
     return enabledSkills((await discoverSkills({ directory, storageDirectory: path.dirname(this.globalAgents), settings, lean })).skills, settings.disabledSkills)
   }
 
-  /** skills: what a user message carries for the model beyond its words - skills it names, and the hint its office documents bring. */
+  /**
+   * skills: what a user message carries for the model beyond its words - skills it names, and the
+   * hint its office documents bring.
+   *
+   * The skill list here is trimmed the same way the system prefix trims it. A lean turn was shown
+   * a session-chat skill it does not have, because the prefix withdrew it and this path did not:
+   * typing `/session-chat` then handed back the instructions for tools the request never carried.
+   */
   private async remindersFor(input: PromptInput, directory?: string): Promise<string[]> {
     const attachments = input.attachments ?? []
     if (!input.text.includes("/") && !attachments.length) return []
-    const where = directory ?? (await this.store.get(input.sessionID))?.directory
-    return where ? skillReminders(input.text, await this.skillsFor(where), attachments) : []
+    const session = await this.store.get(input.sessionID)
+    const where = directory ?? session?.directory
+    if (!where) return []
+    const lean = session?.model ? this.isLocal(session) : false
+    return skillReminders(input.text, await this.skillsFor(where, lean), attachments)
   }
 
   /** True while something the user typed is waiting to reach the model. */
@@ -4478,7 +4492,9 @@ export class SessionRunner {
           part.output = text
           publish()
         },
-        skills: () => this.skillsFor(input.session.directory),
+        // skills: the `skill` tool's list. Trimmed like the prefix, so a lean turn is not handed the
+        // body of the one skill whose tools its request does not carry.
+        skills: () => this.skillsFor(input.session.directory, this.isLocal(input.session)),
         tasks: tool.name === "task" ? await this.taskControl(input.session.id) : undefined,
         // plan: the write tools read it before they change anything; plan_exit ends planning through it.
         plan: planControl,

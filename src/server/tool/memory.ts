@@ -23,7 +23,7 @@ export const MemoryTool: ToolDefinition = {
     "How to search:",
     "Words are matched separately and a file matching any of them counts, ranked by how many and how rare; weak matches on common words are dropped. One to three distinctive words - a function name, an id, a rare term - work better than a sentence. Punctuation is ignored, so search the parts of a URL or path rather than the whole.",
     "A result is reliable even when another phrasing found nothing. Snippets are cut short: read the file at the given path for the whole text.",
-    "When nothing is found, try fewer or rarer words, widen the scope, search the memory folder with grep for literal strings, or use the history tool for exact past wording.",
+    "When nothing is found, try fewer or rarer words, widen the scope, search the memory folder with grep for literal strings, or, when your tools include one that searches past conversations, search them for the exact wording.",
     "scope narrows to global, projects or sessions; scope_id to one project or conversation folder; type to memory, notes, progress, checkpoint or free.",
   ].join("\n"),
   parameters: {
@@ -56,14 +56,14 @@ export const MemoryTool: ToolDefinition = {
           `Nothing in memory matched "${query}". That does not mean it was never written down:`,
           "- try one or two rarer words, since every word counts separately and common ones rank low;",
           "- grep the memory folder for a literal string the search splits apart (a URL, a port, a path);",
-          "- use the history tool for what was said or run word for word.",
-          "Widen step by step: this conversation, the project, global, then history.",
+          "- search past conversations for what was said or run word for word, when your tools include one that does.",
+          "Widen step by step: this conversation, the project, global, then past conversations.",
         ].join("\n"),
         metadata: { count: 0 },
       }
     }
     const lines = [
-      `${hits.length} result${hits.length === 1 ? "" : "s"}, best first. Read a path for the whole file; use the history tool when you need an exact value the note only paraphrases.`,
+      `${hits.length} result${hits.length === 1 ? "" : "s"}, best first. Read a path for the whole file; when your tools include one that searches past conversations, use it for an exact value the note only paraphrases.`,
       "",
     ]
     for (const hit of hits) {

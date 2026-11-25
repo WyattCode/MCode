@@ -141,6 +141,22 @@ export function onLocalNetwork(baseURL: string | undefined): boolean {
   return a === 127 || a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31) || (a === 169 && b === 254)
 }
 
+/**
+ * Whether a turn against this provider is a local one: the small model on this machine or the
+ * LAN, whose reach for tools is what the reduced turn is built for.
+ *
+ * The endpoint the provider actually resolves to decides, not where the entry came from. The
+ * rule used to ask whether the person had added the provider by hand, which reads the address
+ * backwards in both directions: a shipped Ollama on `127.0.0.1` is the most local model there
+ * is and was handed the full turn, while a hand-added DeepSeek behind
+ * `https://api.deepseek.com` is a remote frontier model and was handed the reduced one. A
+ * preset with no endpoint configured keeps what the preset is known to serve, since its
+ * shipped default is this machine.
+ */
+export function isLocalEndpoint(provider: string, baseURL: string | undefined): boolean {
+  return onLocalNetwork(baseURL) || (!baseURL && LOCAL_SERVERS.has(provider))
+}
+
 export function providerExtras(provider: string, reasoning: boolean, sessionID?: string): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   if (provider === "zhipu") out.thinking = { type: "enabled", clear_thinking: false }

@@ -39973,7 +39973,7 @@ const th: Table = {
   "set.mcp.authorizeFailed": "อนุญาตไม่สำเร็จ: ",
   "set.mcp.removed": "นำเซิร์ฟเวอร์ MCP ออกแล้ว: ",
   "set.mcp.toggleFailed": "เปิดหรือปิดเซิร์ฟเวอร์ไม่สำเร็จ",
-  "set.mcp.addServer": "เพิ่ม MCP Server",
+  "set.mcp.addServer": "เพิ่ม เซิร์ฟเวอร์ MCP",
   "set.mcp.addServerDesc": "streamable HTTP / stdio · รองรับ OAuth",
   "set.mcp.add": "+ เพิ่ม",
   "set.mcp.manualTitle": "ตั้งค่าด้วยตนเอง",

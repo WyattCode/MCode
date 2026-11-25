@@ -7,7 +7,8 @@ description: Query MCode's own record of past conversations and memory files dir
 
 ## In short
 
-The `memory` and `history` tools cover most look-ups. Reach for this skill when
+The `memory` tool, and the conversation search where your tools include one,
+cover most look-ups. Reach for this skill when
 the question is about *many* records at once - how often, which ones, in what
 order - or when a note in memory needs checking against the raw record. Open
 everything read-only and never write to it.
@@ -122,8 +123,8 @@ ids, so that condition keeps what the user said.
 
 1. Find the note with the `memory` tool and read the file.
 2. Pick its distinctive words and search `history_part_fts` for them.
-3. Read the rows that match in full with the `history` tool (`get` with the
-   `part_id`), or open the message JSON.
+3. Read the rows that match in full - with the `history` tool (`get` with the
+   `part_id`) where your tools include it, or from the message JSON.
 4. Keep the note when the record supports it; otherwise correct it, or mark it
    `[unverified]` if nothing confirms or contradicts it.
 
