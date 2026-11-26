@@ -228,6 +228,32 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 第八十一轮：一轮只判一次「精简不精简」（2026-11-27）
+
+独立审查（Round 80 delta，0 P0 / 4 P1 / 6 P2），4 个 P1 逐条证实成立，一起收口（`2a8def06`）。核心问题：技能发现、斜杠提醒、开场运行注记、派发四处各算一遍 lean，且分别读持久化会话模型或实时配置——同一轮里可以算出四个答案，文本指引和实际给的工具能互相矛盾。现在开场一次定死 `turnModel`（命令模型 > 智能路由 > 会话持久，校验与 `withCommandTurn` 逐字一致），lean 由 `leanFor(session)` 结算，四处共用；插话沿用本轮 `steering.lean` 不重算。派发用回合开始捕获的 `turnLocal`，不受理清单用本轮 `offered(session)`，不再回读 store。`lean.ts` 文档写明三种口径（raw `isLocal` / env 调整 `leanMode` / 本轮生效 `leanFor`）与生效范围。另修设置页刷新插件列表：先清空态，刷新中/失败不留旧列表或空卡片。
+
+守卫 `smoke-round81` 11 项，改坏验证：把修复 stash 回旧代码 21 项红。round80 的两条静态模式放宽为接受具名 `turnLean` / `leanFor`，不变量未变。**未做**：0.6B / 0.6T / 4B 三档小模型对精简语言指令的遵循度仍未实测——手上没有可用的小模型端点（DGX 只有大模型且中继暂不可达，EXL3 机离线）；探针 `tmp-eval/lang-probe.ts` 就绪，`PROBE_BASE` / `PROBE_MODEL` 指到端点即可补测。
+
+范围：服务器（全端共用）+ 桌面设置页。
+
+### 第八十轮：端点精简三刀——工具真停、文本说真话、语言指令收口（2026-11-26）
+
+`6abe1e25` 上一版只缩短请求里的工具清单：memory 段和 pdf 技能仍点名 `history`、`pdf_locate`，session-chat 技能仍教那六把，而派发处只认 lab 开关——模型照读到的名字调用，工具照跑，精简只省字节。这轮：派发侧 lookup 加第二道闸 `withheldByLean(name, local)`，与 `toolsForTurn` 同一开关，被扣留的名字连同纠名一起拒为 unavailable tool 并列出真正可用的；memory 段按本回合是否拿到 history 决定点不点名；session-chat 技能随那六把一起下架；pdf 技能保留但明说没有 pdf_locate 时报页码。`smoke-p0-lean-prompt` 补 8–11 组断言。
+
+`267be12b` 本地端点判定挪到 `provider/sampling.isLocalEndpoint`：按 `definition(id).baseURL` 解析出的真实地址判，内置项（无 baseURL）才回落 `LOCAL_SERVERS`——之前按 provider id 判，手工加的「OpenAI 兼容」端点指向 127.0.0.1 会整套漏裁，内置 id 配公网 baseURL 会整套错裁。技能清单、附件注入的正文、记忆工具自述不再教本轮没有的工具；`smoke-round79-lean-text` 把三处下架名和 8 段会被读到的文本按真实装配与两端点表逐一核对。
+
+`184535de` 本地端点轮的 Runtime context 回复语言行收成一句祈使句（0.6B 一档撑不住「除非…」从句，会按用户消息语言作答然后走开），与工具精简同一端点判据；唯一例外（用户显式换语言）由 lean 前缀 `## Reply language` 说一次。守卫 `smoke-round80-language`。大模型 A/B（DGX deepseek-v4.1-flash，中文界面+英文提问，各 4 采样）两臂 4/4 中文，无回退。
+
+范围：服务器（全端共用）。
+
+### 第七十九轮：本地会话默认只带编码工具集；设置页三项（2026-11-25）
+
+`4ad51c11` 会话模型是本机的就走 lean（原来提示默认 lean、工具仍全给），一个开关同时管提示与工具；`MCODE_LEAN=1/0` 仍可强制开或关。实测依据：一次任务的静态工具块 36 个工具有 33 个从未被调用，本地一轮少带 10 个（同一套 26 工具与旧 `MCODE_LEAN=1` 逐字节相同）。代价：本地模型不再能替用户发消息/建会话、读写桌面设置、查 PDF 页与历史——需要时 `MCODE_LEAN=0` 全量回来。`promptcostcheck` 新增「本地一轮 25 个工具、按序」表征断言。
+
+`4d121f22` 自带标题的子页面跟弹窗同一字体（弹窗 `.page-title` 是 scoped 进不到子页面，子页面自己带 24/400/38.4 与深色墨值）；自定义插件页空列表出空态卡（18 语言各两键），列表未答时显示「加载中…」不许先说「未找到插件」；中文 `set.mcp.*` / `set.nav.mcp` 统一「服务器」，不再中英混写。断言在 `smoke-round35-settings-pages`（9 条，装缺陷回去都变红）。
+
+范围：服务器 + 桌面/安卓设置页与 18 语言文案。
+
 ### 第七十八轮（续六）：平板设置补联网搜索开关（2026-10-30）
 
 桌面端从第七十八轮起就有「设置 › 常规 › 浏览器 › 联网搜索」这个开关，平板端一直缺：`SettingsScreen` 里只有工具名映射，没有对应的行，待办里也一直记着这一条。协议其实早就够了——`config.get` / `config.set` 里的 `AppConfig.websearch` 支持 `"auto"`、具体 provider id 和 `false`，Android 的 `onPatch` 也一直在走这两个 RPC，所以这次没有动网关。
