@@ -66,12 +66,14 @@ function prefixKeepsTheOneException(): void {
 
 function everyCallSiteFollowsTheEndpoint(): void {
   const runner = fs.readFileSync(path.join(ROOT, "src/server/session/runner.ts"), "utf8")
-  check(/const runtime = runtimeContext\(\{[^}]*lean: leanMode\(this\.isLocal\(session\)\)/s.test(runner), "the turn's own messages take the lean wording from the endpoint answer")
+  // Round 81 named the decision (`turnLean`, from `leanFor`) so one turn settles it once; either
+  // shape still has to be the endpoint's answer, never a stored model or a default.
+  check(/const runtime = runtimeContext\(\{[^}]*lean: (leanMode\(this\.isLocal\(session\)\)|this\.leanFor\(session\))/s.test(runner), "the turn's own messages take the lean wording from the endpoint answer")
   check(/runtimeContext\(\{[^}]*lean: steering\.lean/s.test(runner), "a message steered into a turn takes the turn's answer, not a fresh one")
   check(/this\.steering\.set\(child\.id,\s*\{[^}]*lean: leanMode\(this\.isLocal\(child\)\)/s.test(runner), "a subagent's turn opens with its own endpoint answer")
   const launches = [...runner.matchAll(/this\.launch\(\n?([^\n]*)/g)]
   check(launches.length >= 3, `every place that opens a turn passes the flag (${launches.length} launch call sites seen)`)
-  for (const call of launches) check(/leanMode\(/.test(call[1]), `a launch call opens its turn without saying whether it runs lean: this.launch(${call[1].slice(0, 120)})`)
+  for (const call of launches) check(/(leanMode\(|turnLean)/.test(call[1]), `a launch call opens its turn without saying whether it runs lean: this.launch(${call[1].slice(0, 120)})`)
   const context = fs.readFileSync(path.join(ROOT, "src/server/session/context.ts"), "utf8")
   check(!/Response language[^`]*\?|\?\s*`Response language/.test(context) || /input\.lean/.test(context), "the wording switch is read off the input's lean flag")
 }

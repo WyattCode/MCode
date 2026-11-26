@@ -639,7 +639,7 @@ export class SessionRunner {
   }
 
   /** The tools a conversation's request carries: its agent's, less what a subagent never gets. */
-  private offeredTools(session: TurnSession): ToolDefinition[] {
+  private offeredTools(session: Pick<TurnSession, "directory" | "model" | "agent" | "sshDeviceId" | "subagent" | "parentID">): ToolDefinition[] {
     if (session.sshDeviceId) {
       const tools = this.tools(session.agent, session.directory, this.isLocal(session)).filter((tool) => sshAllowsTool(tool.name, session.agent))
       return tools.map((tool) => ({ ...tool, description: remoteToolDescriptions[tool.name] }))
@@ -647,7 +647,7 @@ export class SessionRunner {
     // OpenCode v2: a GPT model edits with patch, every other with edit and write (registry `usesPatch`).
     return codingSchemas(forModel(this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.directory, this.isLocal(session)), session.model.model).filter(
       (tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name),
-    ), leanMode(this.isLocal(session)))
+    ), this.leanFor(session))
   }
 
   /**
@@ -661,6 +661,19 @@ export class SessionRunner {
     const provider = session.model?.provider
     if (!provider) return false
     return isLocalEndpoint(provider, this.config.definition(provider)?.baseURL)
+  }
+
+  /**
+   * The turn's lean decision: the endpoint's locality as the escape hatch adjusts it.
+   *
+   * The registry helpers take the locality and lean off it themselves; the skill list takes the
+   * finished lean decision (skill.ts deletes its one lean skill on it alone). Wherever a finished
+   * decision is needed it comes from here - otherwise the tools and the skills part company the
+   * moment `MCODE_LEAN` overrules the endpoint: the registry withholds session chat's six tools
+   * while the skill's body still advertises them (or the other way round).
+   */
+  private leanFor(session: Pick<TurnSession, "model">): boolean {
+    return leanMode(this.isLocal(session))
   }
 
   private checkpointKey(sessionID: string, history: Message[]): string {
@@ -1492,7 +1505,7 @@ export class SessionRunner {
    */
   private async systemFor(session: TurnSession): Promise<{ system: string; systemTail?: string }> {
     const config = this.config.get()
-    const skills = session.sshDeviceId ? undefined : await this.skillsFor(session.directory, this.isLocal(session))
+    const skills = session.sshDeviceId ? undefined : await this.skillsFor(session.directory, this.leanFor(session))
     /*
      * OpenCode v2's instruction deltas. What the instructions say now is read
      * on every turn - an AGENTS.md edited mid-conversation used to go unseen
@@ -1989,7 +2002,9 @@ export class SessionRunner {
         if (session) user.attachments = await settleAttachments(user.attachments, session.directory)
       }
       // skills: what it names is loaded into it on the way to the transcript, in the order it was typed.
-      const reminders = await this.remindersFor(input)
+      // This message joins a running turn, so the skills go by that turn's settled lean decision -
+      // a steer must not be shown a skill whose tools the turn it joins never carried.
+      const reminders = await this.remindersFor(input, undefined, steering.lean)
       if (reminders.length) user.reminders = reminders
       return this.store.saveMessage(user)
     })
@@ -2024,13 +2039,15 @@ export class SessionRunner {
    * a session-chat skill it does not have, because the prefix withdrew it and this path did not:
    * typing `/session-chat` then handed back the instructions for tools the request never carried.
    */
-  private async remindersFor(input: PromptInput, directory?: string): Promise<string[]> {
+  private async remindersFor(input: PromptInput, directory?: string, turnLean?: boolean): Promise<string[]> {
     const attachments = input.attachments ?? []
     if (!input.text.includes("/") && !attachments.length) return []
     const session = await this.store.get(input.sessionID)
     const where = directory ?? session?.directory
     if (!where) return []
-    const lean = session?.model ? this.isLocal(session) : false
+    // Use the turn's own decision when the caller settled one (a steer that joins a running turn
+    // already knows it); a fresh message arrives before that, so it settles from the conversation.
+    const lean = turnLean ?? (session ? this.leanFor(session) : false)
     return skillReminders(input.text, await this.skillsFor(where, lean), attachments)
   }
 
@@ -2193,6 +2210,16 @@ export class SessionRunner {
     // A subscription is authorised by stored tokens, so it has no API key to
     // check here - the bearer is resolved (and refreshed) at turn time.
     const apiKey = this.config.apiKey((route?.model ?? session.model).provider) ?? ""
+    /*
+     * The endpoint this turn answers from, settled once: the command's own model wins, then the
+     * smart route, then what the conversation persists - the order prepare's withCommandTurn
+     * validates in, and the same model the request is built for. The message's skills, reminders
+     * and runtime note are written for this endpoint, so they cannot advertise a tool the turn
+     * never carries when routing crosses the local/remote boundary.
+     */
+    const namedTurn = this.turnOverrides.get(session.id)?.model
+    const turnModel = (namedTurn && this.config.definition(namedTurn.provider) && this.config.usable(namedTurn.provider) ? namedTurn : undefined) ?? route?.model ?? session.model
+    const turnLean = this.leanFor({ model: turnModel })
 
     /*
       * 追求目标: the goal is written before the message that set it, so the
@@ -2209,8 +2236,8 @@ export class SessionRunner {
     // MiMo attaches by path: what each such file is gets settled now, its contents are read per request.
     const attachments = await settleAttachments(input.attachments, session.directory)
     // skills: what the message names, and the hint its office documents bring.
-    const reminders = await this.remindersFor(input, session.directory)
-    const context = input.inbox ? [] : await this.runtimeNotes(session, first)
+    const reminders = await this.remindersFor(input, session.directory, turnLean)
+    const context = input.inbox ? [] : await this.runtimeNotes({ ...session, model: turnModel }, first)
     const attached = input.inbox ? undefined : attachmentNote(attachments.filter((file) => file.byPath), session.directory)
     if (attached) context.push(attached)
     // plan: what this turn may do, or - on the turn after the switch - that it may build again.
@@ -2258,7 +2285,7 @@ export class SessionRunner {
       if (/\p{L}/u.test(words)) void this.generateTitle(session.id, words, route?.model).catch(() => undefined)
     }
 
-    this.launch(session.id, apiKey, controller, false, lead, route, leanMode(this.isLocal({ model: route?.model ?? session.model })))
+    this.launch(session.id, apiKey, controller, false, lead, route, turnLean)
     return user.id
   }
 
@@ -2314,7 +2341,7 @@ export class SessionRunner {
     const runtime = runtimeContext({
       language: config.language,
       today: localDay(Date.now()),
-      lean: leanMode(this.isLocal(session)),
+      lean: this.leanFor(session),
       ...(first && !session.sshDeviceId ? { directory: session.directory } : {}),
     })
     if (!first || session.sshDeviceId) return [runtime]
@@ -3151,6 +3178,10 @@ export class SessionRunner {
     const prepared = await this.prepareTurn(sessionID, controller, route)
     const { planning, definition, adapter, tokens, config, hooks } = prepared
     let { session, system, systemTail } = prepared
+    // The turn's endpoint locality, captured with the URL the request actually goes to: a provider
+    // edited between steps used to swap what the step's calls were dispatched against underneath
+    // the model. The turn keeps one answer - withheld, offered and refused all on the same one.
+    const turnLocal = isLocalEndpoint(session.model.provider, definition.baseURL)
     // subagents: a subagent asked for structured output returns it through its tool.
     const outputSchema = session.subagent?.outputSchema
 
@@ -3180,7 +3211,7 @@ export class SessionRunner {
       }
       assistant.parts.push(part)
       await this.store.saveMessage(assistant)
-      await this.runTool({ part, assistant, session, hooks, signal: controller.signal })
+      await this.runTool({ part, assistant, session, hooks, signal: controller.signal, local: turnLocal })
       assistant.time.completed = Date.now()
       if (controller.signal.aborted) assistant.finish = "aborted"
       await this.store.saveMessage(assistant)
@@ -3836,7 +3867,7 @@ export class SessionRunner {
       const calls = new Semaphore(STEP_TOOL_LIMIT)
       await Promise.all(
         pending.map((part) =>
-          calls.run(() => this.runTool({ part, assistant, session, hooks, signal: controller.signal })),
+          calls.run(() => this.runTool({ part, assistant, session, hooks, signal: controller.signal, local: turnLocal })),
         ),
       )
       // A turn that has been probing for a long while without changing the project is told to stop and think (loop-health.ts).
@@ -4239,8 +4270,11 @@ export class SessionRunner {
     part: ToolPart
     assistant: AssistantMessage
     hooks: Awaited<ReturnType<HookEngine["snapshot"]>>
-    session: Pick<TurnSession, "id" | "directory" | "model" | "agent" | "sshDeviceId">
+    session: Pick<TurnSession, "id" | "directory" | "model" | "agent" | "sshDeviceId" | "subagent" | "parentID">
     signal: AbortSignal
+    // The turn's captured endpoint locality (run()): dispatch answers to the request as assembled,
+    // not to whatever the provider config says by the time the call lands.
+    local: boolean
   }): Promise<void> {
     const { part, assistant } = input
     /*
@@ -4269,14 +4303,15 @@ export class SessionRunner {
      * broken.
      */
     // subagents: a subagent asked for structured output has one more tool, made from its schema.
-    const schema = part.name === STRUCTURED_OUTPUT ? (await this.store.get(input.session.id))?.subagent?.outputSchema : undefined
+    const schema = part.name === STRUCTURED_OUTPUT ? input.session.subagent?.outputSchema : undefined
     // A tool the lab has switched off is not there to be called, as it is not there in MiMo.
     const labOff = (name: string) => withheldByLab(name, this.config.get())
     // Nor is a tool the lean turn left out of its request. The shorter list is only
     // half of withholding: the memory section and the pdf skill name two of these ten,
     // and a name the model has read is a name it calls. Without this it ran anyway, so
     // the trim saved bytes and changed nothing - and nothing would ever have noticed.
-    const leanLocal = this.isLocal(input.session)
+    // The turn's captured locality: this call answers the request it arrived in.
+    const leanLocal = input.local
     const lookup = (name: string) =>
       (labOff(name) || withheldByLean(name, leanLocal) ? undefined : findTool(name)) ??
       (schema && name === STRUCTURED_OUTPUT ? structuredOutputTool(schema) : undefined) ??
@@ -4293,8 +4328,9 @@ export class SessionRunner {
       } else {
         tool = findTool("invalid")
         // As MiMo's model library words it: the names this request did offer, so the model can pick one.
-        const info = await this.store.get(input.session.id)
-        const available = info ? [...this.offeredTools(info).map((entry) => entry.name), ...(info.subagent?.outputSchema ? [STRUCTURED_OUTPUT] : [])] : []
+        // From the turn's own session: the store copy answers to the persisted model, and a routed or
+        // commanded turn would be offered back the very names the request it just sent had refused.
+        const available = [...this.offeredTools(input.session).map((entry) => entry.name), ...(input.session.subagent?.outputSchema ? [STRUCTURED_OUTPUT] : [])]
         part.input = {
           tool: part.name,
           error: `Model tried to call unavailable tool '${part.name}'. ${available.length ? `Available tools: ${available.join(", ")}.` : "No tools are available."}`,
@@ -4496,7 +4532,7 @@ export class SessionRunner {
         },
         // skills: the `skill` tool's list. Trimmed like the prefix, so a lean turn is not handed the
         // body of the one skill whose tools its request does not carry.
-        skills: () => this.skillsFor(input.session.directory, this.isLocal(input.session)),
+        skills: () => this.skillsFor(input.session.directory, leanMode(input.local)),
         tasks: tool.name === "task" ? await this.taskControl(input.session.id) : undefined,
         // plan: the write tools read it before they change anything; plan_exit ends planning through it.
         plan: planControl,

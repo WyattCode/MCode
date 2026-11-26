@@ -1346,6 +1346,10 @@ let cliListVersion = 0
 
 async function refreshCliPlugins() {
   const version = ++cliListVersion
+  // A stale answer must not speak for a new one: while a refresh is in flight, or when it failed,
+  // the previous list - the empty card included - used to hold the page next to that error.
+  cliListLoaded.value = false
+  cliListError.value = false
   try {
     const result = await app.client?.request({ type: "cliPlugin.list" })
     if (version !== cliListVersion) return
