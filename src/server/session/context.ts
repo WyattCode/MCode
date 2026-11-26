@@ -105,6 +105,13 @@ export interface RuntimeInput {
   directory?: string
   /** The date the message was sent, as YYYY-MM-DD. */
   today?: string
+  /**
+   * A lean turn (round 80): the endpoint is a local one, so the directive is one imperative
+   * sentence. The full form's exception clause - "unless the message or custom instructions ask
+   * for another" - is what a small model chokes on, and the lean system prefix already names
+   * that one exception, so naming it again per message only invites a branch it cannot hold.
+   */
+  lean?: boolean
 }
 
 /**
@@ -118,7 +125,9 @@ export function runtimeContext(input: RuntimeInput): string {
   const lines = ["# Runtime context"]
   if (input.directory) lines.push(`Working directory: ${input.directory}`)
   lines.push(
-    `Response language: ${localeName(locale)}. Reply in this language unless the user's message or their custom instructions ask for another.`,
+    input.lean
+      ? `Response language: ${localeName(locale)}. Write every reply in it, whatever language the user's message is written in.`
+      : `Response language: ${localeName(locale)}. Reply in this language unless the user's message or their custom instructions ask for another.`,
   )
   if (input.today) lines.push(`Today: ${input.today}`)
   return lines.join("\n")

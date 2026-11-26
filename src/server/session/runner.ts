@@ -657,7 +657,8 @@ export class SessionRunner {
    * vLLM box to a frontier cloud API, so the entry's origin says nothing on its own.
    */
   private isLocal(session: Pick<TurnSession, "model">): boolean {
-    const provider = session.model.provider
+    // A session with no model answers from nowhere, which is not a local endpoint.
+    const provider = session.model?.provider
     if (!provider) return false
     return isLocalEndpoint(provider, this.config.definition(provider)?.baseURL)
   }
@@ -1952,7 +1953,7 @@ export class SessionRunner {
   ): Promise<string> {
     // The user's own words take the runtime context; a notice or a message from elsewhere does not.
     const typed = !input.inbox && !extra.inbox && !extra.notices
-    const context = typed ? [runtimeContext({ language: this.config.get().language })] : []
+    const context = typed ? [runtimeContext({ language: this.config.get().language, lean: steering.lean })] : []
     const user: UserMessage = {
       id: Identifier.message(),
       ...(input.queuedID ? { queueSourceID: input.queuedID } : {}),
@@ -2257,7 +2258,7 @@ export class SessionRunner {
       if (/\p{L}/u.test(words)) void this.generateTitle(session.id, words, route?.model).catch(() => undefined)
     }
 
-    this.launch(session.id, apiKey, controller, false, lead, route)
+    this.launch(session.id, apiKey, controller, false, lead, route, leanMode(this.isLocal({ model: route?.model ?? session.model })))
     return user.id
   }
 
@@ -2313,6 +2314,7 @@ export class SessionRunner {
     const runtime = runtimeContext({
       language: config.language,
       today: localDay(Date.now()),
+      lean: leanMode(this.isLocal(session)),
       ...(first && !session.sshDeviceId ? { directory: session.directory } : {}),
     })
     if (!first || session.sshDeviceId) return [runtime]
@@ -2636,7 +2638,7 @@ export class SessionRunner {
       this.turn(sessionID).messages = stranded
       this.turn(sessionID).directory = session.directory
       if (!session.sshDeviceId) this.turn(sessionID).watching = this.snapshots.begin(session.directory)
-      this.launch(sessionID, this.config.apiKey((route?.model ?? session.model).provider) ?? "", controller, false, undefined, route)
+      this.launch(sessionID, this.config.apiKey((route?.model ?? session.model).provider) ?? "", controller, false, undefined, route, leanMode(this.isLocal({ model: route?.model ?? session.model })))
     } catch (failure) {
       if (!this.ownsTurn(sessionID, controller)) return
       this.running.delete(sessionID)
@@ -2691,7 +2693,7 @@ export class SessionRunner {
       this.turn(sessionID).messages = [messageID]
       this.turn(sessionID).directory = session.directory
       if (!session.sshDeviceId) this.turn(sessionID).watching = this.snapshots.begin(session.directory)
-      this.launch(sessionID, this.config.apiKey(provider) ?? "", controller, how, undefined, route)
+      this.launch(sessionID, this.config.apiKey(provider) ?? "", controller, how, undefined, route, leanMode(isLocalEndpoint(provider, this.config.definition(provider)?.baseURL)))
       return messageID
     } catch (failure) {
       if (this.ownsTurn(sessionID, controller)) this.running.delete(sessionID)
@@ -2836,9 +2838,9 @@ export class SessionRunner {
   }
 
   /** Runs a claimed session's turn and releases it afterwards. */
-  private launch(sessionID: string, apiKey: string, controller: AbortController, resumed: Resumed = false, lead?: Lead, route?: SmartRoute): void {
+  private launch(sessionID: string, apiKey: string, controller: AbortController, resumed: Resumed = false, lead?: Lead, route?: SmartRoute, lean: boolean = false): void {
     if (!this.ownsTurn(sessionID, controller)) return
-    this.steering.set(sessionID, { waiting: [], written: Promise.resolve() })
+    this.steering.set(sessionID, { waiting: [], written: Promise.resolve(), lean })
 
     // Deliberately not awaited: the caller gets the message id immediately and
     // follows the turn through events.
@@ -4944,7 +4946,7 @@ export class SessionRunner {
     // A background subagent is never shown a question, as MiMo's background actors are not.
     this.permissions.markBackground(child.id, options.background ? child.parentID : undefined)
     // Open to follow-ups from the start, as a conversation's own turn is to the user's.
-    this.steering.set(child.id, { waiting: [], written: Promise.resolve() })
+    this.steering.set(child.id, { waiting: [], written: Promise.resolve(), lean: leanMode(this.isLocal(child)) })
     const worker: Worker = {
       sessionID: child.id,
       parentID: child.parentID ?? "",
@@ -5691,6 +5693,11 @@ interface Steering {
   waiting: string[]
   /** Settles once every message taken on so far is in the transcript. */
   written: Promise<unknown>
+  /**
+   * Whether this turn runs lean (round 80), decided when the turn opened: a message steered into
+   * it gets the same reply-language wording the turn's own messages got, not a second opinion.
+   */
+  lean: boolean
 }
 
 /** One turn's account of what it is doing to the filesystem. */
