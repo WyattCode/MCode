@@ -228,6 +228,12 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 第八十二轮：小模型语言指令 A/B 实测（2026-11-27）
+
+补第八十一轮尾巴：「精简语言指令对小模型的遵循度未实测」。本机 `brew install llama.cpp`（llama-server 0.7.0），模型走 hf-mirror（本机直连 huggingface.co 连接即 reset；官方 Qwen3-0.6B/1.7B-GGUF 只有 Q8_0），`llama-server -m X --port 8081 --jinja`（--jinja 下 Qwen3 默认非思考模式）；探针 `tmp-eval/lang-probe.ts`（bundle `out/lang-probe.mjs`，bundle 内含当前指令文本，改指令后先重建 bundle），`PROBE_BASE/PROBE_MODEL/PROBE_N` 指端点即跑。口径：英文用户问 × 中文界面，按回复中文字符占比判服从，full（旧「除非…」从句）/lean（单句祈使）两臂 A/B。
+
+结果：0.6B 两臂 6/6（太小没有「自作主张」的能力，无信号）；Qwen3-1.7B full 7/8 vs lean 8/8；Qwen3-4B full 16/20 vs lean 19/20（其中补跑一轮 N=12：full 10/12 vs lean 12/12）。1.7B/4B 合计 23/28 → 27/28（82%→96% 保中文）。方向一致：让步从句在小模型上真的会被英文输入钻空子，精简祈使句实测降低漂移——这是 lean 旗标在本地小模型档的首个正向收益证据。诚实声明：样本小（每臂 6–20 次），4B 的 lean 也漏过 1 次，lean 是降漂移不是保证。范围：纯实测，无生产代码改动。同日 Windows 1.3.1 装机实测因该机在跑用户的编程会话仍在排队。
+
 ### 第八十一轮：一轮只判一次「精简不精简」（2026-11-27）
 
 独立审查（Round 80 delta，0 P0 / 4 P1 / 6 P2），4 个 P1 逐条证实成立，一起收口（`2a8def06`）。核心问题：技能发现、斜杠提醒、开场运行注记、派发四处各算一遍 lean，且分别读持久化会话模型或实时配置——同一轮里可以算出四个答案，文本指引和实际给的工具能互相矛盾。现在开场一次定死 `turnModel`（命令模型 > 智能路由 > 会话持久，校验与 `withCommandTurn` 逐字一致），lean 由 `leanFor(session)` 结算，四处共用；插话沿用本轮 `steering.lean` 不重算。派发用回合开始捕获的 `turnLocal`，不受理清单用本轮 `offered(session)`，不再回读 store。`lean.ts` 文档写明三种口径（raw `isLocal` / env 调整 `leanMode` / 本轮生效 `leanFor`）与生效范围。另修设置页刷新插件列表：先清空态，刷新中/失败不留旧列表或空卡片。
