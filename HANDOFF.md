@@ -236,7 +236,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 独立审查（Codex，只读）0 P0 / 6 P1 / 2 P2，逐条核实后收口：① 替身原先构造即记账 ⇒ 删 `.show()` 门禁全绿，改为 `show()` 才记账；② 正文只查 `includes("⌘Q")` ⇒ 写死英文全绿，改为与菜单行整句相等 + 改绑场景；③ 缺「显示但被遮挡」「最小化」场景 ⇒ 补上；④ `show()` 抛错无覆盖 ⇒ 替身加 `noticesThrowOnShow`；⑤ round34 静态断言只查两个名字同现 ⇒ 收紧为必须带 `if (!windowsThatCanToast().length)`；⑥ 通知 title 与应用名重复（P2）⇒ 去掉 title。**改坏验证**：删 `.show()`、写死正文、判据退回 `isVisible`、无条件通知、去 `silent`，五个变异各自变红；全套 164 模块 6853 checks。
 
-**未验**：打包（自签身份）应用里的通知投递。实测未签名的 Electron 二进制 `Notification` 走 `failed`（UNErrorDomain 1），而 `isSupported()` 仍报 true——探针只能证明构造与调用，不证明横幅真出现；包内首次触发的表现待下次装机时看。
+**未验已转已验（2026-11-28 补记）**：打包形态的通知投递——用与发布版**同签名身份（MCode Local）、同 entitlements、hardened runtime** 的最小探针包（bundle id `dev.mcode.notifyprobe`，Electron 42.11.18）实测：`show` 事件触发、无 `failed`、系统没有弹授权框拦。此前 dev 的 `UNErrorDomain 1` 是未签名 Electron 二进制的形态问题，不是发布形态的问题。真应用里 ⌘Q 触发横幅的表现仍待下次装机顺手看一眼，但「自签包能不能弹」这个形态问题结了。
 
 范围：主进程菜单 + 两个 smoke 模块 + 测试替身。
 
