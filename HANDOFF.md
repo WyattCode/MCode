@@ -228,6 +228,18 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 第八十四轮：v2.2.0 发版（2026-11-28）
+
+内容 = 第八十三轮的无窗口退出通知；`v2.1.0..HEAD` 生产 delta 只有 `82b8bfa7`。发版全量审查即第八十三轮的 Codex 只读审查（审查对象恰好就是这份 delta），在此登记口径。
+
+双端构建：Windows CI 三趟——第一趟（46052834126）步骤全绿但 **publish 被电池闸拦下**（这正是它该有的行为：2 条断言红：round15 watch 事件、round26 渲染墙钟 3197ms；round36/39 chrome DevTools 端口 not clean）；第二趟（46054467100，同 SHA 只构建）0 断言失败、round36/39 同族仍 not clean（报错措辞不同：第一趟「15 秒未开端口」、第二趟「端口 5053x 无监听」，同一握手子系统）；第一趟两条墙钟类红第二趟未复现。涉事 4 模块本机 172 项全绿。发布趟（46056578331）按证据门槛 `allow_windows_red=true` 放行，证据写进 release 说明。Mac 本地 `MCODE_RELEASE_VERSION=2.2.0 npm run package:mac` → `MCode-2.2.0-arm64.dmg` 179,019,252 字节，sha512 逐字等于 `latest-mac.yml`。
+
+六资产三向对齐（release 记录 = 本地 stat = 下载 HEAD content-length；远端 `latest-mac.yml` 与本地逐字节同）。补正：**v2.1.0 的 release 正文一直是空的**——说明文件上轮在 `tmp-local/release-2.1.0-notes.md` 写好了却没发出去；本轮补 `gh release edit`（757 字）并把「release edit 是发版最后一步、要回读 body 长度」记进流程。版本号提交 `15412659`（lock 两根字段随 package.json 同提交）。
+
+Windows 实机装机（VNC，03:39–03:49，桌面闲置无人在用）：下载 249,100,564 字节 = release 资产逐字节；`/S` 装 INSTALL_OK；从已装二进制读回 **FileVersion=2.2.0、CreationTime=2026-11-28 3:44:22**；欢迎页与侧栏徽章 2.2 渲染（视觉判读）；用户数据未动（`config.json` 仍 11-19、`artifacts.db` 仍 10-02）。**新线索入待办**：Windows 侧 `taskkill`（不带 /F）对 4/5 进程报「已发送终止信号」但五个进程全部存活，必须 /F——与 macOS 1.2.6 结案的「退不掉」同族，「退出没反应」级缺陷候选升级为**双端存在**，本轮装机是强杀后装的，待立案排查（不追本轮）。
+
+装机驾驶备注：机器上留着两个 cmd 窗口（昨晚一个、今天新开一个），今天读回一度打到旧窗口——读回前先点目标窗口标题条抬front并 `cls` 确认屏幕干净再打命令。
+
 ### 第八十三轮：零可见窗口时也发系统通知（P1-3 收口，2026-11-28）
 
 `82b8bfa7` 以 main 为底单向移植 `feat/quit-notice`（478abb8a）的 P1-3：武装的 ⌘Q 在没有窗口能画出 toast 时（托盘隐藏、最小化、被别的窗口完全遮住），也发一条系统通知，`silent`，正文就是菜单行同一句（同一个 `quitArmedNotice()`，改绑 ⌃⇧Q 时两处一起变）。旧分支的 `armQuitLabel`（字面量替换「⌘Q」）与整篇重写的 round36 没有移植——main 的 `{key}` 空位方案已覆盖，旧断言还会删掉现有的空位检查。
