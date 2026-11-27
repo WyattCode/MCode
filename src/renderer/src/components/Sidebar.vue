@@ -90,6 +90,12 @@ const emit = defineEmits<{
 const app = useApp()
 const questions = useQuestions()
 
+/* The brand badge carries the running version's major.minor. It used to be a
+ * hand-tuned "2.0" that drifted away from what releases actually said; now it
+ * cannot. Empty before bootstrap lands, so the badge is dropped rather than
+ * shown blank. */
+const brandBadge = computed(() => app.version.split(".").slice(0, 2).join("."))
+
 /* MiMo pages Recent fifty at a time. */
 const RECENT_PAGE = 50
 const recentShown = ref(RECENT_PAGE)
@@ -1241,7 +1247,7 @@ onBeforeUnmount(() => {
 
     <div class="brand">
       <span class="brand-name">MCode</span>
-      <span class="badge">2.0</span>
+      <span v-if="brandBadge" class="badge">{{ brandBadge }}</span>
       <!--
         MiMo 26.920's search and bell: out of the title-bar row and into this
         one, their end 16 short of the column's (its left at the column's width
