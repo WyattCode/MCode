@@ -16,10 +16,16 @@
  * lost the hole, or a binding that cannot be spelled, says nothing at all rather than
  * naming a key that does not quit.
  *
- * (The report's third finding — that with no window on screen the notice is only the
- * menu row, never a system notification — is fixed on the `feat/quit-notice` branch,
- * for the next version. Nothing here claims a person *saw* the row: these checks
- * record what the app installed and sent, not what was on screen.)
+ * The report's third finding — that with no window on screen the notice was only the
+ * menu row, never a system notification — is closed here: an arm raised with nothing
+ * on screen also posts the system's own notice, silent, with the same sentence the
+ * row carries. Only then: a window that was told through the toast is not told the
+ * same thing twice, and a system that will not post notices still arms the quit.
+ * "On screen" is asked of the page, not of `isVisible()`: measured on 42.x, a window
+ * covered by another still reports itself visible while its page reports hidden, and
+ * the renderer drops the toast on exactly that signal.
+ * Nothing here claims a person *saw* the row or the banner: these checks record what
+ * the app installed, sent and asked the system to post, not what was on screen.
  */
 import fs from "node:fs/promises"
 import path from "node:path"
@@ -68,7 +74,7 @@ export async function quitWordsChecks(check: Check): Promise<void> {
    * moment the arm starts rather than as "at least one".
    */
   let installsBefore = 0
-  const scenario = (windows: { shown?: boolean }[], keys: Record<string, string> = {}, recording = false): void => {
+  const scenario = (windows: { shown?: boolean; minimized?: boolean; covered?: boolean }[], keys: Record<string, string> = {}, recording = false): void => {
     double.reset()
     menu.forgetQuitArm()
     double.setWindows(windows)
@@ -100,6 +106,7 @@ export async function quitWordsChecks(check: Check): Promise<void> {
     check("the reworded row still claims the keys it always claimed", row().accelerator === "CmdOrCtrl+Q", row())
     check("the first press does not leave the app", quitCalls() === 0, double.calls.map((call) => call.method))
     check("the window was told through the fixed channel", hints() === 1, double.sent())
+    check("a window on screen was told, so the system is not asked to say it too", double.notices().length === 0, double.notices())
     check("the menu bar was installed once more to carry it", installs() === 1, installs())
 
     scenario([{ shown: true }])
@@ -151,6 +158,9 @@ export async function quitWordsChecks(check: Check): Promise<void> {
     pressChord()
     check("a window hidden in the tray still gets its words in the menu row", label().includes("⌘Q"), label())
     check("and the notice was sent to that window as well", hints() === 1, double.sent())
+    /* The toast lands somewhere nobody reads, so the system's notice says it instead —
+       same sentence, and silent: a warning with a sound is a demand, not a hint. */
+    check("and the system is asked to say it, in the row's own words", double.notices().length === 1 && double.notices()[0]?.body === label() && double.notices()[0]?.silent === true, { notices: double.notices(), label: label() })
 
     scenario([{ shown: true }])
     menu.buildMenu({ binds: { "app.quit": "Meta+Shift+Q" }, recording: false })
@@ -159,6 +169,40 @@ export async function quitWordsChecks(check: Check): Promise<void> {
     await new Promise((wake) => setTimeout(wake, QUIT_ARM_MS + 250))
     check("with no timer left over to install the same words twice", installs() === installsAfterRebind, { installs: installs(), installsAfterRebind })
 
+    /*
+     * A window that is shown but entirely behind another window is the case the
+     * window's own `isVisible()` cannot see (measured: it says true) while the page
+     * says hidden — and the renderer drops the toast on exactly that signal. Without
+     * asking the page, this arm would say nothing on either surface.
+     */
+    scenario([{ shown: true, covered: true }])
+    pressChord()
+    check("a window covered by another still cannot show the toast", double.notices().length === 1 && double.notices()[0]?.body === label(), { notices: double.notices(), label: label() })
+    check("and that window was sent the toast all the same", hints() === 1, double.sent())
+
+    scenario([{ shown: true, minimized: true }])
+    pressChord()
+    check("a minimized window cannot show it either", double.notices().length === 1, double.notices())
+
+    /* The words are the row's, whatever the binding: a body of its own — say, the
+       default sentence spelled out in English — would pass an includes("⌘Q") check and
+       still tell a person the wrong key. */
+    scenario([{ shown: false }], { "app.quit": "Meta+Shift+Q" })
+    pressChord()
+    check("a rebound key speaks the same sentence in both places", double.notices().length === 1 && double.notices()[0]?.body === label() && String(double.notices()[0]?.body).includes("⌃⇧Q"), { notices: double.notices(), label: label() })
+
+    /* A system that accepts the call and then throws must not cost the arm: the row
+       still asks, and the arm still expires on its own timer. */
+    double.reset()
+    menu.forgetQuitArm()
+    double.setWindows([])
+    double.noticesThrowOnShow(true)
+    menu.buildMenu({ binds: {}, recording: false })
+    pressChord()
+    check("a notice that throws is not an arm that breaks", double.notices().length === 0 && label().includes("⌘Q"), { notices: double.notices(), label: label() })
+    await new Promise((wake) => setTimeout(wake, QUIT_ARM_MS + 250))
+    check("and that arm still ends when its time is up", label() === PLAIN, label())
+
     double.reset()
     menu.forgetQuitArm()
     double.setWindows([])
@@ -166,6 +210,17 @@ export async function quitWordsChecks(check: Check): Promise<void> {
     pressChord()
     check("with no window at all the menu row still says it", label().includes("⌘Q"), label())
     check("nothing is sent to a window that is not there", double.sent().length === 0, double.sent())
+    check("the system's own notice is what speaks then", double.notices().length === 1 && double.notices()[0]?.body === label(), { notices: double.notices(), label: label() })
+
+    /* A system that will not post notices is not a reason to stop promising the quit:
+       the row still says it, and the arm still expires on the same timer. */
+    double.reset()
+    menu.forgetQuitArm()
+    double.setWindows([])
+    double.supportsNotices(false)
+    menu.buildMenu({ binds: {}, recording: false })
+    pressChord()
+    check("a system that will not post notices still words its row", double.notices().length === 0 && label().includes("⌘Q"), { notices: double.notices(), label: label() })
 
     /*
      * The waiting row is a promise with a deadline: once the arm expires, the installed
@@ -190,7 +245,7 @@ export async function quitWordsChecks(check: Check): Promise<void> {
     scenario([{ shown: true }])
     pressChord()
     check("off macOS the first press leaves at once", quitCalls() === 1 && label() === PLAIN, { quit: quitCalls(), label: label() })
-    check("and nothing was announced about it", hints() === 0, double.sent())
+    check("and nothing was announced about it", hints() === 0 && double.notices().length === 0, { sent: double.sent(), notices: double.notices() })
   })
 
   menu.forgetQuitArm()

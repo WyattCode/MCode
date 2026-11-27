@@ -68,6 +68,9 @@ export async function quitHintChecks(check: Check): Promise<void> {
   // The menu bar's row is the surface a windowless app can still reword, and only arming words it.
   check("arming rebuilds the menu", /buildMenu\(\)/.test(armed))
   check("arming sets the arm to expire", /setTimeout\(expireQuitArm, QUIT_ARM_MS\)/.test(armed))
+  /* The toast cannot land in a window nobody can see, and the row sits behind a click:
+     with nothing on screen the arm owes the promise to the system's own notice. */
+  check("arming reaches the system notice, and only when no window can show the toast", /if \(!windowsThatCanToast\(\)\.length\) notifyQuitArmed\(\)/.test(armed), armed.slice(0, 200))
   /*
    * Scheduled before the rebuild on purpose: should building the menu throw, the arm
    * still expires by itself. The two checks above are satisfied by either order, so

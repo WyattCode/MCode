@@ -20,6 +20,9 @@ interface FakeWindow {
   minimized?: boolean
   destroyed?: boolean
   focused?: boolean
+  /* Shown, but entirely behind another window: what `isVisible()` still calls true and
+     the page's own visibility calls hidden. */
+  covered?: boolean
 }
 
 /** The id `src/main/menu.ts` gives its quit row, so a check can find it without reading English words. */
@@ -27,9 +30,14 @@ export const QUIT_ROW_ID = "app-quit"
 
 const calls: Call[] = []
 let windows: FakeWindow[] = []
+/* Whether this system would post a notice at all: the arm has to hold either way. */
+let noticesSupported = true
+/* Whether `show()` throws, the way a system that refuses the banner would. */
+let noticesThrow = false
 let menus: unknown[] = []
 
 const sendCalls = (): Call[] => calls.filter((call) => call.kind === "send")
+const noticeCalls = (): Call[] => calls.filter((call) => call.kind === "notice")
 
 /** What the module under test handed Electron, and nothing else. */
 export const double = {
@@ -37,15 +45,29 @@ export const double = {
     calls.length = 0
     menus = []
     windows = []
+    noticesSupported = true
+    noticesThrow = false
   },
   /** `shown` is whether the window is on screen; `minimized` and `destroyed` speak for themselves. */
   setWindows(next: FakeWindow[]): void {
     windows = next
   },
+  /** Whether the system this check runs on would post a notice; true unless a scenario says otherwise. */
+  supportsNotices(yes: boolean): void {
+    noticesSupported = yes
+  },
+  /** Whether showing a notice throws: a system that accepts the call and then refuses it. */
+  noticesThrowOnShow(yes: boolean): void {
+    noticesThrow = yes
+  },
   calls,
   /** The channels every window was sent, in order. */
   sent(): string[] {
     return sendCalls().map((call) => String(call.channel))
+  },
+  /** The system notices posted, with the words they carry and whether they were silent. */
+  notices(): { title: string; body: string; silent: boolean }[] {
+    return noticeCalls().map((call) => call as unknown as { title: string; body: string; silent: boolean })
   },
   /**
    * The template behind the menu the app *installed* last.
@@ -75,6 +97,28 @@ export const double = {
   },
 }
 
+/*
+ * The system's own notice. Written down like every other call, and quiet about the
+ * platform: a check that read the notice claims what the app asked for, never what
+ * the desktop decided to draw.
+ */
+export class Notification {
+  private readonly options: { title?: string; body?: string; silent?: boolean }
+  static isSupported(): boolean {
+    return noticesSupported
+  }
+  constructor(options: { title?: string; body?: string; silent?: boolean }) {
+    this.options = options
+  }
+  /* Written down when it is shown, not when it is built: a notice that was constructed
+     and never shown told nobody anything, and a check that counted constructions would
+     stay green with the call deleted. */
+  show(): void {
+    if (noticesThrow) throw new Error("this system will not post the notice")
+    calls.push({ kind: "notice", title: this.options.title ?? "", body: this.options.body ?? "", silent: this.options.silent === true })
+  }
+}
+
 export const Menu = {
   buildFromTemplate(template: unknown[]): { template: unknown[]; popup(): void } {
     return {
@@ -93,13 +137,21 @@ export const BrowserWindow = {
   getAllWindows(): unknown[] {
     return windows.map((window) => ({
       isDestroyed: () => window.destroyed === true,
-      isVisible: () => window.shown === true,
+      /* Measured on 42.x: minimized reads false; covered by another window still reads
+         true — that gap is the reason the page's own visibility is asked below. */
+      isVisible: () => window.shown === true && window.minimized !== true,
       isMinimized: () => window.minimized === true,
       webContents: {
         send: (channel: string, ...args: unknown[]) => {
           calls.push({ kind: "send", channel, args })
         },
         getURL: () => "file:///index.html",
+        /* The page's own visibility: hidden when the window is gone from the screen —
+           minimized, hidden to the tray, or shown but entirely covered. That last one
+           is why `isVisible()` alone cannot answer this question (measured on 42.x). */
+        mainFrame: {
+          visibilityState: window.shown === true && window.covered !== true && window.minimized !== true ? "visible" : "hidden",
+        },
       },
     }))
   },

@@ -1,4 +1,4 @@
-import { app, dialog, Menu, BrowserWindow, type MenuItemConstructorOptions } from "electron"
+import { app, dialog, Menu, BrowserWindow, Notification, type MenuItemConstructorOptions } from "electron"
 import { fillQuitNotice } from "@shared/chord"
 import { label } from "./labels"
 import { applyZoom } from "./zoom"
@@ -52,6 +52,14 @@ function sayQuitArmed(): void {
     if (!window.isDestroyed()) window.webContents.send("mcode:quit-hint")
   }
   /*
+   * A window tucked away in the tray holds that toast out of sight, and the menu row
+   * that also carries the notice sits behind a click on the menu bar. With no window
+   * on screen the system's own notice is the last surface that can speak by itself,
+   * so the arm goes there too — and only then, so a window that did show the toast is
+   * not told the same thing twice.
+   */
+  if (!windowsThatCanToast().length) notifyQuitArmed()
+  /*
    * Scheduled before the rebuild: should building the menu throw, the arm still
    * expires by itself instead of leaving the row reading "press again" indefinitely.
    */
@@ -59,6 +67,47 @@ function sayQuitArmed(): void {
   quitArmTimer = setTimeout(expireQuitArm, QUIT_ARM_MS)
   quitArmTimer.unref()
   buildMenu()
+}
+
+/**
+ * The windows whose page could actually draw the toast right now.
+ *
+ * Not `isVisible()` alone: measured on Electron 42 (this Mac), a window covered by
+ * another window still reports `isVisible() === true` while its page reports
+ * `visibilityState === "hidden"` — the renderer drops the toast on exactly that
+ * signal, so a covered window is a window the notice would vanish into. The page's
+ * own visibility is the transport the toast rides, so that is what is asked.
+ */
+function windowsThatCanToast(): BrowserWindow[] {
+  return BrowserWindow.getAllWindows().filter((window) => {
+    if (window.isDestroyed() || !window.isVisible()) return false
+    try {
+      return window.webContents.mainFrame.visibilityState === "visible"
+    } catch {
+      // A frame that cannot be asked is a frame that cannot draw the toast.
+      return false
+    }
+  })
+}
+
+/**
+ * The same promise, on the system's own surface, for an arm raised with nothing on
+ * screen. Silent: a quit that has not happened yet is a warning, not news.
+ *
+ * Nothing is posted when the notice has no key to name. The row already declined to
+ * speak for that same reason, and a system notice with no words would be a banner
+ * that tells a person nothing at all.
+ */
+function notifyQuitArmed(): void {
+  const body = quitArmedNotice()
+  if (!body || !Notification.isSupported()) return
+  try {
+    /* No title: the banner already carries the app's name as its source, and a title
+       of "MCode" beside it would say the name twice in a row. */
+    new Notification({ body, silent: true }).show()
+  } catch {
+    // A notice this system will not post is no reason not to arm the quit.
+  }
 }
 
 /** The notice a waiting arm shows, named for the key that would actually quit; "" when none can be named. */
