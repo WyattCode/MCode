@@ -228,6 +228,18 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 第八十三轮：零可见窗口时也发系统通知（P1-3 收口，2026-11-28）
+
+`82b8bfa7` 以 main 为底单向移植 `feat/quit-notice`（478abb8a）的 P1-3：武装的 ⌘Q 在没有窗口能画出 toast 时（托盘隐藏、最小化、被别的窗口完全遮住），也发一条系统通知，`silent`，正文就是菜单行同一句（同一个 `quitArmedNotice()`，改绑 ⌃⇧Q 时两处一起变）。旧分支的 `armQuitLabel`（字面量替换「⌘Q」）与整篇重写的 round36 没有移植——main 的 `{key}` 空位方案已覆盖，旧断言还会删掉现有的空位检查。
+
+判据没用 `isVisible()`：本机 Electron 42 探针四态实测——前台 `true`、最小化 `false`、托盘隐藏 `false`、**被别的窗口完全遮住仍 `true`**；页面 `mainFrame.visibilityState` 则是前台 `visible`、其余全 `hidden`。渲染层 toast 正是按 `document.hidden` 丢的，所以主进程问页面的可见性。审查员原判「Electron 把 `isVisible()` 写反了」（`native_window_mac.mm` 第 535 行 `!occluded`）被实测推翻（前台窗口读 true），但「被遮挡仍读 true」这条属实，两个结论分开记。
+
+独立审查（Codex，只读）0 P0 / 6 P1 / 2 P2，逐条核实后收口：① 替身原先构造即记账 ⇒ 删 `.show()` 门禁全绿，改为 `show()` 才记账；② 正文只查 `includes("⌘Q")` ⇒ 写死英文全绿，改为与菜单行整句相等 + 改绑场景；③ 缺「显示但被遮挡」「最小化」场景 ⇒ 补上；④ `show()` 抛错无覆盖 ⇒ 替身加 `noticesThrowOnShow`；⑤ round34 静态断言只查两个名字同现 ⇒ 收紧为必须带 `if (!windowsThatCanToast().length)`；⑥ 通知 title 与应用名重复（P2）⇒ 去掉 title。**改坏验证**：删 `.show()`、写死正文、判据退回 `isVisible`、无条件通知、去 `silent`，五个变异各自变红；全套 164 模块 6853 checks。
+
+**未验**：打包（自签身份）应用里的通知投递。实测未签名的 Electron 二进制 `Notification` 走 `failed`（UNErrorDomain 1），而 `isSupported()` 仍报 true——探针只能证明构造与调用，不证明横幅真出现；包内首次触发的表现待下次装机时看。
+
+范围：主进程菜单 + 两个 smoke 模块 + 测试替身。
+
 ### 第八十二轮：小模型语言指令 A/B 实测（2026-11-27）
 
 补第八十一轮尾巴：「精简语言指令对小模型的遵循度未实测」。本机 `brew install llama.cpp`（llama-server 0.7.0），模型走 hf-mirror（本机直连 huggingface.co 连接即 reset；官方 Qwen3-0.6B/1.7B-GGUF 只有 Q8_0），`llama-server -m X --port 8081 --jinja`（--jinja 下 Qwen3 默认非思考模式）；探针 `tmp-eval/lang-probe.ts`（bundle `out/lang-probe.mjs`，bundle 内含当前指令文本，改指令后先重建 bundle），`PROBE_BASE/PROBE_MODEL/PROBE_N` 指端点即跑。口径：英文用户问 × 中文界面，按回复中文字符占比判服从，full（旧「除非…」从句）/lean（单句祈使）两臂 A/B。
