@@ -228,6 +228,14 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 第八十五轮：Mac 升 2.2.0 + 「双端退不掉」立案与撤案（2026-11-28）
+
+Mac `/Applications/MCode.app` 从 1.3.1 覆盖装到 2.2.0：装前 `pgrep` 确认**无在跑实例**（用户 Mac 上一直是 1.3.1 且没开）；`hdiutil` 挂 `MCode-2.2.0-arm64.dmg` → `ditto` 拷入 → 校验 `CFBundleShortVersionString=2.2.0`、`codesign --verify --deep` 通过 → 启动后 pid 77103、`storage/config.json` 时间戳未动。坑：卷名是 `/Volumes/MCode 2.2.0-arm64` 不是 `/Volumes/MCode`，第一次 ditto 拿错路径失败（旧包已删新包未拷的空窗，立刻用正确卷名重做，全程无进程在跑、无数据风险）——覆盖装之前先 `ls -d /Volumes/*/` 拿真卷名。
+
+「双端退不掉」立案结论：**Windows 侧「taskkill 不带 /F 杀不掉」不是缺陷，是设计**。`window.on("close")` 走 `closeHidesToTray`（index.ts:1004-1014）：最后一个窗口收到关闭 → 有托盘且不在退出中 → **隐藏到托盘**，进程活着是预期行为；taskkill（无 /F）发到窗口上的就是 WM_CLOSE，量的是「关窗」不是「退出」。真正的退出路径：托盘菜单「退出」= `beginIntentionalQuit()+app.quit()`（index.ts:753-759）→ before-quit 有界拆除（5s race，index.ts:2150-2179）→ 真退；关机/注销走 query-session-end/session-end（I13-3）。macOS 侧「退不掉」在 1.2.6 轮已结案（根因=启动首帧被钥匙串同步 IPC 阻塞，34e19bb 修复、1.2.8 装机实测），与健康实例的退出无关。**第八十四轮把它写成「双端存在」是拿错判据的误判，撤回。**
+
+**仍未实测的两条设计路径（挂账）**：① Mac 健康实例的 AppleEvent/⌘Q 退出（`osascript quit` 驱动命令卡在批准门超时，未执行，不重发）；② Windows 托盘菜单「退出」实机走到进程消失。取证窗口：Windows 那台机 11:50 起被 WorkBuddy 会话占着前台（时钟从 VNC 会话期间的 UTC 显示跳回本地，之前的「03:39」实为当地中午——「无人时段」前提没成立，桌面虽无输入活动，仍在用户可能回来的时段里），托盘测试中止；中止前误点托盘图标只是把 MCode 窗口抬起来过，**没点退出、没杀任何进程**，MCode 2.2.0 现在还在跑（任务栏在跑条在）。要收这两条：挑真无人的时段，或用户自己在跟前时用一次真 ⌘Q/托盘退出并看 `%APPDATA%\MCode\logs` 与任务栏。
+
 ### 第八十四轮：v2.2.0 发版（2026-11-28）
 
 内容 = 第八十三轮的无窗口退出通知；`v2.1.0..HEAD` 生产 delta 只有 `82b8bfa7`。发版全量审查即第八十三轮的 Codex 只读审查（审查对象恰好就是这份 delta），在此登记口径。
@@ -236,7 +244,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 六资产三向对齐（release 记录 = 本地 stat = 下载 HEAD content-length；远端 `latest-mac.yml` 与本地逐字节同）。补正：**v2.1.0 的 release 正文一直是空的**——说明文件上轮在 `tmp-local/release-2.1.0-notes.md` 写好了却没发出去；本轮补 `gh release edit`（757 字）并把「release edit 是发版最后一步、要回读 body 长度」记进流程。版本号提交 `15412659`（lock 两根字段随 package.json 同提交）。
 
-Windows 实机装机（VNC，03:39–03:49，桌面闲置无人在用）：下载 249,100,564 字节 = release 资产逐字节；`/S` 装 INSTALL_OK；从已装二进制读回 **FileVersion=2.2.0、CreationTime=2026-11-28 3:44:22**；欢迎页与侧栏徽章 2.2 渲染（视觉判读）；用户数据未动（`config.json` 仍 11-19、`artifacts.db` 仍 10-02）。**新线索入待办**：Windows 侧 `taskkill`（不带 /F）对 4/5 进程报「已发送终止信号」但五个进程全部存活，必须 /F——与 macOS 1.2.6 结案的「退不掉」同族，「退出没反应」级缺陷候选升级为**双端存在**，本轮装机是强杀后装的，待立案排查（不追本轮）。
+Windows 实机装机（VNC，03:39–03:49，桌面闲置无人在用）：下载 249,100,564 字节 = release 资产逐字节；`/S` 装 INSTALL_OK；从已装二进制读回 **FileVersion=2.2.0、CreationTime=2026-11-28 3:44:22**；欢迎页与侧栏徽章 2.2 渲染（视觉判读）；用户数据未动（`config.json` 仍 11-19、`artifacts.db` 仍 10-02）。本轮据此写过「taskkill 不 /F 杀不掉 = 双端退不掉」**——该定性撤回，证据与重新定性见第八十五轮**。
 
 装机驾驶备注：机器上留着两个 cmd 窗口（昨晚一个、今天新开一个），今天读回一度打到旧窗口——读回前先点目标窗口标题条抬front并 `cls` 确认屏幕干净再打命令。
 
